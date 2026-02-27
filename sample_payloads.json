@@ -1,0 +1,96 @@
+{
+  "_description": "TradingView INDICATOR alert payloadları – Adaptive Trend Flow (Quant Algo) × 3 TF × LONG/SHORT. Toplam 6 alert.",
+  "_tradingview_notes": {
+    "alert_type": "indicator (study), NOT strategy",
+    "indicator": "Adaptive Trend Flow by Quant Algo",
+    "conditions": "Long = BUY signal, Short = SELL signal",
+    "symbol_field": "{{ticker}} — TradingView 'BINANCE:ETHUSDT' veya 'ETHUSDT' gönderebilir, servis prefix'i otomatik temizler.",
+    "tf_field": "{{interval}} — '15', '60', '240' gibi string gönderir, servis normalize eder.",
+    "ts_field": "{{timenow}} — unix timestamp string olarak gelir, servis int'e çevirir.",
+    "price_field": "{{close}} — string olarak gelir, servis float'a çevirir.",
+    "alert_count": "1 indikatör × 3 TF × 2 yön = 6 alert"
+  },
+
+  "buy_alerts": [
+    {
+      "_name": "AdaptiveTrendFlow 15m LONG (BUY)",
+      "_condition": "Adaptive Trend Flow → Long",
+      "secret": "WEBHOOK_SECRET_BURAYA",
+      "indicator": "AdaptiveTrendFlow",
+      "symbol": "{{ticker}}",
+      "tf": "{{interval}}",
+      "signal": "BUY",
+      "price": "{{close}}",
+      "ts": "{{timenow}}"
+    },
+    {
+      "_name": "AdaptiveTrendFlow 1h LONG (BUY)",
+      "_condition": "Adaptive Trend Flow → Long",
+      "secret": "WEBHOOK_SECRET_BURAYA",
+      "indicator": "AdaptiveTrendFlow",
+      "symbol": "{{ticker}}",
+      "tf": "{{interval}}",
+      "signal": "BUY",
+      "price": "{{close}}",
+      "ts": "{{timenow}}"
+    },
+    {
+      "_name": "AdaptiveTrendFlow 4h LONG (BUY)",
+      "_condition": "Adaptive Trend Flow → Long",
+      "secret": "WEBHOOK_SECRET_BURAYA",
+      "indicator": "AdaptiveTrendFlow",
+      "symbol": "{{ticker}}",
+      "tf": "{{interval}}",
+      "signal": "BUY",
+      "price": "{{close}}",
+      "ts": "{{timenow}}"
+    }
+  ],
+
+  "sell_alerts": [
+    {
+      "_name": "AdaptiveTrendFlow 15m SHORT (SELL)",
+      "_condition": "Adaptive Trend Flow → Short",
+      "secret": "WEBHOOK_SECRET_BURAYA",
+      "indicator": "AdaptiveTrendFlow",
+      "symbol": "{{ticker}}",
+      "tf": "{{interval}}",
+      "signal": "SELL",
+      "price": "{{close}}",
+      "ts": "{{timenow}}"
+    },
+    {
+      "_name": "AdaptiveTrendFlow 1h SHORT (SELL)",
+      "_condition": "Adaptive Trend Flow → Short",
+      "secret": "WEBHOOK_SECRET_BURAYA",
+      "indicator": "AdaptiveTrendFlow",
+      "symbol": "{{ticker}}",
+      "tf": "{{interval}}",
+      "signal": "SELL",
+      "price": "{{close}}",
+      "ts": "{{timenow}}"
+    },
+    {
+      "_name": "AdaptiveTrendFlow 4h SHORT (SELL)",
+      "_condition": "Adaptive Trend Flow → Short",
+      "secret": "WEBHOOK_SECRET_BURAYA",
+      "indicator": "AdaptiveTrendFlow",
+      "symbol": "{{ticker}}",
+      "tf": "{{interval}}",
+      "signal": "SELL",
+      "price": "{{close}}",
+      "ts": "{{timenow}}"
+    }
+  ],
+
+  "_example_actual_payload": {
+    "_note": "TradingView bu JSON'u gönderdiğinde placeholderlar yerini alır:",
+    "secret": "test_secret_2025",
+    "indicator": "AdaptiveTrendFlow",
+    "symbol": "BINANCE:ETHUSDT",
+    "tf": "60",
+    "signal": "BUY",
+    "price": "2650.42",
+    "ts": "1772020800"
+  }
+}
