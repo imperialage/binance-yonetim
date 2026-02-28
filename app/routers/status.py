@@ -28,12 +28,11 @@ _start_time = time.time()
 async def debug_env() -> dict:
     import os
     redis_url = os.environ.get("REDIS_URL", "NOT_SET")
-    # Mask password for security
-    if "@" in redis_url:
-        masked = redis_url.split("@")[-1]
-    else:
-        masked = redis_url
-    return {"redis_url_host": masked, "all_env_keys": sorted(os.environ.keys())}
+    return {
+        "redis_url_len": len(redis_url),
+        "redis_url_first20": redis_url[:20],
+        "redis_url_scheme": redis_url.split("://")[0] if "://" in redis_url else "NO_SCHEME",
+    }
 
 
 @router.get("/status", response_model=StatusResponse)
