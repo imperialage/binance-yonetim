@@ -24,17 +24,6 @@ class StatusResponse(BaseModel):
 _start_time = time.time()
 
 
-@router.get("/debug-env")
-async def debug_env() -> dict:
-    import os
-    redis_url = os.environ.get("REDIS_URL", "NOT_SET")
-    return {
-        "redis_url_len": len(redis_url),
-        "redis_url_first20": redis_url[:20],
-        "redis_url_scheme": redis_url.split("://")[0] if "://" in redis_url else "NO_SCHEME",
-    }
-
-
 @router.get("/status", response_model=StatusResponse)
 async def status() -> StatusResponse:
     redis_ok = await redis_ping()
