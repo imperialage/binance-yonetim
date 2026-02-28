@@ -5,8 +5,11 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from app.config import settings
@@ -46,6 +49,15 @@ app.include_router(latest.router, tags=["evaluation"])
 app.include_router(events.router, tags=["events"])
 app.include_router(admin.router, tags=["admin"])
 app.include_router(ws.router, tags=["websocket"])
+
+# ── Static files & root redirect ─────────────────────
+_static_dir = Path(__file__).resolve().parent.parent / "static"
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+
+@app.get("/")
+async def root() -> FileResponse:
+    return FileResponse(str(_static_dir / "index.html"))
 
 
 # ── Exception handlers ──────────────────────────────
