@@ -10,9 +10,10 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from app.config import settings
+from app.modules.price_stream import start_price_stream, stop_price_stream
 from app.modules.redis_client import close_redis
 from app.modules.scheduler import start_scheduler, stop_scheduler
-from app.routers import admin, events, latest, status, webhook
+from app.routers import admin, events, latest, status, webhook, ws
 from app.utils.logging import get_logger, setup_logging
 
 setup_logging(log_level=settings.log_level, json_output=settings.log_json)
@@ -23,7 +24,9 @@ log = get_logger(__name__)
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     log.info("startup", env=settings.app_env)
     start_scheduler()
+    start_price_stream()
     yield
+    await stop_price_stream()
     await stop_scheduler()
     await close_redis()
     log.info("shutdown")
@@ -42,6 +45,7 @@ app.include_router(status.router, tags=["health"])
 app.include_router(latest.router, tags=["evaluation"])
 app.include_router(events.router, tags=["events"])
 app.include_router(admin.router, tags=["admin"])
+app.include_router(ws.router, tags=["websocket"])
 
 
 # ── Exception handlers ──────────────────────────────
