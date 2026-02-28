@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
+from app.modules.market_data import get_last_price, get_market_summaries
 from app.modules.redis_client import get_redis
 from app.schemas.evaluation import LatestEvaluation
 
@@ -38,3 +39,19 @@ async def latest(symbol: str = Query(..., examples=["ETHUSDT"])) -> JSONResponse
             sig["ts_human"] = _ts_human(sig["ts"])
 
     return JSONResponse(content=data)
+
+
+@router.get("/price")
+async def price(symbol: str = Query(..., examples=["ETHUSDT"])) -> JSONResponse:
+    """Get current price and market summary from Binance Futures."""
+    symbol = symbol.strip().upper()
+    last = await get_last_price(symbol)
+    if last == 0.0:
+        return JSONResponse(status_code=404, content={"detail": f"Price not found for {symbol}"})
+
+    summaries = await get_market_summaries(symbol)
+    return JSONResponse(content={
+        "symbol": symbol,
+        "price": last,
+        "market": {tf: s.model_dump() for tf, s in summaries.items()},
+    })
