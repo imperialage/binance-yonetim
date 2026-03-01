@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Query
@@ -14,14 +14,17 @@ from app.modules.redis_client import get_redis
 router = APIRouter()
 
 
+_TZ_TR = timezone(timedelta(hours=3))
+
+
 def _enrich_event(ev: dict[str, Any]) -> dict[str, Any]:
-    """Add human-readable datetime fields to an event dict."""
+    """Add human-readable datetime fields to an event dict (Turkey UTC+3)."""
     ts = ev.get("ts")
     recv = ev.get("received_at")
     if ts:
-        ev["ts_human"] = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        ev["ts_human"] = datetime.fromtimestamp(ts, tz=_TZ_TR).strftime("%Y-%m-%d %H:%M:%S TR")
     if recv:
-        ev["received_at_human"] = datetime.fromtimestamp(recv, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        ev["received_at_human"] = datetime.fromtimestamp(recv, tz=_TZ_TR).strftime("%Y-%m-%d %H:%M:%S TR")
     return ev
 
 
