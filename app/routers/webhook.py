@@ -13,6 +13,7 @@ from app.config import settings
 from app.modules.aggregator import aggregate, load_runtime_config
 from app.modules.ai_client import create_ai_client
 from app.modules.dedup import check_rate_limit, is_duplicate
+from app.modules.direction_filter import is_same_direction
 from app.modules.locks import acquire_ai_lock, release_ai_lock
 from app.modules.market_data import get_last_price, get_market_summaries
 from app.modules.normalizer import NormalizeError, normalize
@@ -94,6 +95,18 @@ async def tv_webhook(request: Request) -> WebhookResponse | JSONResponse:
     # ── Rate limit ───────────────────────────────────
     if await check_rate_limit(r, event.symbol):
         return WebhookResponse(status="rate_limited", event_id=event.event_id, message="rate limit exceeded")
+
+    # ── Direction change filter ───────────────────────
+    if await is_same_direction(r, event.symbol, event.indicator, event.tf, event.signal):
+        log.info(
+            "same_direction_filtered",
+            event_id=event.event_id,
+            indicator=event.indicator,
+            symbol=event.symbol,
+            tf=event.tf,
+            signal=event.signal.value,
+        )
+        return WebhookResponse(status="same_direction", event_id=event.event_id, message="filtered: same direction")
 
     # ── Store event + LTRIM ──────────────────────────
     config = await load_runtime_config(r)

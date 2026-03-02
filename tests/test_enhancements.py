@@ -16,8 +16,9 @@ from tests.conftest import make_payload
 @pytest.mark.asyncio
 async def test_events_endpoint_basic(client, fake_redis):
     """GET /events should return stored events."""
+    signals = ["BUY", "SELL", "BUY"]  # alternate to pass direction filter
     for i in range(3):
-        payload = make_payload(event_id=f"ev_basic_{i}", indicator="BigBeluga", tf="15m", signal="BUY")
+        payload = make_payload(event_id=f"ev_basic_{i}", indicator="BigBeluga", tf="15m", signal=signals[i])
         await client.post("/tv-webhook", json=payload)
 
     resp = await client.get("/events", params={"symbol": "ETHUSDT", "limit": 10})
@@ -275,3 +276,36 @@ async def test_webhook_wrong_secret_401(client):
     payload = make_payload(secret="wrong", event_id="sec401")
     resp = await client.post("/tv-webhook", json=payload)
     assert resp.status_code == 401
+
+
+# ── 11) Direction change filter ──────────────────────
+
+@pytest.mark.asyncio
+async def test_first_signal_accepted(client):
+    """First signal for a symbol/indicator/tf combo should be accepted."""
+    payload = make_payload(event_id="dir_first_1", signal="BUY")
+    resp = await client.post("/tv-webhook", json=payload)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_same_direction_filtered(client):
+    """Second signal with the same direction should be filtered."""
+    p1 = make_payload(event_id="dir_same_1", signal="BUY")
+    p2 = make_payload(event_id="dir_same_2", signal="BUY")
+    await client.post("/tv-webhook", json=p1)
+    resp = await client.post("/tv-webhook", json=p2)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "same_direction"
+
+
+@pytest.mark.asyncio
+async def test_direction_change_accepted(client):
+    """After BUY, a SELL should be accepted (direction change)."""
+    p1 = make_payload(event_id="dir_chg_1", signal="BUY")
+    p2 = make_payload(event_id="dir_chg_2", signal="SELL")
+    await client.post("/tv-webhook", json=p1)
+    resp = await client.post("/tv-webhook", json=p2)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "accepted"
