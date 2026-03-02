@@ -14,17 +14,17 @@ from app.modules.redis_client import get_redis
 router = APIRouter()
 
 
-_TZ_TR = timezone(timedelta(hours=3))
+_TZ = timezone(timedelta(hours=2))
 
 
 def _enrich_event(ev: dict[str, Any]) -> dict[str, Any]:
-    """Add human-readable datetime fields to an event dict (Turkey UTC+3)."""
+    """Add human-readable datetime fields to an event dict (UTC+2)."""
     ts = ev.get("ts")
     recv = ev.get("received_at")
     if ts:
-        ev["ts_human"] = datetime.fromtimestamp(ts, tz=_TZ_TR).strftime("%Y-%m-%d %H:%M:%S TR")
+        ev["ts_human"] = datetime.fromtimestamp(ts, tz=_TZ).strftime("%Y-%m-%d %H:%M:%S UTC+2")
     if recv:
-        ev["received_at_human"] = datetime.fromtimestamp(recv, tz=_TZ_TR).strftime("%Y-%m-%d %H:%M:%S TR")
+        ev["received_at_human"] = datetime.fromtimestamp(recv, tz=_TZ).strftime("%Y-%m-%d %H:%M:%S UTC+2")
     return ev
 
 
