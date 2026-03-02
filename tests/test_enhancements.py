@@ -1,10 +1,11 @@
 """Tests for enhancements: events endpoint, LTRIM, scheduler, locks, tf normalization,
-symbol prefix, signal validation, ts/price parsing."""
+symbol prefix, signal validation, ts/price parsing, SQLite signal store."""
 
 from __future__ import annotations
 
 import json
 import time
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -309,3 +310,81 @@ async def test_direction_change_accepted(client):
     resp = await client.post("/tv-webhook", json=p2)
     assert resp.status_code == 200
     assert resp.json()["status"] == "accepted"
+
+
+# ── 12) SQLite signal persistence ─────────────────
+
+@pytest.mark.asyncio
+async def test_signal_persisted_to_db():
+    """log_signal should INSERT a NormalizedEvent into SQLite."""
+    import aiosqlite
+
+    from app.modules import signal_store
+
+    # Use in-memory DB for test isolation
+    test_db = await aiosqlite.connect(":memory:")
+    test_db.row_factory = aiosqlite.Row
+
+    with patch.object(signal_store, "get_db", AsyncMock(return_value=test_db)):
+        # Create table
+        await test_db.execute(signal_store._CREATE_TABLE)
+        for idx_sql in signal_store._CREATE_INDEXES:
+            await test_db.execute(idx_sql)
+        await test_db.commit()
+
+        # Create a fake event dict
+        event = {
+            "event_id": "persist_test_1",
+            "ts": int(time.time()),
+            "received_at": int(time.time()),
+            "indicator": "BigBeluga",
+            "symbol": "ETHUSDT",
+            "tf": "15m",
+            "signal": "BUY",
+            "strength": 0.8,
+            "price": 3500.0,
+            "raw": {"indicator": "BigBeluga"},
+        }
+
+        await signal_store.log_signal(event)
+
+        cursor = await test_db.execute("SELECT * FROM signals WHERE event_id = ?", ("persist_test_1",))
+        row = await cursor.fetchone()
+        assert row is not None
+        assert dict(row)["symbol"] == "ETHUSDT"
+        assert dict(row)["signal"] == "BUY"
+
+    await test_db.close()
+
+
+@pytest.mark.asyncio
+async def test_events_source_db(client):
+    """GET /events?source=db should query from SQLite via query_signals."""
+    fake_rows = [
+        {
+            "id": 1,
+            "event_id": "db_ev_1",
+            "ts": int(time.time()) - 100,
+            "received_at": int(time.time()) - 100,
+            "indicator": "BigBeluga",
+            "symbol": "ETHUSDT",
+            "tf": "15m",
+            "signal": "BUY",
+            "strength": 0.9,
+            "price": 3500.0,
+            "raw": {"indicator": "BigBeluga"},
+            "created_at": "2026-03-02 12:00:00",
+        },
+    ]
+
+    with patch("app.routers.events.query_signals", AsyncMock(return_value=fake_rows)):
+        resp = await client.get("/events", params={"symbol": "ETHUSDT", "source": "db"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source"] == "db"
+    assert data["count"] == 1
+    assert data["events"][0]["event_id"] == "db_ev_1"
+    # Internal DB fields should be stripped
+    assert "id" not in data["events"][0]
+    assert "created_at" not in data["events"][0]

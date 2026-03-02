@@ -156,6 +156,9 @@ async def client():
         # Scheduler (don't start real loop)
         patch("app.modules.scheduler.start_scheduler", return_value=None),
         patch("app.modules.scheduler.stop_scheduler", AsyncMock(return_value=None)),
+        # Signal store – don't write to real SQLite in tests
+        patch("app.routers.webhook.log_signal", AsyncMock(return_value=None)),
+        patch("app.routers.events.query_signals", AsyncMock(return_value=[])),
         # Background AI store – let it write through to FakeRedis
         patch("app.routers.webhook._background_evaluation", AsyncMock(return_value=None)),
     ):

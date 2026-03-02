@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
 from app.modules.redis_client import get_redis
+from app.modules.signal_store import query_signals
 
 router = APIRouter()
 
@@ -37,8 +38,8 @@ async def get_events(
     signal: str | None = Query(None),
     after: str | None = Query(None, description="Filter: only events after this datetime (YYYY-MM-DD or YYYY-MM-DD HH:MM)"),
     before: str | None = Query(None, description="Filter: only events before this datetime (YYYY-MM-DD or YYYY-MM-DD HH:MM)"),
+    source: Literal["auto", "redis", "db"] = Query("auto", description="Data source: auto (Redis first, fallback DB), redis, db"),
 ) -> JSONResponse:
-    r = await get_redis()
     symbol = symbol.strip().upper()
 
     # Parse date filters
@@ -57,6 +58,32 @@ async def get_events(
             else:
                 before_ts = parsed
 
+    # ── Source routing ───────────────────────────────
+    if source == "db":
+        events = await _query_from_db(symbol, limit, indicator, tf, signal, after_ts, before_ts)
+        return JSONResponse(content={"symbol": symbol, "count": len(events), "source": "db", "events": events})
+
+    # Redis path (source == "redis" or "auto")
+    events = await _query_from_redis(symbol, limit, indicator, tf, signal, after_ts, before_ts)
+
+    if events or source == "redis":
+        return JSONResponse(content={"symbol": symbol, "count": len(events), "source": "redis", "events": events})
+
+    # auto fallback to DB
+    events = await _query_from_db(symbol, limit, indicator, tf, signal, after_ts, before_ts)
+    return JSONResponse(content={"symbol": symbol, "count": len(events), "source": "db", "events": events})
+
+
+async def _query_from_redis(
+    symbol: str,
+    limit: int,
+    indicator: str | None,
+    tf: str | None,
+    signal: str | None,
+    after_ts: int | None,
+    before_ts: int | None,
+) -> list[dict[str, Any]]:
+    r = await get_redis()
     raw_list = await r.lrange(f"tv:events:{symbol}", -limit * 3, -1)
     events: list[dict[str, Any]] = []
     for raw in reversed(raw_list):  # newest first
@@ -69,14 +96,11 @@ async def get_events(
         if ev.get("raw"):
             ev["raw"].pop("secret", None)
 
-        # Time filters
         ev_ts = ev.get("ts", 0)
         if after_ts and ev_ts < after_ts:
             continue
         if before_ts and ev_ts > before_ts:
             continue
-
-        # Field filters
         if indicator and ev.get("indicator", "").lower() != indicator.lower():
             continue
         if tf and ev.get("tf", "").lower() != tf.lower():
@@ -87,8 +111,34 @@ async def get_events(
         events.append(_enrich_event(ev))
         if len(events) >= limit:
             break
+    return events
 
-    return JSONResponse(content={"symbol": symbol, "count": len(events), "events": events})
+
+async def _query_from_db(
+    symbol: str,
+    limit: int,
+    indicator: str | None,
+    tf: str | None,
+    signal: str | None,
+    after_ts: int | None,
+    before_ts: int | None,
+) -> list[dict[str, Any]]:
+    rows = await query_signals(
+        symbol,
+        indicator=indicator,
+        tf=tf,
+        signal=signal,
+        after=after_ts,
+        before=before_ts,
+        limit=limit,
+    )
+    # Enrich with human-readable timestamps and strip internal DB fields
+    events = []
+    for row in rows:
+        row.pop("id", None)
+        row.pop("created_at", None)
+        events.append(_enrich_event(row))
+    return events
 
 
 def _parse_datetime(val: str) -> int | None:

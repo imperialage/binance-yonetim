@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from app.config import settings
 from app.modules.price_stream import start_price_stream, stop_price_stream
 from app.modules.redis_client import close_redis
+from app.modules.signal_store import close_db, init_db
 from app.modules.scheduler import start_scheduler, stop_scheduler
 from app.routers import admin, events, latest, status, webhook, ws
 from app.utils.logging import get_logger, setup_logging
@@ -26,12 +27,14 @@ log = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     log.info("startup", env=settings.app_env)
+    await init_db()
     start_scheduler()
     start_price_stream()
     yield
     await stop_price_stream()
     await stop_scheduler()
     await close_redis()
+    await close_db()
     log.info("shutdown")
 
 

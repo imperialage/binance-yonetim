@@ -7,3 +7,4 @@ pydantic-settings>=2.2,<3
 structlog>=24.1,<25
 anyio>=4.3,<5
 websockets>=14.0,<15
+aiosqlite>=0.20,<1

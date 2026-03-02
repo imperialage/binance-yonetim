@@ -18,6 +18,7 @@ from app.modules.locks import acquire_ai_lock, release_ai_lock
 from app.modules.market_data import get_last_price, get_market_summaries
 from app.modules.normalizer import NormalizeError, normalize
 from app.modules.redis_client import get_redis
+from app.modules.signal_store import log_signal
 from app.modules.rules_engine import evaluate
 from app.modules.scheduler import store_latest
 from app.schemas.webhook import WebhookPayload, WebhookResponse
@@ -115,6 +116,9 @@ async def tv_webhook(request: Request) -> WebhookResponse | JSONResponse:
     await r.rpush(key, event_json)
     await r.ltrim(key, -config.events_max_per_symbol, -1)
     await r.expire(key, EVENT_TTL)
+
+    # ── Persistent log (SQLite) ────────────────────
+    await log_signal(event)
 
     log.info(
         "event_stored",
