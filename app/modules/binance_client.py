@@ -119,12 +119,26 @@ async def get_usdt_balance() -> float:
 
 
 async def cancel_all_open_orders(symbol: str) -> dict:
-    """Cancel all open orders for a symbol."""
+    """Cancel all open orders (regular + algo) for a symbol."""
     client = await get_client()
+    # Cancel regular orders
     params = _sign({"symbol": symbol})
     resp = await client.delete("/fapi/v1/allOpenOrders", params=params)
     resp.raise_for_status()
-    return resp.json()
+    result = resp.json()
+    # Cancel algo (conditional) orders
+    try:
+        algo_params = _sign({"symbol": symbol})
+        algo_resp = await client.get("/fapi/v1/algoOrder/openOrders", params=algo_params)
+        algo_resp.raise_for_status()
+        for order in algo_resp.json().get("orders", []):
+            algo_id = order.get("algoId")
+            if algo_id:
+                del_params = _sign({"algoId": algo_id})
+                await client.delete("/fapi/v1/algoOrder", params=del_params)
+    except Exception:
+        pass  # Best-effort algo cancellation
+    return result
 
 
 async def place_market_order(
@@ -155,18 +169,18 @@ async def place_stop_market_order(
     quantity: float,
     stop_price: float,
 ) -> dict:
-    """Place a stop-market order (for stop-loss)."""
+    """Place a stop-market order (for stop-loss) via Algo Order API."""
     client = await get_client()
     params = _sign({
         "symbol": symbol,
         "side": side,
         "type": "STOP_MARKET",
+        "algoType": "CONDITIONAL",
         "quantity": quantity,
-        "stopPrice": stop_price,
-        "closePosition": "false",
+        "triggerPrice": stop_price,
         "reduceOnly": "true",
     })
-    resp = await client.post("/fapi/v1/order", params=params)
+    resp = await client.post("/fapi/v1/algoOrder", params=params)
     resp.raise_for_status()
     return resp.json()
 

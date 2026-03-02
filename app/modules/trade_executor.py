@@ -213,7 +213,7 @@ async def _execute_trade_inner(
     stop_order_id = None
     try:
         stop_result = await place_stop_market_order(symbol, stop_side, quantity, stop_price)
-        stop_order_id = str(stop_result.get("orderId", ""))
+        stop_order_id = str(stop_result.get("algoId", stop_result.get("orderId", "")))
         log.info(
             "stop_loss_placed",
             symbol=symbol,
