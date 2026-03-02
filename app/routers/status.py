@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -49,3 +50,11 @@ async def status() -> StatusResponse:
         events_last_minute=events_count,
         uptime_seconds=int(time.time() - _start_time),
     )
+
+
+@router.get("/server-ip")
+async def server_ip() -> dict:
+    """Return the server's outbound public IP address."""
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        resp = await client.get("https://ifconfig.me")
+        return {"ip": resp.text.strip()}
