@@ -21,7 +21,8 @@ from app.modules.redis_client import get_redis
 from app.modules.signal_store import log_signal
 from app.modules.rules_engine import evaluate
 from app.modules.scheduler import store_latest
-from app.schemas.webhook import WebhookPayload, WebhookResponse
+from app.modules.trade_executor import execute_trade
+from app.schemas.webhook import SignalType, WebhookPayload, WebhookResponse
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -135,6 +136,15 @@ async def tv_webhook(request: Request) -> WebhookResponse | JSONResponse:
 
     # ── Background: market data + AI + store ─────────
     asyncio.create_task(_background_evaluation(event.symbol, rules_result, agg))
+
+    # ── Trade execution (fire-and-forget) ────────────
+    if event.signal in (SignalType.BUY, SignalType.SELL):
+        asyncio.create_task(execute_trade(
+            symbol=event.symbol,
+            signal=event.signal.value,
+            price=event.price,
+            event_id=event.event_id,
+        ))
 
     return WebhookResponse(
         status="accepted",

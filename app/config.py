@@ -35,5 +35,12 @@ class Settings(BaseSettings):
     rate_limit_window_sec: int = 10
     rate_limit_max_events: int = 30
 
+    # ── Binance Futures Trading ─────────────────────
+    binance_api_key: str = ""
+    binance_api_secret: str = ""
+    binance_testnet: bool = True       # Safety: default to testnet
+    trading_enabled: bool = False      # Kill-switch: default off
+    stop_loss_pct: float = 0.01       # 1% stop-loss
+
 
 settings = Settings()  # type: ignore[call-arg]

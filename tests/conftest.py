@@ -15,6 +15,9 @@ os.environ["ADMIN_TOKEN"] = "test_admin"
 os.environ["REDIS_URL"] = "redis://localhost:6379/1"
 os.environ["AI_PROVIDER"] = "dummy"
 os.environ["LOG_JSON"] = "false"
+os.environ["TRADING_ENABLED"] = "false"
+os.environ["BINANCE_API_KEY"] = "test_key"
+os.environ["BINANCE_API_SECRET"] = "test_secret_key"
 
 
 class FakeRedis:
@@ -161,6 +164,8 @@ async def client():
         patch("app.routers.events.query_signals", AsyncMock(return_value=[])),
         # Background AI store – let it write through to FakeRedis
         patch("app.routers.webhook._background_evaluation", AsyncMock(return_value=None)),
+        # Trade execution – don't execute real trades in tests
+        patch("app.routers.webhook.execute_trade", AsyncMock(return_value=None)),
     ):
         from app.main import app
 
