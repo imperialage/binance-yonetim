@@ -129,11 +129,11 @@ async def cancel_all_open_orders(symbol: str) -> dict:
     # Cancel algo (conditional) orders
     try:
         algo_params = _sign({"symbol": symbol})
-        algo_resp = await client.get("/fapi/v1/algoOrder/openOrders", params=algo_params)
+        algo_resp = await client.get("/fapi/v1/openAlgoOrders", params=algo_params)
         algo_resp.raise_for_status()
-        for order in algo_resp.json().get("orders", []):
+        for order in algo_resp.json():
             algo_id = order.get("algoId")
-            if algo_id:
+            if algo_id and order.get("symbol") == symbol:
                 del_params = _sign({"algoId": algo_id})
                 await client.delete("/fapi/v1/algoOrder", params=del_params)
     except Exception:
