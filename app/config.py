@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     stop_loss_pct: float = 0.005      # 0.5% stop-loss
     take_profit_pct: float = 0.005    # 0.5% take-profit
     binance_proxy_url: str = ""       # SOCKS5 proxy for static IP
+    trading_symbols: str = ""         # Comma-separated whitelist e.g. "ETHUSDT,BTCUSDT"
 
 
 settings = Settings()  # type: ignore[call-arg]

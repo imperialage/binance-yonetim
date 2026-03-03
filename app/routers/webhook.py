@@ -98,6 +98,26 @@ async def tv_webhook(request: Request) -> WebhookResponse | JSONResponse:
     if await check_rate_limit(r, event.symbol):
         return WebhookResponse(status="rate_limited", event_id=event.event_id, message="rate limit exceeded")
 
+    # ── Trade execution (fire-and-forget) ────────────
+    # IMPORTANT: Trade decision is based on actual Binance position state,
+    # NOT on the direction filter. This runs BEFORE direction filter so
+    # SL/TP-closed positions can be re-opened by same-direction signals.
+    trade_dispatched = False
+    if event.signal in (SignalType.BUY, SignalType.SELL):
+        # Symbol whitelist check
+        allowed = settings.trading_symbols
+        whitelist = {s.strip().upper() for s in allowed.split(",") if s.strip()} if allowed else set()
+        if whitelist and event.symbol not in whitelist:
+            log.info("trade_symbol_blocked", symbol=event.symbol, whitelist=list(whitelist))
+        else:
+            asyncio.create_task(execute_trade(
+                symbol=event.symbol,
+                signal=event.signal.value,
+                price=event.price,
+                event_id=event.event_id,
+            ))
+            trade_dispatched = True
+
     # ── Direction change filter ───────────────────────
     if await is_same_direction(r, event.symbol, event.indicator, event.tf, event.signal):
         log.info(
@@ -107,6 +127,7 @@ async def tv_webhook(request: Request) -> WebhookResponse | JSONResponse:
             symbol=event.symbol,
             tf=event.tf,
             signal=event.signal.value,
+            trade_dispatched=trade_dispatched,
         )
         return WebhookResponse(status="same_direction", event_id=event.event_id, message="filtered: same direction")
 
@@ -128,6 +149,7 @@ async def tv_webhook(request: Request) -> WebhookResponse | JSONResponse:
         symbol=event.symbol,
         tf=event.tf,
         signal=event.signal.value,
+        trade_dispatched=trade_dispatched,
     )
 
     # ── Aggregation + Rules (synchronous) ────────────
@@ -136,15 +158,6 @@ async def tv_webhook(request: Request) -> WebhookResponse | JSONResponse:
 
     # ── Background: market data + AI + store ─────────
     asyncio.create_task(_background_evaluation(event.symbol, rules_result, agg))
-
-    # ── Trade execution (fire-and-forget) ────────────
-    if event.signal in (SignalType.BUY, SignalType.SELL):
-        asyncio.create_task(execute_trade(
-            symbol=event.symbol,
-            signal=event.signal.value,
-            price=event.price,
-            event_id=event.event_id,
-        ))
 
     return WebhookResponse(
         status="accepted",
