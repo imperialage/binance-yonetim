@@ -84,3 +84,25 @@ async def debug_proxy() -> dict:
         result["error"] = str(e)
         result["traceback"] = traceback.format_exc()
     return result
+
+
+@router.get("/debug/trade-test")
+async def debug_trade_test() -> dict:
+    """Test a full signed Binance API call (balance check)."""
+    import traceback
+    result: dict = {}
+    try:
+        from app.modules.binance_client import get_usdt_balance, get_position_risk
+        balance = await get_usdt_balance()
+        result["balance"] = balance
+        positions = await get_position_risk("ETHUSDT")
+        for p in positions:
+            if p.get("symbol") == "ETHUSDT":
+                result["position_amt"] = p.get("positionAmt")
+                break
+        result["ok"] = True
+    except Exception as e:
+        result["ok"] = False
+        result["error"] = str(e)
+        result["traceback"] = traceback.format_exc()
+    return result
