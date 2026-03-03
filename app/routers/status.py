@@ -69,8 +69,10 @@ async def debug_proxy() -> dict:
         "proxy_url": settings.binance_proxy_url[:30] + "..." if settings.binance_proxy_url else "",
         "trading_enabled": settings.trading_enabled,
     }
+    import traceback
     try:
-        from app.modules.binance_client import get_client
+        from app.modules.binance_client import close_client, get_client
+        await close_client()  # Force fresh client
         client = await get_client()
         resp = await client.get("/fapi/v1/premiumIndex", params={"symbol": "ETHUSDT"})
         resp.raise_for_status()
@@ -80,4 +82,5 @@ async def debug_proxy() -> dict:
     except Exception as e:
         result["binance_ok"] = False
         result["error"] = str(e)
+        result["traceback"] = traceback.format_exc()
     return result
