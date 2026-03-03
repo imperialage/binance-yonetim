@@ -21,6 +21,31 @@ _BASE_URL = "https://fapi.binance.com"
 _TESTNET_URL = "https://testnet.binancefuture.com"
 
 
+class BinanceAPIError(Exception):
+    """Binance API error with code and message from response body."""
+
+    def __init__(self, status_code: int, code: int, msg: str, url: str):
+        self.status_code = status_code
+        self.code = code
+        self.msg = msg
+        self.url = url
+        super().__init__(f"Binance {status_code}: code={code} msg='{msg}' url={url}")
+
+
+def _raise_for_binance(resp: httpx.Response) -> None:
+    """Raise BinanceAPIError with full detail if response is not 2xx."""
+    if resp.is_success:
+        return
+    try:
+        body = resp.json()
+        code = body.get("code", resp.status_code)
+        msg = body.get("msg", resp.text[:200])
+    except Exception:
+        code = resp.status_code
+        msg = resp.text[:200]
+    raise BinanceAPIError(resp.status_code, code, msg, str(resp.url))
+
+
 def _base_url() -> str:
     return _TESTNET_URL if settings.binance_testnet else _BASE_URL
 
@@ -63,7 +88,7 @@ async def get_exchange_info(symbol: str) -> dict:
     """Get symbol info including lot size and price precision."""
     client = await get_client()
     resp = await client.get("/fapi/v1/exchangeInfo", params={"symbol": symbol})
-    resp.raise_for_status()
+    _raise_for_binance(resp)
     data = resp.json()
     for s in data.get("symbols", []):
         if s["symbol"] == symbol:
@@ -95,7 +120,7 @@ async def set_leverage(symbol: str, leverage: int = 1) -> dict:
     client = await get_client()
     params = _sign({"symbol": symbol, "leverage": leverage})
     resp = await client.post("/fapi/v1/leverage", params=params)
-    resp.raise_for_status()
+    _raise_for_binance(resp)
     return resp.json()
 
 
@@ -104,7 +129,7 @@ async def get_position_risk(symbol: str) -> list[dict]:
     client = await get_client()
     params = _sign({"symbol": symbol})
     resp = await client.get("/fapi/v2/positionRisk", params=params)
-    resp.raise_for_status()
+    _raise_for_binance(resp)
     return resp.json()
 
 
@@ -113,7 +138,7 @@ async def get_usdt_balance() -> float:
     client = await get_client()
     params = _sign({})
     resp = await client.get("/fapi/v2/balance", params=params)
-    resp.raise_for_status()
+    _raise_for_binance(resp)
     for asset in resp.json():
         if asset.get("asset") == "USDT":
             return float(asset.get("availableBalance", 0))
@@ -126,7 +151,7 @@ async def cancel_all_open_orders(symbol: str) -> dict:
     # Cancel regular orders
     params = _sign({"symbol": symbol})
     resp = await client.delete("/fapi/v1/allOpenOrders", params=params)
-    resp.raise_for_status()
+    _raise_for_binance(resp)
     result = resp.json()
     # Cancel algo (conditional) orders
     try:
@@ -161,7 +186,7 @@ async def place_market_order(
         params["reduceOnly"] = "true"
     params = _sign(params)
     resp = await client.post("/fapi/v1/order", params=params)
-    resp.raise_for_status()
+    _raise_for_binance(resp)
     return resp.json()
 
 
@@ -183,7 +208,7 @@ async def place_stop_market_order(
         "reduceOnly": "true",
     })
     resp = await client.post("/fapi/v1/algoOrder", params=params)
-    resp.raise_for_status()
+    _raise_for_binance(resp)
     return resp.json()
 
 
@@ -205,7 +230,7 @@ async def place_take_profit_market_order(
         "reduceOnly": "true",
     })
     resp = await client.post("/fapi/v1/algoOrder", params=params)
-    resp.raise_for_status()
+    _raise_for_binance(resp)
     return resp.json()
 
 

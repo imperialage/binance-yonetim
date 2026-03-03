@@ -60,10 +60,18 @@ _SUFFIX_RE = re.compile(r"\.[A-Z]+$")  # ".P" suffix on perps
 
 
 def normalize_symbol(raw: str) -> str:
-    """Strip exchange prefix and contract suffix, return uppercase symbol."""
+    """Strip exchange prefix and contract suffix, return uppercase symbol.
+
+    Also converts common Binance Futures variants:
+      ETHUSD  → ETHUSDT   (TradingView sometimes omits the trailing T)
+      BTCUSD  → BTCUSDT
+    """
     s = raw.strip().upper()
     s = _EXCHANGE_PREFIX_RE.sub("", s)  # remove BINANCE: etc.
     s = _SUFFIX_RE.sub("", s)  # remove .P suffix
+    # TradingView sometimes sends "ETHUSD" instead of "ETHUSDT" for USDT-M futures
+    if s.endswith("USD") and not s.endswith("USDT"):
+        s += "T"
     return s
 
 

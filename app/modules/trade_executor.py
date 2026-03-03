@@ -134,6 +134,8 @@ async def _execute_trade_inner(
         await place_market_order(symbol, close_side, close_qty, reduce_only=True)
         closed_previous = True
         log.info("opposite_position_closed", symbol=symbol, close_side=close_side, qty=close_qty)
+        # Wait for balance settlement after closing position
+        await asyncio.sleep(0.5)
 
     # ── 5. Get exchange info for rounding ────────────
     info = await get_exchange_info(symbol)
@@ -142,7 +144,7 @@ async def _execute_trade_inner(
     tick_size = info["priceFilter"]["tickSize"]
     price_precision = info["pricePrecision"]
 
-    # ── 6. Get available balance ─────────────────────
+    # ── 6. Get available balance (fresh after close) ─
     balance = await get_usdt_balance()
     if balance <= 0:
         duration = (time.monotonic_ns() // 1_000_000) - start_ms
@@ -171,7 +173,9 @@ async def _execute_trade_inner(
         )
         return
 
-    raw_qty = balance / price
+    # Use 98% of balance to leave room for fees/commission
+    usable_balance = balance * 0.98
+    raw_qty = usable_balance / price
     quantity = round_step_size(raw_qty, step_size)
 
     if quantity < min_qty:
