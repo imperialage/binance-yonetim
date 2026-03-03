@@ -28,10 +28,12 @@ def _base_url() -> str:
 async def get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
+        proxy_url = settings.binance_proxy_url or None
         _client = httpx.AsyncClient(
             base_url=_base_url(),
             timeout=httpx.Timeout(10.0, connect=5.0),
             headers={"X-MBX-APIKEY": settings.binance_api_key},
+            proxy=proxy_url,
         )
     return _client
 
