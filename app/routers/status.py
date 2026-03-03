@@ -174,6 +174,45 @@ async def debug_diagnosis() -> dict:
     return result
 
 
+@router.get("/debug/income")
+async def debug_income() -> dict:
+    """Get realized PnL history (last 7 days) from Binance."""
+    from app.modules.binance_client import get_income_history
+    from datetime import datetime, timezone, timedelta
+    tz = timezone(timedelta(hours=3))
+    try:
+        records = await get_income_history("ETHUSDT", "REALIZED_PNL", days=7)
+        trades = []
+        total_pnl = 0.0
+        for r in records:
+            pnl = float(r.get("income", 0))
+            if pnl == 0:
+                continue
+            total_pnl += pnl
+            ts_ms = int(r.get("time", 0))
+            ts_human = datetime.fromtimestamp(ts_ms / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
+            trades.append({
+                "time": ts_human,
+                "pnl": round(pnl, 6),
+                "symbol": r.get("symbol"),
+                "info": r.get("info", ""),
+            })
+        # En yenisi üstte
+        trades.reverse()
+        win = sum(1 for t in trades if t["pnl"] > 0)
+        lose = sum(1 for t in trades if t["pnl"] < 0)
+        return {
+            "total_pnl": round(total_pnl, 6),
+            "trade_count": len(trades),
+            "win": win,
+            "lose": lose,
+            "win_rate": f"{(win / len(trades) * 100):.0f}%" if trades else "0%",
+            "trades": trades,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/debug/reset-directions")
 async def debug_reset_directions() -> dict:
     """Reset all direction filter keys so next signal of any direction passes through."""

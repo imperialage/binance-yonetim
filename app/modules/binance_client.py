@@ -234,6 +234,25 @@ async def place_take_profit_market_order(
     return resp.json()
 
 
+async def get_income_history(
+    symbol: str = "ETHUSDT",
+    income_type: str = "REALIZED_PNL",
+    days: int = 7,
+) -> list[dict]:
+    """Get realized PnL history from Binance (last N days)."""
+    client = await get_client()
+    start_time = int((time.time() - days * 86400) * 1000)
+    params = _sign({
+        "symbol": symbol,
+        "incomeType": income_type,
+        "startTime": start_time,
+        "limit": 1000,
+    })
+    resp = await client.get("/fapi/v1/income", params=params)
+    _raise_for_binance(resp)
+    return resp.json()
+
+
 def round_step_size(quantity: float, step_size: float) -> float:
     """Round quantity down to the nearest valid step size."""
     if step_size <= 0:
