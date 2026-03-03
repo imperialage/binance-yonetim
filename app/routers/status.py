@@ -106,3 +106,76 @@ async def debug_trade_test() -> dict:
         result["error"] = str(e)
         result["traceback"] = traceback.format_exc()
     return result
+
+
+@router.get("/debug/diagnosis")
+async def debug_diagnosis() -> dict:
+    """Full system diagnosis: config, direction filters, recent trades, positions."""
+    from app.config import settings
+    from app.modules.redis_client import get_redis
+    from app.modules.trade_store import query_trades
+
+    result: dict = {
+        "config": {
+            "trading_enabled": settings.trading_enabled,
+            "binance_testnet": settings.binance_testnet,
+            "stop_loss_pct": settings.stop_loss_pct,
+            "take_profit_pct": settings.take_profit_pct,
+            "proxy_configured": bool(settings.binance_proxy_url),
+        },
+    }
+
+    # Direction filter state from Redis
+    try:
+        r = await get_redis()
+        direction_keys: list[dict] = []
+        async for key in r.scan_iter(match="tv:signal_dir:*", count=200):
+            val = await r.get(key)
+            ttl = await r.ttl(key)
+            direction_keys.append({
+                "key": key if isinstance(key, str) else key.decode(),
+                "value": val if isinstance(val, str) else (val.decode() if val else None),
+                "ttl_seconds": ttl,
+            })
+        result["direction_filters"] = direction_keys
+    except Exception as e:
+        result["direction_filters_error"] = str(e)
+
+    # Recent trades from SQLite
+    try:
+        trades = await query_trades(limit=10)
+        result["recent_trades"] = trades
+    except Exception as e:
+        result["recent_trades_error"] = str(e)
+
+    # Current Binance position
+    try:
+        from app.modules.binance_client import get_usdt_balance, get_position_risk
+        balance = await get_usdt_balance()
+        result["balance"] = balance
+        positions = await get_position_risk("ETHUSDT")
+        for p in positions:
+            if p.get("symbol") == "ETHUSDT":
+                result["position"] = {
+                    "positionAmt": p.get("positionAmt"),
+                    "entryPrice": p.get("entryPrice"),
+                    "unRealizedProfit": p.get("unRealizedProfit"),
+                    "markPrice": p.get("markPrice"),
+                }
+                break
+    except Exception as e:
+        result["binance_error"] = str(e)
+
+    return result
+
+
+@router.get("/debug/reset-directions")
+async def debug_reset_directions() -> dict:
+    """Reset all direction filter keys so next signal of any direction passes through."""
+    from app.modules.redis_client import get_redis
+    r = await get_redis()
+    deleted = 0
+    async for key in r.scan_iter(match="tv:signal_dir:*", count=200):
+        await r.delete(key)
+        deleted += 1
+    return {"deleted_keys": deleted, "message": "Direction filters reset. Next signal will pass through."}
