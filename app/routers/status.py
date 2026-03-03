@@ -122,6 +122,7 @@ async def debug_diagnosis() -> dict:
             "stop_loss_pct": settings.stop_loss_pct,
             "take_profit_pct": settings.take_profit_pct,
             "proxy_configured": bool(settings.binance_proxy_url),
+            "trading_symbols": settings.trading_symbols,
         },
     }
 
