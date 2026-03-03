@@ -40,7 +40,8 @@ class Settings(BaseSettings):
     binance_api_secret: str = ""
     binance_testnet: bool = True       # Safety: default to testnet
     trading_enabled: bool = False      # Kill-switch: default off
-    stop_loss_pct: float = 0.01       # 1% stop-loss
+    stop_loss_pct: float = 0.005      # 0.5% stop-loss
+    take_profit_pct: float = 0.005    # 0.5% take-profit
 
 
 settings = Settings()  # type: ignore[call-arg]

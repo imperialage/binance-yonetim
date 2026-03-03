@@ -13,6 +13,7 @@ from app.modules.binance_client import (
     get_usdt_balance,
     place_market_order,
     place_stop_market_order,
+    place_take_profit_market_order,
     round_price,
     round_step_size,
     set_leverage,
@@ -197,14 +198,12 @@ async def _execute_trade_inner(
         order_id=order_id,
     )
 
-    # ── 9. Place stop-loss ───────────────────────────
+    # ── 9. Place stop-loss (%0.5) ──────────────────────
     sl_pct = settings.stop_loss_pct
     if side == "BUY":
-        # Long position: stop-loss below entry
         raw_stop = entry_price * (1 - sl_pct)
         stop_side = "SELL"
     else:
-        # Short position: stop-loss above entry
         raw_stop = entry_price * (1 + sl_pct)
         stop_side = "BUY"
 
@@ -224,7 +223,32 @@ async def _execute_trade_inner(
     except Exception as e:
         log.error("stop_loss_failed", symbol=symbol, error=str(e))
 
-    # ── 10. Log trade ────────────────────────────────
+    # ── 10. Place take-profit (%0.5) ────────────────────
+    tp_pct = settings.take_profit_pct
+    if side == "BUY":
+        raw_tp = entry_price * (1 + tp_pct)
+        tp_side = "SELL"
+    else:
+        raw_tp = entry_price * (1 - tp_pct)
+        tp_side = "BUY"
+
+    tp_price = round_price(raw_tp, tick_size)
+
+    tp_order_id = None
+    try:
+        tp_result = await place_take_profit_market_order(symbol, tp_side, quantity, tp_price)
+        tp_order_id = str(tp_result.get("algoId", tp_result.get("orderId", "")))
+        log.info(
+            "take_profit_placed",
+            symbol=symbol,
+            tp_side=tp_side,
+            tp_price=tp_price,
+            tp_order_id=tp_order_id,
+        )
+    except Exception as e:
+        log.error("take_profit_failed", symbol=symbol, error=str(e))
+
+    # ── 11. Log trade ────────────────────────────────
     duration = (time.monotonic_ns() // 1_000_000) - start_ms
     await log_trade(
         event_id=event_id,

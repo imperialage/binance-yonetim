@@ -185,6 +185,28 @@ async def place_stop_market_order(
     return resp.json()
 
 
+async def place_take_profit_market_order(
+    symbol: str,
+    side: str,
+    quantity: float,
+    trigger_price: float,
+) -> dict:
+    """Place a take-profit-market order via Algo Order API."""
+    client = await get_client()
+    params = _sign({
+        "symbol": symbol,
+        "side": side,
+        "type": "TAKE_PROFIT_MARKET",
+        "algoType": "CONDITIONAL",
+        "quantity": quantity,
+        "triggerPrice": trigger_price,
+        "reduceOnly": "true",
+    })
+    resp = await client.post("/fapi/v1/algoOrder", params=params)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def round_step_size(quantity: float, step_size: float) -> float:
     """Round quantity down to the nearest valid step size."""
     if step_size <= 0:
