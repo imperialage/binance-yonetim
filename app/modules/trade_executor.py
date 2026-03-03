@@ -102,6 +102,14 @@ async def _execute_trade_inner(
     pos_amt = float(current_pos.get("positionAmt", 0)) if current_pos else 0.0
     closed_previous = False
 
+    # ── 2b. Clean orphan orders if no position ──────
+    if pos_amt == 0:
+        try:
+            await cancel_all_open_orders(symbol)
+            log.info("orphan_orders_cleaned", symbol=symbol)
+        except Exception:
+            pass
+
     # ── 3. Same direction check ──────────────────────
     if (side == "BUY" and pos_amt > 0) or (side == "SELL" and pos_amt < 0):
         duration = (time.monotonic_ns() // 1_000_000) - start_ms
