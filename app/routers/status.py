@@ -56,5 +56,28 @@ async def status() -> StatusResponse:
 async def server_ip() -> dict:
     """Return the server's outbound public IP address."""
     async with httpx.AsyncClient(timeout=5.0) as client:
-        resp = await client.get("https://ifconfig.me")
+        resp = await client.get("https://api.ipify.org")
         return {"ip": resp.text.strip()}
+
+
+@router.get("/debug/proxy")
+async def debug_proxy() -> dict:
+    """Test Binance API connection through proxy."""
+    from app.config import settings
+    result: dict = {
+        "proxy_configured": bool(settings.binance_proxy_url),
+        "proxy_url": settings.binance_proxy_url[:30] + "..." if settings.binance_proxy_url else "",
+        "trading_enabled": settings.trading_enabled,
+    }
+    try:
+        from app.modules.binance_client import get_client
+        client = await get_client()
+        resp = await client.get("/fapi/v1/premiumIndex", params={"symbol": "ETHUSDT"})
+        resp.raise_for_status()
+        data = resp.json()
+        result["binance_ok"] = True
+        result["mark_price"] = data.get("markPrice")
+    except Exception as e:
+        result["binance_ok"] = False
+        result["error"] = str(e)
+    return result
