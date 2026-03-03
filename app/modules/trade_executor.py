@@ -38,6 +38,7 @@ async def execute_trade(
     signal: str,
     price: float,
     event_id: str,
+    tf: str = "5m",
 ) -> None:
     """Execute a trade based on signal. Fire-and-forget from webhook."""
     start_ms = time.monotonic_ns() // 1_000_000
@@ -52,13 +53,14 @@ async def execute_trade(
     lock = _get_lock(symbol)
     async with lock:
         try:
-            await _execute_trade_inner(symbol, side, price, event_id, ts, start_ms)
+            await _execute_trade_inner(symbol, side, price, event_id, ts, start_ms, tf)
         except Exception as e:
             duration = (time.monotonic_ns() // 1_000_000) - start_ms
             log.error(
                 "trade_execution_error",
                 symbol=symbol,
                 side=side,
+                tf=tf,
                 event_id=event_id,
                 error=str(e),
             )
@@ -80,6 +82,7 @@ async def _execute_trade_inner(
     event_id: str,
     ts: int,
     start_ms: int,
+    tf: str = "5m",
 ) -> None:
     """Inner trade logic — called under per-symbol lock."""
 
@@ -205,13 +208,14 @@ async def _execute_trade_inner(
         "market_order_filled",
         symbol=symbol,
         side=side,
+        tf=tf,
         quantity=quantity,
         entry_price=entry_price,
         order_id=order_id,
     )
 
-    # ── 9. Place stop-loss (%0.5) ──────────────────────
-    sl_pct = settings.stop_loss_pct
+    # ── 9. Place stop-loss (per-TF strategy) ────────────
+    sl_pct, tp_pct = settings.get_strategy(tf)
     if side == "BUY":
         raw_stop = entry_price * (1 - sl_pct)
         stop_side = "SELL"
@@ -235,8 +239,7 @@ async def _execute_trade_inner(
     except Exception as e:
         log.error("stop_loss_failed", symbol=symbol, error=str(e))
 
-    # ── 10. Place take-profit (%0.5) ────────────────────
-    tp_pct = settings.take_profit_pct
+    # ── 10. Place take-profit (per-TF strategy) ─────────
     if side == "BUY":
         raw_tp = entry_price * (1 + tp_pct)
         tp_side = "SELL"

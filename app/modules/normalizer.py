@@ -39,6 +39,8 @@ _STRICT_SIGNALS = {"BUY", "SELL", "LONG", "SHORT"}
 
 # ── Timeframe normalization map ──────────────────────
 _TF_MAP: dict[str, str] = {
+    "1": "1m",
+    "1m": "1m",
     "5": "5m",
     "5m": "5m",
     "15": "15m",
@@ -51,7 +53,7 @@ _TF_MAP: dict[str, str] = {
     "4H": "4h",
 }
 
-VALID_TF = {"5m", "15m", "1h", "4h"}
+VALID_TF = {"1m", "5m", "15m", "1h", "4h"}
 
 # ── Symbol prefix pattern ────────────────────────────
 # "BINANCE:ETHUSDT.P" → "ETHUSDT"

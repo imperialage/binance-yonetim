@@ -40,10 +40,24 @@ class Settings(BaseSettings):
     binance_api_secret: str = ""
     binance_testnet: bool = True       # Safety: default to testnet
     trading_enabled: bool = False      # Kill-switch: default off
-    stop_loss_pct: float = 0.005      # 0.5% stop-loss
-    take_profit_pct: float = 0.005    # 0.5% take-profit
+    stop_loss_pct: float = 0.005      # 0.5% stop-loss (fallback)
+    take_profit_pct: float = 0.005    # 0.5% take-profit (fallback)
     binance_proxy_url: str = ""       # SOCKS5 proxy for static IP
     trading_symbols: str = ""         # Comma-separated whitelist e.g. "ETHUSDT,BTCUSDT"
+
+    # Per-timeframe strategy overrides
+    strategy_1m_sl_pct: float = 0.005   # 1m: %0.50 stop-loss
+    strategy_1m_tp_pct: float = 0.0025  # 1m: %0.25 take-profit
+    strategy_5m_sl_pct: float = 0.005   # 5m: %0.50 stop-loss
+    strategy_5m_tp_pct: float = 0.005   # 5m: %0.50 take-profit
+
+    def get_strategy(self, tf: str) -> tuple[float, float]:
+        """Return (sl_pct, tp_pct) for given timeframe."""
+        if tf == "1m":
+            return self.strategy_1m_sl_pct, self.strategy_1m_tp_pct
+        if tf == "5m":
+            return self.strategy_5m_sl_pct, self.strategy_5m_tp_pct
+        return self.stop_loss_pct, self.take_profit_pct
 
 
 settings = Settings()  # type: ignore[call-arg]

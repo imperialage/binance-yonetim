@@ -115,6 +115,7 @@ async def tv_webhook(request: Request) -> WebhookResponse | JSONResponse:
                 signal=event.signal.value,
                 price=event.price,
                 event_id=event.event_id,
+                tf=event.tf,
             ))
             trade_dispatched = True
 
