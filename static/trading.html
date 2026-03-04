@@ -288,8 +288,9 @@ tr:hover{background:#1c2128}
     fetch('/events?symbol=' + SYMBOL + '&limit=30').then(function(r){ return r.json(); })
     .then(function(data){
       signalsData = data;
+      console.log('signals:', data.count, 'events');
       renderSignals();
-    }).catch(function(){});
+    }).catch(function(e){ console.error('fetchSignals error:', e); });
   }
 
   function fetchDiagnosis(){
@@ -529,7 +530,7 @@ tr:hover{background:#1c2128}
     if(!diagData) return;
     var trades = diagData.recent_trades || [];
     if(trades.length === 0){
-      $('tradesContent').innerHTML = '<div class="no-position-msg">Hen\u00fcz trade yok</div>';
+      $('tradesContent').innerHTML = '<div class="no-position-msg">Trade kayd\u0131 yok (gelir ge\u00e7mi\u015fini a\u015fa\u011f\u0131da g\u00f6rebilirsiniz)</div>';
       return;
     }
 
