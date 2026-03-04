@@ -285,7 +285,7 @@ tr:hover{background:#1c2128}
     Promise.all([
       fetch('/debug/diagnosis').then(function(r){ return r.json(); }),
       fetch('/debug/income').then(function(r){ return r.json(); }),
-      fetch('/events?symbol=' + SYMBOL + '&limit=30&source=db').then(function(r){ return r.json(); })
+      fetch('/events?symbol=' + SYMBOL + '&limit=30').then(function(r){ return r.json(); })
     ]).then(function(results){
       diagData = results[0];
       incomeData = results[1];
@@ -313,7 +313,15 @@ tr:hover{background:#1c2128}
 
     // Balance
     var bal = diagData.balance;
-    $('balanceVal').textContent = bal != null ? fmt(bal, 2) : '--';
+    if(diagData.binance_error){
+      $('balanceVal').textContent = 'Hata';
+      $('balanceVal').className = 'card-value negative';
+      $('balanceSub').textContent = 'API ba\u011flant\u0131 sorunu';
+    } else {
+      $('balanceVal').textContent = bal != null ? fmt(bal, 2) : '--';
+      $('balanceVal').className = 'card-value';
+      $('balanceSub').textContent = '';
+    }
 
     // Position
     var pos = diagData.position;
@@ -342,7 +350,11 @@ tr:hover{background:#1c2128}
     }
 
     // Weekly PnL
-    if(incomeData && incomeData.total_pnl != null){
+    if(incomeData && incomeData.error){
+      $('weekPnlVal').textContent = 'Hata';
+      $('weekPnlVal').className = 'card-value negative';
+      $('weekPnlSub').textContent = 'API ba\u011flant\u0131 sorunu';
+    } else if(incomeData && incomeData.total_pnl != null){
       var wp = incomeData.total_pnl;
       $('weekPnlVal').textContent = fmtUSD(wp);
       $('weekPnlVal').className = 'card-value ' + pctClass(wp);
@@ -597,7 +609,8 @@ tr:hover{background:#1c2128}
   // ── Init ──
   connectWS();
   fetchAll();
-  setInterval(fetchAll, 1000);
+  // API calls every 10s (Binance rate limit friendly), price updates via WebSocket every 1s
+  setInterval(fetchAll, 10000);
 })();
 </script>
 
