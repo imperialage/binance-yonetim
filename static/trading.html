@@ -99,9 +99,14 @@ tr:hover{background:#1c2128}
 .spinner{display:inline-block;width:20px;height:20px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite;margin-right:8px;vertical-align:middle}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* Table scroll on mobile */
+/* Table scroll on mobile + max height */
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-.table-wrap table{min-width:600px}
+.table-wrap table{min-width:500px}
+.scroll-list{max-height:400px;overflow-y:auto}
+.scroll-list::-webkit-scrollbar{width:6px}
+.scroll-list::-webkit-scrollbar-track{background:#0d1117}
+.scroll-list::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
+.scroll-list::-webkit-scrollbar-thumb:hover{background:#484f58}
 
 /* Responsive */
 @media(max-width:900px){
@@ -187,17 +192,9 @@ tr:hover{background:#1c2128}
     </div>
   </div>
 
-  <!-- Recent Trades -->
+  <!-- Income / Trade History -->
   <div class="section">
-    <h2>Son Trade'ler</h2>
-    <div id="tradesContent">
-      <div class="loading"><span class="spinner"></span>Y&#252;kleniyor...</div>
-    </div>
-  </div>
-
-  <!-- Income History -->
-  <div class="section">
-    <h2>Gelir Ge&#231;mi&#351;i (7 G&#252;n)</h2>
+    <h2>&#304;&#351;lem Ge&#231;mi&#351;i (7 G&#252;n)</h2>
     <div id="incomeContent">
       <div class="loading"><span class="spinner"></span>Y&#252;kleniyor...</div>
     </div>
@@ -300,7 +297,6 @@ tr:hover{background:#1c2128}
       renderCards();
       renderPositionDetail();
       renderStrategy();
-      renderTrades();
       $('lastUpdate').textContent = 'Son: ' + new Date().toLocaleTimeString('tr-TR');
     }).catch(function(err){
       $('lastUpdate').textContent = 'Hata: ' + err.message;
@@ -328,7 +324,6 @@ tr:hover{background:#1c2128}
     renderCards();
     renderPositionDetail();
     renderStrategy();
-    renderTrades();
     renderIncome();
     renderSignals();
   }
@@ -525,52 +520,12 @@ tr:hover{background:#1c2128}
     $('stratContent').innerHTML = html;
   }
 
-  // ── 4. Trades Table ──
-  function renderTrades(){
-    if(!diagData) return;
-    var trades = diagData.recent_trades || [];
-    if(trades.length === 0){
-      $('tradesContent').innerHTML = '<div class="no-position-msg">Trade kayd\u0131 yok (gelir ge\u00e7mi\u015fini a\u015fa\u011f\u0131da g\u00f6rebilirsiniz)</div>';
-      return;
-    }
-
-    var html = '<div class="table-wrap"><table><thead><tr>';
-    html += '<th>Tarih</th><th>Y\u00f6n</th><th>Giri\u015f</th><th>Stop</th><th>Miktar</th><th>Bakiye</th><th>Durum</th><th>S\u00fcre</th>';
-    html += '</tr></thead><tbody>';
-
-    trades.forEach(function(t){
-      var sideType = (t.side === 'BUY') ? 'buy' : 'sell';
-      var statusType = (t.status || '').toLowerCase();
-      if(statusType === 'filled') statusType = 'filled';
-      else if(statusType === 'error') statusType = 'error';
-      else if(statusType === 'skipped') statusType = 'skipped';
-      else statusType = 'failed';
-
-      html += '<tr>';
-      html += '<td>' + tsToLocal(t.created_at || t.ts) + '</td>';
-      html += '<td>' + badgeHTML(t.side, sideType) + '</td>';
-      html += '<td>' + (t.entry_price ? fmt(t.entry_price, 2) : '--') + '</td>';
-      html += '<td>' + (t.stop_price ? fmt(t.stop_price, 2) : '--') + '</td>';
-      html += '<td>' + (t.quantity ? fmt(t.quantity, 4) : '--') + '</td>';
-      html += '<td>' + (t.balance_used ? fmt(t.balance_used, 2) : '--') + '</td>';
-      html += '<td>' + badgeHTML(t.status, statusType) + '</td>';
-      html += '<td>' + (t.duration_ms != null ? t.duration_ms + 'ms' : '--') + '</td>';
-      html += '</tr>';
-      if(t.reason){
-        html += '<tr><td colspan="8" style="color:#8b949e;font-size:11px;padding:2px 10px 6px">\u2514 ' + t.reason + '</td></tr>';
-      }
-    });
-
-    html += '</tbody></table></div>';
-    $('tradesContent').innerHTML = html;
-  }
-
-  // ── 5. Income History ──
+  // ── 4. Income / Trade History ──
   function renderIncome(){
     if(!incomeData) return;
     var trades = incomeData.trades || [];
 
-    // Summary
+    // Summary chips
     var html = '<div class="section-summary">';
     html += '<div class="summary-chip">Toplam PnL: <span class="chip-val ' + (incomeData.total_pnl >= 0 ? 'pnl-positive' : 'pnl-negative') + '">' + fmtUSD(incomeData.total_pnl) + '</span></div>';
     html += '<div class="summary-chip">\u0130\u015flem: <span class="chip-val">' + incomeData.trade_count + '</span></div>';
@@ -585,21 +540,33 @@ tr:hover{background:#1c2128}
       return;
     }
 
-    html += '<div class="table-wrap"><table><thead><tr>';
-    html += '<th>Tarih</th><th>Sembol</th><th>PnL ($)</th><th>Detay</th>';
+    html += '<div class="scroll-list"><div class="table-wrap"><table><thead><tr>';
+    html += '<th>#</th><th>Tarih</th><th>Sonu\u00e7</th><th>PnL ($)</th><th>K\u00fcm\u00fclatif</th>';
     html += '</tr></thead><tbody>';
 
-    trades.forEach(function(t){
-      var cls = t.pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+    var cumulative = 0;
+    // trades are newest first, calculate cumulative from oldest
+    var reversed = trades.slice().reverse();
+    var cumulatives = [];
+    reversed.forEach(function(t){ cumulative += t.pnl; cumulatives.push(cumulative); });
+    cumulatives.reverse();
+
+    trades.forEach(function(t, i){
+      var isWin = t.pnl >= 0;
+      var cls = isWin ? 'pnl-positive' : 'pnl-negative';
+      var resultBadge = isWin ? badgeHTML('KAR', 'buy') : badgeHTML('ZARAR', 'sell');
+      var cumCls = cumulatives[i] >= 0 ? 'pnl-positive' : 'pnl-negative';
+
       html += '<tr>';
+      html += '<td style="color:#8b949e">' + (i + 1) + '</td>';
       html += '<td>' + t.time + '</td>';
-      html += '<td>' + (t.symbol || SYMBOL) + '</td>';
+      html += '<td>' + resultBadge + '</td>';
       html += '<td class="' + cls + '">' + fmtUSD(t.pnl) + '</td>';
-      html += '<td style="color:#8b949e;font-size:11px">' + (t.info || '') + '</td>';
+      html += '<td class="' + cumCls + '">' + fmtUSD(cumulatives[i]) + '</td>';
       html += '</tr>';
     });
 
-    html += '</tbody></table></div>';
+    html += '</tbody></table></div></div>';
     $('incomeContent').innerHTML = html;
   }
 
@@ -612,23 +579,22 @@ tr:hover{background:#1c2128}
       return;
     }
 
-    var html = '<div class="table-wrap"><table><thead><tr>';
-    html += '<th>Tarih</th><th>Indikat\u00f6r</th><th>TF</th><th>Sinyal</th><th>Fiyat</th><th>G\u00fc\u00e7</th>';
+    var html = '<div class="scroll-list"><div class="table-wrap"><table><thead><tr>';
+    html += '<th>#</th><th>Tarih</th><th>TF</th><th>Sinyal</th><th>Fiyat</th>';
     html += '</tr></thead><tbody>';
 
-    events.forEach(function(ev){
+    events.forEach(function(ev, i){
       var sigType = (ev.signal === 'BUY' || ev.signal === 'LONG') ? 'buy' : 'sell';
       html += '<tr>';
+      html += '<td style="color:#8b949e">' + (i + 1) + '</td>';
       html += '<td>' + tsToLocal(ev.ts) + '</td>';
-      html += '<td>' + (ev.indicator || '--') + '</td>';
       html += '<td>' + (ev.tf || '--') + '</td>';
       html += '<td>' + badgeHTML(ev.signal, sigType) + '</td>';
       html += '<td>' + (ev.price ? fmt(ev.price, 2) : '--') + '</td>';
-      html += '<td>' + (ev.strength != null ? fmt(ev.strength, 2) : '--') + '</td>';
       html += '</tr>';
     });
 
-    html += '</tbody></table></div>';
+    html += '</tbody></table></div></div>';
     $('signalsContent').innerHTML = html;
   }
 
