@@ -280,6 +280,10 @@ tr:hover{background:#1c2128}
   }
 
   // ── Data Fetching ──
+  var fetchInterval = 10000;
+  var fetchTimer = null;
+  var hasBinanceError = false;
+
   function fetchAll(){
     $('lastUpdate').textContent = 'G\u00fcncelleniyor...';
     Promise.all([
@@ -292,6 +296,20 @@ tr:hover{background:#1c2128}
       signalsData = results[2];
       renderAll();
       $('lastUpdate').textContent = 'Son: ' + new Date().toLocaleTimeString('tr-TR');
+
+      // Binance ban varsa yava\u015flat, yoksa normal h\u0131za d\u00f6n
+      if(diagData.binance_error && diagData.binance_error.indexOf('banned') !== -1){
+        if(!hasBinanceError){
+          hasBinanceError = true;
+          clearInterval(fetchTimer);
+          fetchTimer = setInterval(fetchAll, 60000); // Ban varken 60s bekle
+          $('lastUpdate').textContent += ' (API ban - 60s bekleme)';
+        }
+      } else if(hasBinanceError){
+        hasBinanceError = false;
+        clearInterval(fetchTimer);
+        fetchTimer = setInterval(fetchAll, 10000); // Normal: 10s
+      }
     }).catch(function(err){
       $('lastUpdate').textContent = 'Hata: ' + err.message;
     });
@@ -609,8 +627,8 @@ tr:hover{background:#1c2128}
   // ── Init ──
   connectWS();
   fetchAll();
-  // API calls every 10s (Binance rate limit friendly), price updates via WebSocket every 1s
-  setInterval(fetchAll, 10000);
+  // API calls every 10s, auto-slows to 60s on Binance ban
+  fetchTimer = setInterval(fetchAll, 10000);
 })();
 </script>
 
