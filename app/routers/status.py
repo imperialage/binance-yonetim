@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import httpx
@@ -177,12 +178,44 @@ async def debug_diagnosis() -> dict:
 
 @router.get("/debug/income")
 async def debug_income() -> dict:
-    """Get realized PnL history (last 7 days) from Binance."""
-    from app.modules.binance_client import get_income_history
+    """Get realized PnL history with entry/exit prices (last 7 days)."""
+    from app.modules.binance_client import get_income_history, get_user_trades
     from datetime import datetime, timezone, timedelta
     tz = timezone(timedelta(hours=3))
     try:
-        records = await get_income_history("ETHUSDT", "REALIZED_PNL", days=7)
+        records, user_trades = await asyncio.gather(
+            get_income_history("ETHUSDT", "REALIZED_PNL", days=7),
+            get_user_trades("ETHUSDT", days=7),
+        )
+
+        # Build a map: orderId -> trade details (price, side, qty)
+        # Trades with realizedPnl != 0 are position closes (exit price)
+        # Group by orderId to get average fill price
+        order_map: dict = {}
+        for ut in user_trades:
+            oid = str(ut.get("orderId", ""))
+            price = float(ut.get("price", 0))
+            qty = float(ut.get("qty", 0))
+            rpnl = float(ut.get("realizedPnl", 0))
+            side = ut.get("side", "")
+            ts_ms = int(ut.get("time", 0))
+            if oid not in order_map:
+                order_map[oid] = {
+                    "side": side,
+                    "total_qty": 0.0,
+                    "total_value": 0.0,
+                    "rpnl": 0.0,
+                    "ts_ms": ts_ms,
+                }
+            order_map[oid]["total_qty"] += qty
+            order_map[oid]["total_value"] += price * qty
+            order_map[oid]["rpnl"] += rpnl
+
+        # Calculate avg price per order
+        for oid, o in order_map.items():
+            o["avg_price"] = round(o["total_value"] / o["total_qty"], 2) if o["total_qty"] > 0 else 0
+
+        # Match income records with trade details
         trades = []
         total_pnl = 0.0
         for r in records:
@@ -192,13 +225,37 @@ async def debug_income() -> dict:
             total_pnl += pnl
             ts_ms = int(r.get("time", 0))
             ts_human = datetime.fromtimestamp(ts_ms / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
+            order_id = str(r.get("info", ""))
+
+            # Find matching order for exit price
+            order_info = order_map.get(order_id, {})
+            exit_price = order_info.get("avg_price", 0)
+            exit_side = order_info.get("side", "")
+            qty = round(order_info.get("total_qty", 0), 4)
+
+            # Determine entry price from exit price and PnL
+            entry_price = 0.0
+            if exit_price and qty:
+                # For closing BUY (was SHORT): entry = exit + pnl/qty
+                # For closing SELL (was LONG): entry = exit - pnl/qty
+                if exit_side == "BUY":
+                    entry_price = round(exit_price + pnl / qty, 2)
+                else:
+                    entry_price = round(exit_price - pnl / qty, 2)
+
+            # Original position side (opposite of close side)
+            pos_side = "LONG" if exit_side == "SELL" else "SHORT" if exit_side == "BUY" else ""
+
             trades.append({
                 "time": ts_human,
+                "side": pos_side,
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "qty": qty,
                 "pnl": round(pnl, 6),
                 "symbol": r.get("symbol"),
-                "info": r.get("info", ""),
             })
-        # En yenisi üstte
+
         trades.reverse()
         win = sum(1 for t in trades if t["pnl"] > 0)
         lose = sum(1 for t in trades if t["pnl"] < 0)

@@ -541,11 +541,10 @@ tr:hover{background:#1c2128}
     }
 
     html += '<div class="scroll-list"><div class="table-wrap"><table><thead><tr>';
-    html += '<th>#</th><th>Tarih</th><th>Sonu\u00e7</th><th>PnL ($)</th><th>K\u00fcm\u00fclatif</th>';
+    html += '<th>#</th><th>Tarih</th><th>Y\u00f6n</th><th>Giri\u015f</th><th>\u00c7\u0131k\u0131\u015f</th><th>Miktar</th><th>PnL</th><th>K\u00fcm.</th>';
     html += '</tr></thead><tbody>';
 
     var cumulative = 0;
-    // trades are newest first, calculate cumulative from oldest
     var reversed = trades.slice().reverse();
     var cumulatives = [];
     reversed.forEach(function(t){ cumulative += t.pnl; cumulatives.push(cumulative); });
@@ -554,13 +553,16 @@ tr:hover{background:#1c2128}
     trades.forEach(function(t, i){
       var isWin = t.pnl >= 0;
       var cls = isWin ? 'pnl-positive' : 'pnl-negative';
-      var resultBadge = isWin ? badgeHTML('KAR', 'buy') : badgeHTML('ZARAR', 'sell');
+      var sideBadge = t.side === 'LONG' ? badgeHTML('LONG', 'buy') : t.side === 'SHORT' ? badgeHTML('SHORT', 'sell') : '--';
       var cumCls = cumulatives[i] >= 0 ? 'pnl-positive' : 'pnl-negative';
 
       html += '<tr>';
       html += '<td style="color:#8b949e">' + (i + 1) + '</td>';
       html += '<td>' + t.time + '</td>';
-      html += '<td>' + resultBadge + '</td>';
+      html += '<td>' + sideBadge + '</td>';
+      html += '<td>' + (t.entry_price ? fmt(t.entry_price, 2) : '--') + '</td>';
+      html += '<td>' + (t.exit_price ? fmt(t.exit_price, 2) : '--') + '</td>';
+      html += '<td>' + (t.qty ? t.qty : '--') + '</td>';
       html += '<td class="' + cls + '">' + fmtUSD(t.pnl) + '</td>';
       html += '<td class="' + cumCls + '">' + fmtUSD(cumulatives[i]) + '</td>';
       html += '</tr>';
