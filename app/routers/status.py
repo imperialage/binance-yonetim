@@ -259,6 +259,14 @@ async def debug_income() -> dict:
         trades.reverse()
         win = sum(1 for t in trades if t["pnl"] > 0)
         lose = sum(1 for t in trades if t["pnl"] < 0)
+        # Debug: show sample raw data for troubleshooting
+        debug_info = {}
+        if records:
+            debug_info["sample_income"] = {k: str(v) for k, v in records[-1].items()}
+        if user_trades:
+            debug_info["sample_trade"] = {k: str(v) for k, v in user_trades[-1].items()}
+            debug_info["order_map_keys_sample"] = list(order_map.keys())[:5]
+
         return {
             "total_pnl": round(total_pnl, 6),
             "trade_count": len(trades),
@@ -266,6 +274,7 @@ async def debug_income() -> dict:
             "lose": lose,
             "win_rate": f"{(win / len(trades) * 100):.0f}%" if trades else "0%",
             "trades": trades,
+            "_debug": debug_info,
         }
     except Exception as e:
         return {"error": str(e)}
