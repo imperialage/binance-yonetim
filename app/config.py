@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     # Per-timeframe strategy overrides
     strategy_1m_sl_pct: float = 0.005   # 1m: %0.50 stop-loss
     strategy_1m_tp_pct: float = 0.0025  # 1m: %0.25 take-profit
-    strategy_5m_sl_pct: float = 0.005   # 5m: %0.50 stop-loss
+    strategy_5m_sl_pct: float = 0.01    # 5m: %1.00 stop-loss
     strategy_5m_tp_pct: float = 0.005   # 5m: %0.50 take-profit
 
     def get_strategy(self, tf: str) -> tuple[float, float]:
