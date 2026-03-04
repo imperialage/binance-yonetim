@@ -188,12 +188,11 @@ async def debug_income() -> dict:
             get_user_trades("ETHUSDT", days=7),
         )
 
-        # Build a map: orderId -> trade details (price, side, qty)
-        # Trades with realizedPnl != 0 are position closes (exit price)
-        # Group by orderId to get average fill price
+        # Build a map: tradeId -> trade details (price, side, qty)
+        # Income "info" field = tradeId, not orderId
         order_map: dict = {}
         for ut in user_trades:
-            oid = str(ut.get("orderId", ""))
+            oid = str(ut.get("id", ""))
             price = float(ut.get("price", 0))
             qty = float(ut.get("qty", 0))
             rpnl = float(ut.get("realizedPnl", 0))
@@ -259,14 +258,6 @@ async def debug_income() -> dict:
         trades.reverse()
         win = sum(1 for t in trades if t["pnl"] > 0)
         lose = sum(1 for t in trades if t["pnl"] < 0)
-        # Debug: show sample raw data for troubleshooting
-        debug_info = {}
-        if records:
-            debug_info["sample_income"] = {k: str(v) for k, v in records[-1].items()}
-        if user_trades:
-            debug_info["sample_trade"] = {k: str(v) for k, v in user_trades[-1].items()}
-            debug_info["order_map_keys_sample"] = list(order_map.keys())[:5]
-
         return {
             "total_pnl": round(total_pnl, 6),
             "trade_count": len(trades),
@@ -274,7 +265,6 @@ async def debug_income() -> dict:
             "lose": lose,
             "win_rate": f"{(win / len(trades) * 100):.0f}%" if trades else "0%",
             "trades": trades,
-            "_debug": debug_info,
         }
     except Exception as e:
         return {"error": str(e)}
