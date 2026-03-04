@@ -279,40 +279,47 @@ tr:hover{background:#1c2128}
     ws.onerror = function(){ ws.close(); };
   }
 
-  // ── Data Fetching ──
-  var fetchInterval = 10000;
-  var fetchTimer = null;
-  var hasBinanceError = false;
+  // ── Data Fetching (split by frequency) ──
+  // Sinyaller: 10s (Binance API yok, sadece Redis)
+  // Pozisyon/bakiye: 60s (Binance API, dakikada 1 kez)
+  // Gelir ge\u00e7mi\u015fi: 5dk (Binance API, nadiren de\u011fi\u015fir)
 
-  function fetchAll(){
-    $('lastUpdate').textContent = 'G\u00fcncelleniyor...';
-    Promise.all([
-      fetch('/debug/diagnosis').then(function(r){ return r.json(); }),
-      fetch('/debug/income').then(function(r){ return r.json(); }),
-      fetch('/events?symbol=' + SYMBOL + '&limit=30').then(function(r){ return r.json(); })
-    ]).then(function(results){
-      diagData = results[0];
-      incomeData = results[1];
-      signalsData = results[2];
-      renderAll();
+  function fetchSignals(){
+    fetch('/events?symbol=' + SYMBOL + '&limit=30').then(function(r){ return r.json(); })
+    .then(function(data){
+      signalsData = data;
+      renderSignals();
+    }).catch(function(){});
+  }
+
+  function fetchDiagnosis(){
+    fetch('/debug/diagnosis').then(function(r){ return r.json(); })
+    .then(function(data){
+      diagData = data;
+      renderCards();
+      renderPositionDetail();
+      renderStrategy();
+      renderTrades();
       $('lastUpdate').textContent = 'Son: ' + new Date().toLocaleTimeString('tr-TR');
-
-      // Binance ban varsa yava\u015flat, yoksa normal h\u0131za d\u00f6n
-      if(diagData.binance_error && diagData.binance_error.indexOf('banned') !== -1){
-        if(!hasBinanceError){
-          hasBinanceError = true;
-          clearInterval(fetchTimer);
-          fetchTimer = setInterval(fetchAll, 60000); // Ban varken 60s bekle
-          $('lastUpdate').textContent += ' (API ban - 60s bekleme)';
-        }
-      } else if(hasBinanceError){
-        hasBinanceError = false;
-        clearInterval(fetchTimer);
-        fetchTimer = setInterval(fetchAll, 10000); // Normal: 10s
-      }
     }).catch(function(err){
       $('lastUpdate').textContent = 'Hata: ' + err.message;
     });
+  }
+
+  function fetchIncome(){
+    fetch('/debug/income').then(function(r){ return r.json(); })
+    .then(function(data){
+      incomeData = data;
+      renderCards();
+      renderIncome();
+    }).catch(function(){});
+  }
+
+  function fetchAll(){
+    $('lastUpdate').textContent = 'G\u00fcncelleniyor...';
+    fetchSignals();
+    fetchDiagnosis();
+    fetchIncome();
   }
 
   // ── Render All ──
@@ -627,8 +634,9 @@ tr:hover{background:#1c2128}
   // ── Init ──
   connectWS();
   fetchAll();
-  // API calls every 10s, auto-slows to 60s on Binance ban
-  fetchTimer = setInterval(fetchAll, 10000);
+  setInterval(fetchSignals, 10000);     // Sinyaller: 10s (API yok)
+  setInterval(fetchDiagnosis, 60000);   // Pozisyon/bakiye: 60s
+  setInterval(fetchIncome, 300000);     // Gelir: 5dk
 })();
 </script>
 
