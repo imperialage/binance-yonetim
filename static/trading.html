@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trading Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0d1117;color:#c9d1d9;font-family:'SF Mono','Cascadia Code','Consolas',monospace;font-size:14px;min-height:100vh}
+
+/* Header */
+header{position:sticky;top:0;z-index:10;background:#161b22;border-bottom:1px solid #30363d;padding:12px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+header h1{font-size:18px;font-weight:600;color:#e6edf3;white-space:nowrap}
+.status-badge{display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 10px;border-radius:12px;background:#1c2128}
+.status-badge .dot{width:8px;height:8px;border-radius:50%;background:#f85149;transition:background .3s}
+.status-badge.connected .dot{background:#3fb950}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.last-update{font-size:11px;color:#8b949e}
+.btn-refresh{background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:4px 12px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:12px}
+.btn-refresh:hover{background:#30363d;border-color:#58a6ff}
+
+/* Container */
+.container{padding:16px 20px 40px;max-width:1400px;margin:0 auto}
+
+/* Summary Cards */
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;position:relative;overflow:hidden}
+.card-label{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+.card-value{font-size:24px;font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums}
+.card-sub{font-size:12px;color:#8b949e;margin-top:4px}
+.card-value.positive{color:#3fb950}
+.card-value.negative{color:#f85149}
+.card-value.long{color:#3fb950}
+.card-value.short{color:#f85149}
+.card-value.neutral{color:#8b949e}
+
+/* Position Detail */
+.position-detail{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px;margin-bottom:20px}
+.position-detail h2{font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:1px;margin-bottom:16px}
+.pos-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+.pos-item{text-align:center}
+.pos-item .label{font-size:11px;color:#8b949e;margin-bottom:4px}
+.pos-item .value{font-size:16px;font-weight:600;color:#e6edf3}
+
+/* Progress Bar (SL ← Price → TP) */
+.progress-container{position:relative;margin:12px 0}
+.progress-labels{display:flex;justify-content:space-between;font-size:11px;margin-bottom:6px}
+.progress-labels .sl-label{color:#f85149}
+.progress-labels .tp-label{color:#3fb950}
+.progress-bar{position:relative;height:28px;background:#21262d;border-radius:14px;overflow:visible}
+.progress-fill-danger{position:absolute;left:0;top:0;height:100%;background:linear-gradient(90deg,#f8514966,transparent);border-radius:14px 0 0 14px}
+.progress-fill-profit{position:absolute;right:0;top:0;height:100%;background:linear-gradient(270deg,#3fb95066,transparent);border-radius:0 14px 14px 0}
+.progress-marker{position:absolute;top:-2px;width:4px;height:32px;background:#e6edf3;border-radius:2px;transform:translateX(-50%);z-index:2;box-shadow:0 0 8px rgba(230,237,243,0.5)}
+.progress-entry{position:absolute;top:0;width:2px;height:28px;background:#8b949e;opacity:0.5;transform:translateX(-50%)}
+.progress-pct{display:flex;justify-content:space-between;font-size:12px;margin-top:6px;font-weight:600}
+.progress-pct .to-sl{color:#f85149}
+.progress-pct .to-tp{color:#3fb950}
+.no-position-msg{text-align:center;color:#8b949e;padding:20px;font-size:14px}
+
+/* Strategy Card */
+.strategy-card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px;margin-bottom:20px}
+.strategy-card h2{font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
+.strat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.strat-item{background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px}
+.strat-item .tf-name{font-size:13px;font-weight:600;color:#58a6ff;margin-bottom:6px}
+.strat-item .strat-row{display:flex;justify-content:space-between;font-size:12px;margin-top:3px}
+.strat-item .strat-row .k{color:#8b949e}
+.strat-item .strat-row .v{color:#e6edf3}
+.strat-active{border-color:#3fb950}
+.strat-inactive{opacity:0.4}
+.trading-status{display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600}
+.trading-status.on{background:#3fb95022;color:#3fb950;border:1px solid #3fb95044}
+.trading-status.off{background:#f8514922;color:#f85149;border:1px solid #f8514944}
+
+/* Tables */
+.section{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px;margin-bottom:20px}
+.section h2{font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
+.section-summary{display:flex;gap:20px;margin-bottom:12px;flex-wrap:wrap}
+.summary-chip{background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:6px 14px;font-size:13px}
+.summary-chip .chip-val{font-weight:700;margin-left:4px}
+
+table{width:100%;border-collapse:collapse}
+thead{background:#0d1117}
+th{text-align:left;padding:8px 10px;font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #30363d}
+td{padding:7px 10px;border-bottom:1px solid #21262d;font-size:13px;font-variant-numeric:tabular-nums}
+tr:hover{background:#1c2128}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge-buy{background:#3fb95022;color:#3fb950}
+.badge-sell{background:#f8514922;color:#f85149}
+.badge-filled{background:#3fb95022;color:#3fb950}
+.badge-error{background:#f8514922;color:#f85149}
+.badge-skipped{background:#8b949e22;color:#8b949e}
+.badge-failed{background:#d2992222;color:#d29922}
+.pnl-positive{color:#3fb950;font-weight:600}
+.pnl-negative{color:#f85149;font-weight:600}
+
+/* Loading */
+.loading{text-align:center;padding:40px;color:#8b949e}
+.spinner{display:inline-block;width:20px;height:20px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite;margin-right:8px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Table scroll on mobile */
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.table-wrap table{min-width:600px}
+
+/* Responsive */
+@media(max-width:900px){
+  .cards{grid-template-columns:repeat(2,1fr)}
+  .pos-grid{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:600px){
+  header{padding:10px 12px;gap:8px}
+  header h1{font-size:15px}
+  .header-right{margin-left:0;width:100%;justify-content:space-between}
+  .container{padding:10px}
+  .cards{grid-template-columns:1fr 1fr;gap:8px}
+  .card{padding:12px}
+  .card-value{font-size:18px}
+  .card-label{font-size:10px}
+  .pos-grid{grid-template-columns:1fr 1fr;gap:10px}
+  .pos-item .value{font-size:14px}
+  .section{padding:12px}
+  .section h2{font-size:12px}
+  .strategy-card{padding:14px}
+  .strat-grid{grid-template-columns:1fr}
+  th,td{padding:5px 6px;font-size:11px}
+  .section-summary{gap:8px}
+  .summary-chip{padding:4px 10px;font-size:11px}
+  .progress-labels{font-size:10px}
+  .progress-pct{font-size:11px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Trading Dashboard</h1>
+  <div class="status-badge" id="wsBadge">
+    <span class="dot"></span>
+    <span id="wsText">Ba&#287;lan&#305;yor...</span>
+  </div>
+  <div class="header-right">
+    <span class="last-update" id="lastUpdate"></span>
+    <button class="btn-refresh" onclick="fetchAll()">Yenile</button>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Summary Cards -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">Bakiye (USDT)</div>
+      <div class="card-value" id="balanceVal">--</div>
+      <div class="card-sub" id="balanceSub"></div>
+    </div>
+    <div class="card">
+      <div class="card-label">A&#231;&#305;k Pozisyon</div>
+      <div class="card-value neutral" id="positionVal">--</div>
+      <div class="card-sub" id="positionSub"></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Unrealized PnL</div>
+      <div class="card-value" id="pnlVal">--</div>
+      <div class="card-sub" id="pnlSub"></div>
+    </div>
+    <div class="card">
+      <div class="card-label">7 G&#252;nl&#252;k PnL</div>
+      <div class="card-value" id="weekPnlVal">--</div>
+      <div class="card-sub" id="weekPnlSub"></div>
+    </div>
+  </div>
+
+  <!-- Position Detail + Progress Bar -->
+  <div class="position-detail" id="posDetail">
+    <h2>Pozisyon Detay&#305; &amp; Hedef Yak&#305;nl&#305;k</h2>
+    <div id="posContent">
+      <div class="loading"><span class="spinner"></span>Y&#252;kleniyor...</div>
+    </div>
+  </div>
+
+  <!-- Strategy Card -->
+  <div class="strategy-card" id="strategyCard">
+    <h2>Strateji Ayarlar&#305;</h2>
+    <div id="stratContent">
+      <div class="loading"><span class="spinner"></span>Y&#252;kleniyor...</div>
+    </div>
+  </div>
+
+  <!-- Recent Trades -->
+  <div class="section">
+    <h2>Son Trade'ler</h2>
+    <div id="tradesContent">
+      <div class="loading"><span class="spinner"></span>Y&#252;kleniyor...</div>
+    </div>
+  </div>
+
+  <!-- Income History -->
+  <div class="section">
+    <h2>Gelir Ge&#231;mi&#351;i (7 G&#252;n)</h2>
+    <div id="incomeContent">
+      <div class="loading"><span class="spinner"></span>Y&#252;kleniyor...</div>
+    </div>
+  </div>
+
+  <!-- Recent Signals -->
+  <div class="section">
+    <h2>Son Sinyaller</h2>
+    <div id="signalsContent">
+      <div class="loading"><span class="spinner"></span>Y&#252;kleniyor...</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  // ── State ──
+  let diagData = null;
+  let incomeData = null;
+  let signalsData = null;
+  let livePrice = 0;
+  let ws = null;
+  let reconnectTimer = null;
+
+  const SYMBOL = 'ETHUSDT';
+
+  // ── Helpers ──
+  function $(id){ return document.getElementById(id); }
+
+  function fmt(n, decimals){
+    if(n == null || isNaN(n)) return '--';
+    return Number(n).toFixed(decimals != null ? decimals : 2);
+  }
+
+  function fmtUSD(n){
+    if(n == null || isNaN(n)) return '--';
+    var v = Number(n);
+    var sign = v >= 0 ? '+' : '';
+    return sign + v.toFixed(4) + ' $';
+  }
+
+  function pctClass(n){ return n >= 0 ? 'positive' : 'negative'; }
+
+  function badgeHTML(text, type){
+    return '<span class="badge badge-' + type + '">' + text + '</span>';
+  }
+
+  function tsToLocal(ts){
+    if(!ts) return '--';
+    // If ts string like "2025-01-01 12:00:00", show as-is
+    if(typeof ts === 'string' && ts.length > 10) return ts;
+    var d = new Date(typeof ts === 'number' && ts < 1e12 ? ts * 1000 : ts);
+    return d.toLocaleString('tr-TR');
+  }
+
+  // ── WebSocket ──
+  function connectWS(){
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(proto + '//' + location.host + '/ws/prices');
+    ws.onopen = function(){
+      $('wsBadge').classList.add('connected');
+      $('wsText').textContent = 'Canl\u0131';
+    };
+    ws.onmessage = function(e){
+      try {
+        var data = JSON.parse(e.data);
+        if(data[SYMBOL]) {
+          livePrice = parseFloat(data[SYMBOL]);
+          updatePositionProgress();
+        }
+      } catch(err){}
+    };
+    ws.onclose = function(){
+      $('wsBadge').classList.remove('connected');
+      $('wsText').textContent = 'Ba\u011flant\u0131 kesildi';
+      if(!reconnectTimer) reconnectTimer = setTimeout(function(){ reconnectTimer=null; connectWS(); }, 3000);
+    };
+    ws.onerror = function(){ ws.close(); };
+  }
+
+  // ── Data Fetching ──
+  function fetchAll(){
+    $('lastUpdate').textContent = 'G\u00fcncelleniyor...';
+    Promise.all([
+      fetch('/debug/diagnosis').then(function(r){ return r.json(); }),
+      fetch('/debug/income').then(function(r){ return r.json(); }),
+      fetch('/events?symbol=' + SYMBOL + '&limit=30&source=db').then(function(r){ return r.json(); })
+    ]).then(function(results){
+      diagData = results[0];
+      incomeData = results[1];
+      signalsData = results[2];
+      renderAll();
+      $('lastUpdate').textContent = 'Son: ' + new Date().toLocaleTimeString('tr-TR');
+    }).catch(function(err){
+      $('lastUpdate').textContent = 'Hata: ' + err.message;
+    });
+  }
+
+  // ── Render All ──
+  function renderAll(){
+    renderCards();
+    renderPositionDetail();
+    renderStrategy();
+    renderTrades();
+    renderIncome();
+    renderSignals();
+  }
+
+  // ── 1. Summary Cards ──
+  function renderCards(){
+    if(!diagData) return;
+
+    // Balance
+    var bal = diagData.balance;
+    $('balanceVal').textContent = bal != null ? fmt(bal, 2) : '--';
+
+    // Position
+    var pos = diagData.position;
+    if(pos && parseFloat(pos.positionAmt) !== 0){
+      var amt = parseFloat(pos.positionAmt);
+      var side = amt > 0 ? 'LONG' : 'SHORT';
+      $('positionVal').textContent = side;
+      $('positionVal').className = 'card-value ' + (amt > 0 ? 'long' : 'short');
+      $('positionSub').textContent = Math.abs(amt) + ' @ ' + fmt(pos.entryPrice, 2);
+
+      // Unrealized PnL
+      var upnl = parseFloat(pos.unRealizedProfit || 0);
+      $('pnlVal').textContent = fmtUSD(upnl);
+      $('pnlVal').className = 'card-value ' + pctClass(upnl);
+      if(pos.entryPrice && parseFloat(pos.entryPrice) > 0){
+        var pnlPct = (upnl / (Math.abs(amt) * parseFloat(pos.entryPrice))) * 100;
+        $('pnlSub').textContent = (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%';
+      }
+    } else {
+      $('positionVal').textContent = 'Pozisyon Yok';
+      $('positionVal').className = 'card-value neutral';
+      $('positionSub').textContent = '';
+      $('pnlVal').textContent = '--';
+      $('pnlVal').className = 'card-value';
+      $('pnlSub').textContent = '';
+    }
+
+    // Weekly PnL
+    if(incomeData && incomeData.total_pnl != null){
+      var wp = incomeData.total_pnl;
+      $('weekPnlVal').textContent = fmtUSD(wp);
+      $('weekPnlVal').className = 'card-value ' + pctClass(wp);
+      $('weekPnlSub').textContent = incomeData.trade_count + ' i\u015flem | ' + incomeData.win_rate + ' kazan\u0131m';
+    }
+  }
+
+  // ── 2. Position Detail + Progress ──
+  function renderPositionDetail(){
+    if(!diagData) return;
+    var pos = diagData.position;
+    var config = diagData.config;
+
+    if(!pos || parseFloat(pos.positionAmt) === 0){
+      $('posContent').innerHTML = '<div class="no-position-msg">A\u00e7\u0131k pozisyon yok</div>';
+      return;
+    }
+
+    var amt = parseFloat(pos.positionAmt);
+    var entry = parseFloat(pos.entryPrice);
+    var mark = parseFloat(pos.markPrice || 0);
+    var isLong = amt > 0;
+
+    // Calculate SL/TP from strategy (use 5m as default since that's the primary)
+    var slPct = config.strategies ? config.strategies['5m'].sl_pct : 0.01;
+    var tpPct = config.strategies ? config.strategies['5m'].tp_pct : 0.005;
+
+    var slPrice, tpPrice;
+    if(isLong){
+      slPrice = entry * (1 - slPct);
+      tpPrice = entry * (1 + tpPct);
+    } else {
+      slPrice = entry * (1 + slPct);
+      tpPrice = entry * (1 - tpPct);
+    }
+
+    var html = '<div class="pos-grid">';
+    html += '<div class="pos-item"><div class="label">Giri\u015f Fiyat\u0131</div><div class="value">' + fmt(entry, 2) + '</div></div>';
+    html += '<div class="pos-item"><div class="label">Mevcut Fiyat</div><div class="value" id="liveMarkPrice">' + fmt(mark || livePrice, 2) + '</div></div>';
+    html += '<div class="pos-item"><div class="label">Stop-Loss</div><div class="value" style="color:#f85149">' + fmt(slPrice, 2) + '</div></div>';
+    html += '<div class="pos-item"><div class="label">Take-Profit</div><div class="value" style="color:#3fb950">' + fmt(tpPrice, 2) + '</div></div>';
+    html += '</div>';
+
+    // Progress bar
+    html += '<div class="progress-container">';
+    html += '<div class="progress-labels"><span class="sl-label">SL: ' + fmt(slPrice, 2) + '</span><span style="color:#8b949e">Giri\u015f: ' + fmt(entry, 2) + '</span><span class="tp-label">TP: ' + fmt(tpPrice, 2) + '</span></div>';
+    html += '<div class="progress-bar" id="progressBar" data-sl="' + slPrice + '" data-tp="' + tpPrice + '" data-entry="' + entry + '" data-long="' + (isLong?1:0) + '">';
+    html += '<div class="progress-fill-danger" style="width:50%"></div>';
+    html += '<div class="progress-fill-profit" style="width:50%"></div>';
+    html += '<div class="progress-entry" id="entryMarker"></div>';
+    html += '<div class="progress-marker" id="priceMarker"></div>';
+    html += '</div>';
+    html += '<div class="progress-pct"><span class="to-sl" id="pctToSL">--</span><span class="to-tp" id="pctToTP">--</span></div>';
+    html += '</div>';
+
+    $('posContent').innerHTML = html;
+    updatePositionProgress();
+  }
+
+  function updatePositionProgress(){
+    var bar = document.getElementById('progressBar');
+    if(!bar) return;
+    var sl = parseFloat(bar.dataset.sl);
+    var tp = parseFloat(bar.dataset.tp);
+    var entry = parseFloat(bar.dataset.entry);
+    var isLong = bar.dataset.long === '1';
+    var price = livePrice || (diagData && diagData.position ? parseFloat(diagData.position.markPrice) : 0);
+    if(!price || !sl || !tp) return;
+
+    // Update live price display
+    var lpEl = document.getElementById('liveMarkPrice');
+    if(lpEl) lpEl.textContent = fmt(price, 2);
+
+    // Calculate position on bar (0% = SL, 100% = TP)
+    var range = tp - sl;
+    if(range === 0) return;
+    var pct = ((price - sl) / range) * 100;
+    pct = Math.max(0, Math.min(100, pct));
+
+    var entryPct = ((entry - sl) / range) * 100;
+    entryPct = Math.max(0, Math.min(100, entryPct));
+
+    var marker = document.getElementById('priceMarker');
+    var entryM = document.getElementById('entryMarker');
+    if(marker) marker.style.left = pct + '%';
+    if(entryM) entryM.style.left = entryPct + '%';
+
+    // Percentages to SL and TP
+    var toSlPct, toTpPct;
+    if(isLong){
+      toSlPct = ((price - sl) / price) * 100;
+      toTpPct = ((tp - price) / price) * 100;
+    } else {
+      toSlPct = ((sl - price) / price) * 100;
+      toTpPct = ((price - tp) / price) * 100;
+    }
+
+    var slEl = document.getElementById('pctToSL');
+    var tpEl = document.getElementById('pctToTP');
+    if(slEl) slEl.textContent = 'SL\'e: %' + fmt(Math.abs(toSlPct), 2);
+    if(tpEl) tpEl.textContent = 'TP\'ye: %' + fmt(Math.abs(toTpPct), 2);
+
+    // Update unrealized PnL card live
+    if(diagData && diagData.position){
+      var amt = parseFloat(diagData.position.positionAmt);
+      if(amt !== 0){
+        var upnl = (price - entry) * amt;
+        $('pnlVal').textContent = fmtUSD(upnl);
+        $('pnlVal').className = 'card-value ' + pctClass(upnl);
+      }
+    }
+  }
+
+  // ── 3. Strategy ──
+  function renderStrategy(){
+    if(!diagData || !diagData.config) return;
+    var c = diagData.config;
+    var tfs = c.trading_timeframes || '5m';
+    var enabledSet = {};
+    tfs.split(',').forEach(function(t){ enabledSet[t.trim()] = true; });
+
+    var html = '<div style="margin-bottom:12px">Trading: ';
+    html += '<span class="trading-status ' + (c.trading_enabled ? 'on' : 'off') + '">' + (c.trading_enabled ? 'AKTIF' : 'KAPALI') + '</span>';
+    html += ' &nbsp; Aktif TF: <strong>' + tfs + '</strong>';
+    html += ' &nbsp; Semboller: <strong>' + (c.trading_symbols || 'T\u00fcm') + '</strong>';
+    html += '</div>';
+
+    html += '<div class="strat-grid">';
+    var strats = c.strategies || {};
+    ['1m','5m'].forEach(function(tf){
+      var s = strats[tf];
+      if(!s) return;
+      var active = enabledSet[tf];
+      html += '<div class="strat-item ' + (active ? 'strat-active' : 'strat-inactive') + '">';
+      html += '<div class="tf-name">' + tf.toUpperCase() + (active ? ' \u2705' : ' (pasif)') + '</div>';
+      html += '<div class="strat-row"><span class="k">Stop-Loss</span><span class="v" style="color:#f85149">%' + (s.sl_pct * 100).toFixed(2) + '</span></div>';
+      html += '<div class="strat-row"><span class="k">Take-Profit</span><span class="v" style="color:#3fb950">%' + (s.tp_pct * 100).toFixed(2) + '</span></div>';
+      html += '</div>';
+    });
+    html += '</div>';
+
+    $('stratContent').innerHTML = html;
+  }
+
+  // ── 4. Trades Table ──
+  function renderTrades(){
+    if(!diagData) return;
+    var trades = diagData.recent_trades || [];
+    if(trades.length === 0){
+      $('tradesContent').innerHTML = '<div class="no-position-msg">Hen\u00fcz trade yok</div>';
+      return;
+    }
+
+    var html = '<div class="table-wrap"><table><thead><tr>';
+    html += '<th>Tarih</th><th>Y\u00f6n</th><th>Giri\u015f</th><th>Stop</th><th>Miktar</th><th>Bakiye</th><th>Durum</th><th>S\u00fcre</th>';
+    html += '</tr></thead><tbody>';
+
+    trades.forEach(function(t){
+      var sideType = (t.side === 'BUY') ? 'buy' : 'sell';
+      var statusType = (t.status || '').toLowerCase();
+      if(statusType === 'filled') statusType = 'filled';
+      else if(statusType === 'error') statusType = 'error';
+      else if(statusType === 'skipped') statusType = 'skipped';
+      else statusType = 'failed';
+
+      html += '<tr>';
+      html += '<td>' + tsToLocal(t.created_at || t.ts) + '</td>';
+      html += '<td>' + badgeHTML(t.side, sideType) + '</td>';
+      html += '<td>' + (t.entry_price ? fmt(t.entry_price, 2) : '--') + '</td>';
+      html += '<td>' + (t.stop_price ? fmt(t.stop_price, 2) : '--') + '</td>';
+      html += '<td>' + (t.quantity ? fmt(t.quantity, 4) : '--') + '</td>';
+      html += '<td>' + (t.balance_used ? fmt(t.balance_used, 2) : '--') + '</td>';
+      html += '<td>' + badgeHTML(t.status, statusType) + '</td>';
+      html += '<td>' + (t.duration_ms != null ? t.duration_ms + 'ms' : '--') + '</td>';
+      html += '</tr>';
+      if(t.reason){
+        html += '<tr><td colspan="8" style="color:#8b949e;font-size:11px;padding:2px 10px 6px">\u2514 ' + t.reason + '</td></tr>';
+      }
+    });
+
+    html += '</tbody></table></div>';
+    $('tradesContent').innerHTML = html;
+  }
+
+  // ── 5. Income History ──
+  function renderIncome(){
+    if(!incomeData) return;
+    var trades = incomeData.trades || [];
+
+    // Summary
+    var html = '<div class="section-summary">';
+    html += '<div class="summary-chip">Toplam PnL: <span class="chip-val ' + (incomeData.total_pnl >= 0 ? 'pnl-positive' : 'pnl-negative') + '">' + fmtUSD(incomeData.total_pnl) + '</span></div>';
+    html += '<div class="summary-chip">\u0130\u015flem: <span class="chip-val">' + incomeData.trade_count + '</span></div>';
+    html += '<div class="summary-chip">Kazan: <span class="chip-val" style="color:#3fb950">' + incomeData.win + '</span></div>';
+    html += '<div class="summary-chip">Kaybet: <span class="chip-val" style="color:#f85149">' + incomeData.lose + '</span></div>';
+    html += '<div class="summary-chip">Oran: <span class="chip-val">' + incomeData.win_rate + '</span></div>';
+    html += '</div>';
+
+    if(trades.length === 0){
+      html += '<div class="no-position-msg">7 g\u00fcnde realize edilmi\u015f i\u015flem yok</div>';
+      $('incomeContent').innerHTML = html;
+      return;
+    }
+
+    html += '<div class="table-wrap"><table><thead><tr>';
+    html += '<th>Tarih</th><th>Sembol</th><th>PnL ($)</th><th>Detay</th>';
+    html += '</tr></thead><tbody>';
+
+    trades.forEach(function(t){
+      var cls = t.pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+      html += '<tr>';
+      html += '<td>' + t.time + '</td>';
+      html += '<td>' + (t.symbol || SYMBOL) + '</td>';
+      html += '<td class="' + cls + '">' + fmtUSD(t.pnl) + '</td>';
+      html += '<td style="color:#8b949e;font-size:11px">' + (t.info || '') + '</td>';
+      html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    $('incomeContent').innerHTML = html;
+  }
+
+  // ── 6. Signals Table ──
+  function renderSignals(){
+    if(!signalsData) return;
+    var events = signalsData.events || [];
+    if(events.length === 0){
+      $('signalsContent').innerHTML = '<div class="no-position-msg">Hen\u00fcz sinyal yok</div>';
+      return;
+    }
+
+    var html = '<div class="table-wrap"><table><thead><tr>';
+    html += '<th>Tarih</th><th>Indikat\u00f6r</th><th>TF</th><th>Sinyal</th><th>Fiyat</th><th>G\u00fc\u00e7</th>';
+    html += '</tr></thead><tbody>';
+
+    events.forEach(function(ev){
+      var sigType = (ev.signal === 'BUY' || ev.signal === 'LONG') ? 'buy' : 'sell';
+      html += '<tr>';
+      html += '<td>' + tsToLocal(ev.ts) + '</td>';
+      html += '<td>' + (ev.indicator || '--') + '</td>';
+      html += '<td>' + (ev.tf || '--') + '</td>';
+      html += '<td>' + badgeHTML(ev.signal, sigType) + '</td>';
+      html += '<td>' + (ev.price ? fmt(ev.price, 2) : '--') + '</td>';
+      html += '<td>' + (ev.strength != null ? fmt(ev.strength, 2) : '--') + '</td>';
+      html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    $('signalsContent').innerHTML = html;
+  }
+
+  // ── Init ──
+  connectWS();
+  fetchAll();
+  setInterval(fetchAll, 1000);
+})();
+</script>
+
+</body>
+</html>

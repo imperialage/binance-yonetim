@@ -109,6 +109,8 @@ async def tv_webhook(request: Request) -> WebhookResponse | JSONResponse:
         whitelist = {s.strip().upper() for s in allowed.split(",") if s.strip()} if allowed else set()
         if whitelist and event.symbol not in whitelist:
             log.info("trade_symbol_blocked", symbol=event.symbol, whitelist=list(whitelist))
+        elif not settings.is_tf_enabled(event.tf):
+            log.info("trade_tf_blocked", tf=event.tf, symbol=event.symbol)
         else:
             asyncio.create_task(execute_trade(
                 symbol=event.symbol,

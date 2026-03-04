@@ -58,14 +58,21 @@ app.include_router(events.router, tags=["events"])
 app.include_router(admin.router, tags=["admin"])
 app.include_router(ws.router, tags=["websocket"])
 
-# ── Static files & root redirect ─────────────────────
+# ── Static files & page routes ────────────────────────
 _static_dir = Path(__file__).resolve().parent.parent / "static"
-app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 
 @app.get("/")
 async def root() -> FileResponse:
     return FileResponse(str(_static_dir / "index.html"))
+
+
+@app.get("/trading")
+async def trading_page() -> FileResponse:
+    return FileResponse(str(_static_dir / "trading.html"))
+
+
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 
 # ── Exception handlers ──────────────────────────────

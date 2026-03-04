@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     trading_symbols: str = ""         # Comma-separated whitelist e.g. "ETHUSDT,BTCUSDT"
 
     # Per-timeframe strategy overrides
+    trading_timeframes: str = "5m"      # Active TFs: "5m" or "1m" or "1m,5m"
     strategy_1m_sl_pct: float = 0.005   # 1m: %0.50 stop-loss
     strategy_1m_tp_pct: float = 0.0025  # 1m: %0.25 take-profit
     strategy_5m_sl_pct: float = 0.01    # 5m: %1.00 stop-loss
@@ -58,6 +59,11 @@ class Settings(BaseSettings):
         if tf == "5m":
             return self.strategy_5m_sl_pct, self.strategy_5m_tp_pct
         return self.stop_loss_pct, self.take_profit_pct
+
+    def is_tf_enabled(self, tf: str) -> bool:
+        """Check if a timeframe is enabled for trading."""
+        enabled = {t.strip() for t in self.trading_timeframes.split(",") if t.strip()}
+        return tf in enabled
 
 
 settings = Settings()  # type: ignore[call-arg]

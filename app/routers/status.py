@@ -123,6 +123,7 @@ async def debug_diagnosis() -> dict:
             "take_profit_pct": settings.take_profit_pct,
             "proxy_configured": bool(settings.binance_proxy_url),
             "trading_symbols": settings.trading_symbols,
+            "trading_timeframes": settings.trading_timeframes,
             "strategies": {
                 "1m": {"sl_pct": settings.strategy_1m_sl_pct, "tp_pct": settings.strategy_1m_tp_pct},
                 "5m": {"sl_pct": settings.strategy_5m_sl_pct, "tp_pct": settings.strategy_5m_tp_pct},
