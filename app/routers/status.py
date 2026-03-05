@@ -188,62 +188,70 @@ async def debug_income() -> dict:
             get_user_trades("ETHUSDT", days=7),
         )
 
-        # Build a map: tradeId -> trade details (price, side, qty)
-        # Income "info" field = tradeId, not orderId
-        order_map: dict = {}
+        # Map tradeId -> orderId (to group partial fills)
+        trade_to_order: dict[str, str] = {}
+        # Map tradeId -> trade details
+        trade_detail: dict[str, dict] = {}
         for ut in user_trades:
-            oid = str(ut.get("id", ""))
-            price = float(ut.get("price", 0))
-            qty = float(ut.get("qty", 0))
-            rpnl = float(ut.get("realizedPnl", 0))
-            side = ut.get("side", "")
-            ts_ms = int(ut.get("time", 0))
-            if oid not in order_map:
-                order_map[oid] = {
-                    "side": side,
-                    "total_qty": 0.0,
-                    "total_value": 0.0,
-                    "rpnl": 0.0,
-                    "ts_ms": ts_ms,
-                }
-            order_map[oid]["total_qty"] += qty
-            order_map[oid]["total_value"] += price * qty
-            order_map[oid]["rpnl"] += rpnl
+            tid = str(ut.get("id", ""))
+            oid = str(ut.get("orderId", ""))
+            trade_to_order[tid] = oid
+            trade_detail[tid] = {
+                "price": float(ut.get("price", 0)),
+                "qty": float(ut.get("qty", 0)),
+                "side": ut.get("side", ""),
+                "time": int(ut.get("time", 0)),
+            }
 
-        # Calculate avg price per order
-        for oid, o in order_map.items():
-            o["avg_price"] = round(o["total_value"] / o["total_qty"], 2) if o["total_qty"] > 0 else 0
-
-        # Match income records with trade details
-        trades = []
+        # Group income records by orderId (merges partial fills)
+        order_groups: dict[str, dict] = {}
         total_pnl = 0.0
         for r in records:
             pnl = float(r.get("income", 0))
             if pnl == 0:
                 continue
             total_pnl += pnl
+            trade_id = str(r.get("info", ""))
+            order_id = trade_to_order.get(trade_id, trade_id)
             ts_ms = int(r.get("time", 0))
-            ts_human = datetime.fromtimestamp(ts_ms / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
-            order_id = str(r.get("info", ""))
+            detail = trade_detail.get(trade_id, {})
 
-            # Find matching order for exit price
-            order_info = order_map.get(order_id, {})
-            exit_price = order_info.get("avg_price", 0)
-            exit_side = order_info.get("side", "")
-            qty = round(order_info.get("total_qty", 0), 4)
+            if order_id not in order_groups:
+                order_groups[order_id] = {
+                    "pnl": 0.0,
+                    "total_qty": 0.0,
+                    "total_value": 0.0,
+                    "side": detail.get("side", ""),
+                    "ts_ms": ts_ms,
+                    "symbol": r.get("symbol", ""),
+                }
+            g = order_groups[order_id]
+            g["pnl"] += pnl
+            fill_qty = detail.get("qty", 0)
+            fill_price = detail.get("price", 0)
+            g["total_qty"] += fill_qty
+            g["total_value"] += fill_price * fill_qty
+            if ts_ms > g["ts_ms"]:
+                g["ts_ms"] = ts_ms
 
-            # Determine entry price from exit price and PnL
+        # Build trade list from grouped orders
+        trades = []
+        for oid, g in order_groups.items():
+            exit_price = round(g["total_value"] / g["total_qty"], 2) if g["total_qty"] > 0 else 0
+            exit_side = g["side"]
+            qty = round(g["total_qty"], 4)
+            pnl = g["pnl"]
+
+            # Calculate entry price from exit price and PnL
             entry_price = 0.0
             if exit_price and qty:
-                # For closing BUY (was SHORT): entry = exit + pnl/qty
-                # For closing SELL (was LONG): entry = exit - pnl/qty
                 if exit_side == "BUY":
                     entry_price = round(exit_price + pnl / qty, 2)
                 else:
                     entry_price = round(exit_price - pnl / qty, 2)
 
-            # Original position side (opposite of close side)
             pos_side = "LONG" if exit_side == "SELL" else "SHORT" if exit_side == "BUY" else ""
+            ts_human = datetime.fromtimestamp(g["ts_ms"] / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
 
             trades.append({
                 "time": ts_human,
@@ -252,10 +260,11 @@ async def debug_income() -> dict:
                 "exit_price": exit_price,
                 "qty": qty,
                 "pnl": round(pnl, 6),
-                "symbol": r.get("symbol"),
+                "symbol": g["symbol"],
             })
 
-        trades.reverse()
+        # Sort newest first
+        trades.sort(key=lambda t: t["time"], reverse=True)
         win = sum(1 for t in trades if t["pnl"] > 0)
         lose = sum(1 for t in trades if t["pnl"] < 0)
         return {
