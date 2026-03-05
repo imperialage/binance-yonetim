@@ -47,8 +47,8 @@ class Settings(BaseSettings):
 
     # Per-timeframe strategy overrides
     trading_timeframes: str = "5m"      # Active TFs: "5m" or "1m" or "1m,5m"
-    strategy_1m_sl_pct: float = 0.005   # 1m: %0.50 stop-loss
-    strategy_1m_tp_pct: float = 0.0025  # 1m: %0.25 take-profit
+    strategy_1m_sl_pct: float = 0.0035  # 1m: %0.35 stop-loss
+    strategy_1m_tp_pct: float = 0.0033  # 1m: %0.33 take-profit
     strategy_5m_sl_pct: float = 0.01    # 5m: %1.00 stop-loss
     strategy_5m_tp_pct: float = 0.005   # 5m: %0.50 take-profit
 
