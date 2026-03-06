@@ -188,62 +188,79 @@ async def debug_income() -> dict:
             get_user_trades("ETHUSDT", days=7),
         )
 
-        # ── 1. Group userTrades by orderId ──
-        orders: dict[str, dict] = {}
+        # ── 1. Split each userTrade fill into OPEN or CLOSE portion ──
+        # A single fill can be a closer (rpnl ≠ 0) or opener (rpnl ≈ 0).
+        # Reversal orders have BOTH types under the same orderId.
+        open_fills: list[dict] = []   # position openers
+        close_fills: list[dict] = []  # position closers
+
         for ut in user_trades:
-            oid = str(ut.get("orderId", ""))
-            price = float(ut.get("price", 0))
-            qty = float(ut.get("qty", 0))
-            rpnl = float(ut.get("realizedPnl", 0))
-            side = ut.get("side", "")
-            ts_ms = int(ut.get("time", 0))
-            tid = str(ut.get("id", ""))
+            fill = {
+                "order_id": str(ut.get("orderId", "")),
+                "trade_id": str(ut.get("id", "")),
+                "price": float(ut.get("price", 0)),
+                "qty": float(ut.get("qty", 0)),
+                "rpnl": float(ut.get("realizedPnl", 0)),
+                "side": ut.get("side", ""),
+                "ts_ms": int(ut.get("time", 0)),
+            }
+            if abs(fill["rpnl"]) > 0.0001:
+                close_fills.append(fill)
+            else:
+                open_fills.append(fill)
 
-            if oid not in orders:
-                orders[oid] = {
-                    "side": side,
-                    "total_qty": 0.0,
-                    "total_value": 0.0,
-                    "rpnl": 0.0,
-                    "ts_ms": ts_ms,
-                    "trade_ids": [],
+        # ── 2. Group CLOSE fills by orderId ──
+        close_orders: dict[str, dict] = {}
+        for f in close_fills:
+            oid = f["order_id"]
+            if oid not in close_orders:
+                close_orders[oid] = {
+                    "order_id": oid, "side": f["side"],
+                    "total_qty": 0.0, "total_value": 0.0,
+                    "rpnl": 0.0, "ts_ms": f["ts_ms"], "trade_ids": [],
                 }
-            o = orders[oid]
-            o["total_qty"] += qty
-            o["total_value"] += price * qty
-            o["rpnl"] += rpnl
-            o["trade_ids"].append(tid)
-            if ts_ms > o["ts_ms"]:
-                o["ts_ms"] = ts_ms
+            o = close_orders[oid]
+            o["total_qty"] += f["qty"]
+            o["total_value"] += f["price"] * f["qty"]
+            o["rpnl"] += f["rpnl"]
+            o["trade_ids"].append(f["trade_id"])
+            if f["ts_ms"] > o["ts_ms"]:
+                o["ts_ms"] = f["ts_ms"]
 
-        # Calculate avg price per order
-        for o in orders.values():
+        # ── 3. Group OPEN fills by orderId ──
+        open_orders: dict[str, dict] = {}
+        for f in open_fills:
+            oid = f["order_id"]
+            if oid not in open_orders:
+                open_orders[oid] = {
+                    "order_id": oid, "side": f["side"],
+                    "total_qty": 0.0, "total_value": 0.0,
+                    "ts_ms": f["ts_ms"], "trade_ids": [],
+                }
+            o = open_orders[oid]
+            o["total_qty"] += f["qty"]
+            o["total_value"] += f["price"] * f["qty"]
+            o["trade_ids"].append(f["trade_id"])
+            if f["ts_ms"] > o["ts_ms"]:
+                o["ts_ms"] = f["ts_ms"]
+
+        # Calculate avg price
+        for o in close_orders.values():
+            o["avg_price"] = round(o["total_value"] / o["total_qty"], 2) if o["total_qty"] > 0 else 0
+        for o in open_orders.values():
             o["avg_price"] = round(o["total_value"] / o["total_qty"], 2) if o["total_qty"] > 0 else 0
 
-        # ── 2. Classify orders as OPEN or CLOSE ──
-        # Close orders have significant realizedPnl
-        open_orders = []   # Position openers (realizedPnl ≈ 0)
-        close_orders = []  # Position closers (realizedPnl ≠ 0)
-        for oid, o in orders.items():
-            o["order_id"] = oid
-            if abs(o["rpnl"]) > 0.0001:
-                close_orders.append(o)
-            else:
-                open_orders.append(o)
+        # ── 4. Match each close order with its nearest preceding open ──
+        open_list = sorted(open_orders.values(), key=lambda x: x["ts_ms"])
+        close_list = sorted(close_orders.values(), key=lambda x: x["ts_ms"])
 
-        # Sort by time
-        open_orders.sort(key=lambda x: x["ts_ms"])
-        close_orders.sort(key=lambda x: x["ts_ms"])
-
-        # ── 3. Match each close with its nearest preceding open ──
-        # (opposite side, before close time)
         used_opens: set[str] = set()
         close_to_open: dict[str, dict] = {}
-        for co in close_orders:
+        for co in close_list:
             close_side = co["side"]
             open_side = "SELL" if close_side == "BUY" else "BUY"
             best_open = None
-            for oo in reversed(open_orders):
+            for oo in reversed(open_list):
                 if oo["order_id"] in used_opens:
                     continue
                 if oo["side"] == open_side and oo["ts_ms"] <= co["ts_ms"]:
@@ -253,12 +270,13 @@ async def debug_income() -> dict:
                 used_opens.add(best_open["order_id"])
                 close_to_open[co["order_id"]] = best_open
 
-        # ── 4. Also sum income by orderId for accurate PnL ──
+        # ── 5. Sum income by orderId for accurate PnL ──
         trade_to_order: dict[str, str] = {}
         for ut in user_trades:
             trade_to_order[str(ut.get("id", ""))] = str(ut.get("orderId", ""))
 
         income_by_order: dict[str, float] = {}
+        income_time_by_order: dict[str, int] = {}
         total_pnl = 0.0
         for r in records:
             pnl = float(r.get("income", 0))
@@ -268,10 +286,15 @@ async def debug_income() -> dict:
             tid = str(r.get("info", ""))
             oid = trade_to_order.get(tid, tid)
             income_by_order[oid] = income_by_order.get(oid, 0) + pnl
+            r_time = int(r.get("time", 0))
+            if r_time > income_time_by_order.get(oid, 0):
+                income_time_by_order[oid] = r_time
 
-        # ── 5. Build trade list ──
+        # ── 6. Build trade list from close orders ──
         trades = []
-        for co in close_orders:
+        seen_income_oids: set[str] = set()
+
+        for co in close_list:
             oid = co["order_id"]
             exit_price = co["avg_price"]
             exit_side = co["side"]
@@ -279,13 +302,17 @@ async def debug_income() -> dict:
             pnl = income_by_order.get(oid, co["rpnl"])
             close_time = datetime.fromtimestamp(co["ts_ms"] / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
 
+            # Mark income as matched
+            seen_income_oids.add(oid)
+            for tid in co["trade_ids"]:
+                seen_income_oids.add(tid)
+
             # Entry from matched open order
             open_order = close_to_open.get(oid)
             if open_order:
                 entry_price = open_order["avg_price"]
                 entry_time = datetime.fromtimestamp(open_order["ts_ms"] / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
             else:
-                # Fallback: calculate entry from exit + pnl
                 entry_time = ""
                 if exit_price and qty:
                     if exit_side == "BUY":
@@ -305,7 +332,24 @@ async def debug_income() -> dict:
                 "exit_price": exit_price,
                 "qty": qty,
                 "pnl": round(pnl, 6),
-                "symbol": co.get("symbol", "ETHUSDT"),
+                "symbol": "ETHUSDT",
+            })
+
+        # ── 7. Fallback: income records with no matching userTrade ──
+        for oid, pnl in income_by_order.items():
+            if oid in seen_income_oids:
+                continue
+            r_time = income_time_by_order.get(oid, 0)
+            close_time = datetime.fromtimestamp(r_time / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S") if r_time else ""
+            trades.append({
+                "entry_time": "",
+                "time": close_time,
+                "side": "",
+                "entry_price": 0.0,
+                "exit_price": 0.0,
+                "qty": 0.0,
+                "pnl": round(pnl, 6),
+                "symbol": "ETHUSDT",
             })
 
         # Sort newest first

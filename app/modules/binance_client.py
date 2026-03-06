@@ -239,35 +239,57 @@ async def get_income_history(
     income_type: str = "REALIZED_PNL",
     days: int = 7,
 ) -> list[dict]:
-    """Get realized PnL history from Binance (last N days)."""
+    """Get realized PnL history from Binance (last N days), with pagination."""
     client = await get_client()
-    start_time = int((time.time() - days * 86400) * 1000)
-    params = _sign({
-        "symbol": symbol,
-        "incomeType": income_type,
-        "startTime": start_time,
-        "limit": 1000,
-    })
-    resp = await client.get("/fapi/v1/income", params=params)
-    _raise_for_binance(resp)
-    return resp.json()
+    all_records: list[dict] = []
+    cursor_time = int((time.time() - days * 86400) * 1000)
+    for _ in range(10):  # max 10 pages = 10000 records
+        params = _sign({
+            "symbol": symbol,
+            "incomeType": income_type,
+            "startTime": cursor_time,
+            "limit": 1000,
+        })
+        resp = await client.get("/fapi/v1/income", params=params)
+        _raise_for_binance(resp)
+        batch = resp.json()
+        if not batch:
+            break
+        all_records.extend(batch)
+        if len(batch) < 1000:
+            break
+        # Move cursor past the last record
+        cursor_time = int(batch[-1].get("time", 0)) + 1
+    return all_records
 
 
 async def get_user_trades(
     symbol: str = "ETHUSDT",
     days: int = 7,
 ) -> list[dict]:
-    """Get detailed trade history with prices from Binance (last N days)."""
+    """Get detailed trade history with prices from Binance (last N days), with pagination."""
     client = await get_client()
+    all_trades: list[dict] = []
     start_time = int((time.time() - days * 86400) * 1000)
-    params = _sign({
-        "symbol": symbol,
-        "startTime": start_time,
-        "limit": 1000,
-    })
-    resp = await client.get("/fapi/v1/userTrades", params=params)
-    _raise_for_binance(resp)
-    return resp.json()
+    from_id: int | None = None
+    for _ in range(10):  # max 10 pages = 10000 records
+        p: dict = {"symbol": symbol, "limit": 1000}
+        if from_id is not None:
+            p["fromId"] = from_id
+        else:
+            p["startTime"] = start_time
+        params = _sign(p)
+        resp = await client.get("/fapi/v1/userTrades", params=params)
+        _raise_for_binance(resp)
+        batch = resp.json()
+        if not batch:
+            break
+        all_trades.extend(batch)
+        if len(batch) < 1000:
+            break
+        # Next page starts after the last trade id
+        from_id = int(batch[-1].get("id", 0)) + 1
+    return all_trades
 
 
 def round_step_size(quantity: float, step_size: float) -> float:
