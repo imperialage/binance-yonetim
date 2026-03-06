@@ -57,6 +57,24 @@ header h1{font-size:18px;font-weight:600;color:#e6edf3;white-space:nowrap}
 .progress-pct .to-tp{color:#3fb950}
 .no-position-msg{text-align:center;color:#8b949e;padding:20px;font-size:14px}
 
+/* Trade Action Buttons */
+.trade-actions{display:flex;gap:12px;margin-bottom:20px}
+.btn-trade{padding:12px 24px;border:none;border-radius:8px;font-weight:700;font-size:14px;font-family:inherit;cursor:pointer;transition:opacity .2s,transform .1s;color:#fff;flex:1}
+.btn-trade:hover{opacity:0.85}
+.btn-trade:active{transform:scale(0.97)}
+.btn-trade:disabled{opacity:0.4;cursor:not-allowed;transform:none}
+.btn-close-pos{background:#d29922}
+.btn-long{background:#3fb950}
+.btn-short{background:#f85149}
+
+/* Toast */
+.toast-container{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;align-items:center;gap:8px}
+.toast{padding:12px 24px;border-radius:8px;font-size:13px;font-family:inherit;font-weight:600;color:#fff;background:#30363d;animation:toastIn .3s ease,toastOut .3s ease 2.7s forwards;pointer-events:none;white-space:nowrap}
+.toast.success{background:#238636}
+.toast.error{background:#da3633}
+@keyframes toastIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastOut{from{opacity:1}to{opacity:0}}
+
 /* Strategy Card */
 .strategy-card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px;margin-bottom:20px}
 .strategy-card h2{font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
@@ -133,6 +151,8 @@ tr:hover{background:#1c2128}
   .summary-chip{padding:4px 10px;font-size:11px}
   .progress-labels{font-size:10px}
   .progress-pct{font-size:11px}
+  .trade-actions{flex-direction:column}
+  .btn-trade{width:100%;padding:14px}
 }
 </style>
 </head>
@@ -184,6 +204,13 @@ tr:hover{background:#1c2128}
     </div>
   </div>
 
+  <!-- Trade Action Buttons -->
+  <div class="trade-actions" id="tradeActions">
+    <button class="btn-trade btn-close-pos" id="btnClosePos" onclick="closePosition()" disabled>Pozisyonu Kapat</button>
+    <button class="btn-trade btn-long" id="btnLong" onclick="openTrade('BUY')">LONG A&#231;</button>
+    <button class="btn-trade btn-short" id="btnShort" onclick="openTrade('SELL')">SHORT A&#231;</button>
+  </div>
+
   <!-- Strategy Card -->
   <div class="strategy-card" id="strategyCard">
     <h2>Strateji Ayarlar&#305;</h2>
@@ -209,6 +236,8 @@ tr:hover{background:#1c2128}
   </div>
 
 </div>
+
+<div class="toast-container" id="toastContainer"></div>
 
 <script>
 (function(){
@@ -297,6 +326,7 @@ tr:hover{background:#1c2128}
       renderCards();
       renderPositionDetail();
       renderStrategy();
+      updateTradeButtons();
       $('lastUpdate').textContent = 'Son: ' + new Date().toLocaleTimeString('tr-TR');
     }).catch(function(err){
       $('lastUpdate').textContent = 'Hata: ' + err.message;
@@ -600,6 +630,95 @@ tr:hover{background:#1c2128}
     html += '</tbody></table></div></div>';
     $('signalsContent').innerHTML = html;
   }
+
+  // ── 7. Trade Actions ──
+  function getAdminToken(){
+    var t = localStorage.getItem('adminToken');
+    if(!t){
+      t = prompt('Admin token girin:');
+      if(t) localStorage.setItem('adminToken', t);
+    }
+    return t;
+  }
+
+  function showToast(msg, type){
+    var el = document.createElement('div');
+    el.className = 'toast ' + (type || '');
+    el.textContent = msg;
+    $('toastContainer').appendChild(el);
+    setTimeout(function(){ el.remove(); }, 3000);
+  }
+
+  function updateTradeButtons(){
+    var hasPos = diagData && diagData.position && parseFloat(diagData.position.positionAmt) !== 0;
+    document.getElementById('btnClosePos').disabled = !hasPos;
+  }
+
+  function setTradeButtonsLoading(loading){
+    var btns = document.querySelectorAll('.btn-trade');
+    for(var i=0;i<btns.length;i++){
+      btns[i].disabled = loading;
+    }
+  }
+
+  window.closePosition = function(){
+    if(!confirm('Pozisyonu kapatmak istediginize emin misiniz?')) return;
+    var token = getAdminToken();
+    if(!token) return;
+
+    setTradeButtonsLoading(true);
+    var btn = document.getElementById('btnClosePos');
+    var origText = btn.textContent;
+    btn.textContent = 'Kapatiliyor...';
+
+    fetch('/manual/close', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', 'X-Admin-Token': token},
+      body: JSON.stringify({symbol: SYMBOL})
+    }).then(function(r){
+      if(r.status === 401){ localStorage.removeItem('adminToken'); throw new Error('Gecersiz token'); }
+      if(!r.ok) return r.json().then(function(d){ throw new Error(d.detail || 'Hata'); });
+      return r.json();
+    }).then(function(data){
+      showToast('Pozisyon kapatildi: ' + data.side + ' ' + data.qty + ' @ ' + Number(data.price).toFixed(2), 'success');
+      fetchDiagnosis();
+    }).catch(function(e){
+      showToast('Hata: ' + e.message, 'error');
+    }).finally(function(){
+      btn.textContent = origText;
+      setTimeout(updateTradeButtons, 1000);
+    });
+  };
+
+  window.openTrade = function(side){
+    var label = side === 'BUY' ? 'LONG' : 'SHORT';
+    if(!confirm(label + ' pozisyon acmak istediginize emin misiniz?')) return;
+    var token = getAdminToken();
+    if(!token) return;
+
+    setTradeButtonsLoading(true);
+    var btn = side === 'BUY' ? document.getElementById('btnLong') : document.getElementById('btnShort');
+    var origText = btn.textContent;
+    btn.textContent = 'Aciliyor...';
+
+    fetch('/manual/open', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', 'X-Admin-Token': token},
+      body: JSON.stringify({symbol: SYMBOL, side: side})
+    }).then(function(r){
+      if(r.status === 401){ localStorage.removeItem('adminToken'); throw new Error('Gecersiz token'); }
+      if(!r.ok) return r.json().then(function(d){ throw new Error(d.detail || 'Hata'); });
+      return r.json();
+    }).then(function(data){
+      showToast(label + ' acildi: ' + data.qty + ' @ ' + Number(data.entry_price).toFixed(2) + ' | SL:' + Number(data.sl_price).toFixed(2) + ' TP:' + Number(data.tp_price).toFixed(2), 'success');
+      fetchDiagnosis();
+    }).catch(function(e){
+      showToast('Hata: ' + e.message, 'error');
+    }).finally(function(){
+      btn.textContent = origText;
+      setTimeout(updateTradeButtons, 1000);
+    });
+  };
 
   // ── Init ──
   connectWS();
