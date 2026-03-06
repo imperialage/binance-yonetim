@@ -168,6 +168,7 @@ async def debug_diagnosis() -> dict:
                     "entryPrice": p.get("entryPrice"),
                     "unRealizedProfit": p.get("unRealizedProfit"),
                     "markPrice": p.get("markPrice"),
+                    "updateTime": p.get("updateTime"),
                 }
                 break
     except Exception as e:

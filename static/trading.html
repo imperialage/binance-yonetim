@@ -37,7 +37,7 @@ header h1{font-size:18px;font-weight:600;color:#e6edf3;white-space:nowrap}
 /* Position Detail */
 .position-detail{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px;margin-bottom:20px}
 .position-detail h2{font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:1px;margin-bottom:16px}
-.pos-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+.pos-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-bottom:20px}
 .pos-item{text-align:center}
 .pos-item .label{font-size:11px;color:#8b949e;margin-bottom:4px}
 .pos-item .value{font-size:16px;font-weight:600;color:#e6edf3}
@@ -442,7 +442,15 @@ tr:hover{background:#1c2128}
       tpPrice = entry * (1 - tpPct);
     }
 
+    // Entry time
+    var entryTime = '--';
+    if(pos.updateTime){
+      var ut = Number(pos.updateTime);
+      if(ut > 0) entryTime = new Date(ut).toLocaleString('tr-TR');
+    }
+
     var html = '<div class="pos-grid">';
+    html += '<div class="pos-item"><div class="label">Giri\u015f Zaman\u0131</div><div class="value" style="font-size:13px">' + entryTime + '</div></div>';
     html += '<div class="pos-item"><div class="label">Giri\u015f Fiyat\u0131</div><div class="value">' + fmt(entry, 2) + '</div></div>';
     html += '<div class="pos-item"><div class="label">Mevcut Fiyat</div><div class="value" id="liveMarkPrice">' + fmt(mark || livePrice, 2) + '</div></div>';
     html += '<div class="pos-item"><div class="label">Stop-Loss</div><div class="value" style="color:#f85149">' + fmt(slPrice, 2) + '</div></div>';
