@@ -541,7 +541,7 @@ tr:hover{background:#1c2128}
     }
 
     html += '<div class="scroll-list"><div class="table-wrap"><table><thead><tr>';
-    html += '<th>#</th><th>Tarih</th><th>Y\u00f6n</th><th>Giri\u015f</th><th>\u00c7\u0131k\u0131\u015f</th><th>Miktar</th><th>PnL</th><th>K\u00fcm.</th>';
+    html += '<th>#</th><th>Giri\u015f Zaman\u0131</th><th>\u00c7\u0131k\u0131\u015f Zaman\u0131</th><th>Y\u00f6n</th><th>Giri\u015f</th><th>\u00c7\u0131k\u0131\u015f</th><th>Miktar</th><th>PnL</th><th>K\u00fcm.</th>';
     html += '</tr></thead><tbody>';
 
     var cumulative = 0;
@@ -558,6 +558,7 @@ tr:hover{background:#1c2128}
 
       html += '<tr>';
       html += '<td style="color:#8b949e">' + (i + 1) + '</td>';
+      html += '<td>' + (t.entry_time || '--') + '</td>';
       html += '<td>' + t.time + '</td>';
       html += '<td>' + sideBadge + '</td>';
       html += '<td>' + (t.entry_price ? fmt(t.entry_price, 2) : '--') + '</td>';
