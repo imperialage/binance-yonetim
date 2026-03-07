@@ -102,6 +102,11 @@ header h1{font-size:18px;font-weight:600;color:#e6edf3;white-space:nowrap}
 .btn-trade:hover{opacity:0.85}
 .btn-trade:active{transform:scale(0.97)}
 .btn-trade:disabled{opacity:0.4;cursor:not-allowed;transform:none}
+.close-pnl-box{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px 20px;margin-bottom:12px;display:none;text-align:center}
+.close-pnl-box .close-pnl-label{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.close-pnl-box .close-pnl-value{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.close-pnl-box .close-pnl-detail{font-size:12px;color:#8b949e;margin-top:4px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+.close-pnl-box .close-pnl-detail span{white-space:nowrap}
 .btn-close-pos{background:#d29922}
 .btn-long{background:#3fb950}
 .btn-short{background:#f85149}
@@ -314,6 +319,13 @@ tr:hover{background:#1c2128}
     <div id="posContent">
       <div class="loading"><span class="spinner"></span>Y&#252;kleniyor...</div>
     </div>
+  </div>
+
+  <!-- Close PnL Preview -->
+  <div class="close-pnl-box" id="closePnlBox">
+    <div class="close-pnl-label">Pozisyonu Kapatırsan</div>
+    <div class="close-pnl-value" id="closePnlValue">--</div>
+    <div class="close-pnl-detail" id="closePnlDetail"></div>
   </div>
 
   <!-- Trade Action Buttons -->
@@ -581,6 +593,7 @@ tr:hover{background:#1c2128}
 
     if(!pos || parseFloat(pos.positionAmt) === 0){
       $('posContent').innerHTML = '<div class="no-position-msg">A\u00e7\u0131k pozisyon yok</div>';
+      $('closePnlBox').style.display = 'none';
       return;
     }
 
@@ -683,6 +696,25 @@ tr:hover{background:#1c2128}
         var upnl = (price - entry) * amt;
         $('pnlVal').textContent = fmtUSD(upnl);
         $('pnlVal').className = 'card-value ' + pctClass(upnl);
+
+        // Net PnL (komisyon dahil) — close preview
+        var TAKER_FEE = 0.0004; // %0.04 Binance Futures taker
+        var entryComm = entry * Math.abs(amt) * TAKER_FEE;
+        var exitComm = price * Math.abs(amt) * TAKER_FEE;
+        var totalComm = entryComm + exitComm;
+        var netPnl = upnl - totalComm;
+
+        var box = $('closePnlBox');
+        box.style.display = 'block';
+        var valEl = $('closePnlValue');
+        valEl.textContent = (netPnl >= 0 ? '+' : '') + netPnl.toFixed(4) + ' USDT';
+        valEl.className = 'close-pnl-value ' + (netPnl >= 0 ? 'pnl-positive' : 'pnl-negative');
+
+        var pnlPct = (netPnl / (Math.abs(amt) * entry)) * 100;
+        $('closePnlDetail').innerHTML =
+          '<span>Br\u00fct: ' + (upnl >= 0 ? '+' : '') + upnl.toFixed(4) + '$</span>' +
+          '<span>Komisyon: -' + totalComm.toFixed(4) + '$</span>' +
+          '<span>ROE: ' + (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%</span>';
       }
     }
   }
