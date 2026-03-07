@@ -74,7 +74,7 @@ async def fetch_klines_range(
     interval: str,
     start_ms: int,
     end_ms: int,
-    extra_warmup: int = 110,
+    extra_warmup: int = 500,
 ) -> list[list[Any]]:
     """Tarih aralığı için paginated kline çekme (Binance max 1000/istek).
 
@@ -168,7 +168,6 @@ def run_backtest(
 
     trades: list[dict] = []
     position: dict | None = None  # {side, entry_price, entry_time, entry_idx}
-    pending_signal: dict | None = None  # Sinyal geldi, sonraki mumda girilecek
 
     for i in range(1, len(supertrend_data)):
         t = supertrend_data[i]["time"]
@@ -176,20 +175,9 @@ def run_backtest(
         curr_dir = supertrend_data[i]["direction"]
 
         candle = candles_data[i]
-        open_price = candle["open"]
         high = candle["high"]
         low = candle["low"]
         close = candle["close"]
-
-        # Bekleyen sinyal varsa bu mumun open fiyatında gir
-        if pending_signal is not None and position is None:
-            position = {
-                "side": pending_signal["side"],
-                "entry_price": open_price,
-                "entry_time": t,
-                "entry_idx": i,
-            }
-            pending_signal = None
 
         # Açık pozisyon varsa SL/TP kontrol et
         if position is not None:
@@ -219,8 +207,8 @@ def run_backtest(
                 trades.append(_make_trade(position, t, exit_price, pnl_pct, "TP"))
                 position = None
             elif prev_dir != curr_dir:
-                # Ters sinyal geldi - pozisyonu bu mumun open'ında kapat
-                exit_price = open_price
+                # Ters sinyal geldi - pozisyonu sinyal mumunun close'unda kapat
+                exit_price = close
                 if side == "LONG":
                     raw_pnl = ((exit_price - entry) / entry) * 100
                 else:
@@ -230,21 +218,22 @@ def run_backtest(
                     _make_trade(position, t, exit_price, pnl_pct, "SIGNAL")
                 )
                 position = None
-                # Ters yöne yeni sinyal beklet (sonraki mumun open'ında girilecek)
-                if t >= start_sec:
-                    new_side = "LONG" if curr_dir == -1 else "SHORT"
-                    pending_signal = {"side": new_side}
 
         # Sadece backtest aralığındaki sinyalleri işle
         if t < start_sec:
             continue
 
-        # Yeni sinyal: direction değişimi → sonraki mumun open'ında gir
-        if prev_dir != curr_dir and position is None and pending_signal is None:
-            if curr_dir == -1:  # Bullish
-                pending_signal = {"side": "LONG"}
-            else:  # Bearish
-                pending_signal = {"side": "SHORT"}
+        # Yeni sinyal: direction değişimi → sinyal mumunun close'unda gir
+        # (Gerçek sistemde TradingView alert mum kapanışında ateşlenir,
+        #  emir anında piyasa fiyatından ≈ close fiyatı ile doldurulur)
+        if prev_dir != curr_dir and position is None:
+            side = "LONG" if curr_dir == -1 else "SHORT"
+            position = {
+                "side": side,
+                "entry_price": close,
+                "entry_time": t,
+                "entry_idx": i,
+            }
 
     # Açık kalan pozisyonu son mumda kapat
     if position is not None:
