@@ -19,7 +19,7 @@ from app.modules.binance_client import close_client as close_binance
 from app.modules.signal_store import close_db, init_db
 from app.modules.trade_store import init_trade_db, close_trade_db
 from app.modules.scheduler import start_scheduler, stop_scheduler
-from app.routers import admin, chart, events, latest, status, webhook, ws
+from app.routers import admin, backtest, chart, events, latest, status, webhook, ws
 from app.utils.logging import get_logger, setup_logging
 
 setup_logging(log_level=settings.log_level, json_output=settings.log_json)
@@ -58,6 +58,7 @@ app.include_router(events.router, tags=["events"])
 app.include_router(admin.router, tags=["admin"])
 app.include_router(ws.router, tags=["websocket"])
 app.include_router(chart.router, tags=["chart"])
+app.include_router(backtest.router, tags=["backtest"])
 
 # ── Static files & page routes ────────────────────────
 _static_dir = Path(__file__).resolve().parent.parent / "static"
@@ -71,6 +72,11 @@ async def root() -> FileResponse:
 @app.get("/trading")
 async def trading_page() -> FileResponse:
     return FileResponse(str(_static_dir / "trading.html"))
+
+
+@app.get("/backtest")
+async def backtest_page() -> FileResponse:
+    return FileResponse(str(_static_dir / "backtest.html"))
 
 
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")

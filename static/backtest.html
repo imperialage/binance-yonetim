@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backtest Analizi</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0d1117;color:#e6edf3;font-family:'SF Mono','Cascadia Code','Consolas',monospace;font-size:14px;min-height:100vh}
+a{color:#58a6ff;text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* Header */
+header{background:#161b22;border-bottom:1px solid #30363d;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
+.header-title{font-size:18px;font-weight:700;color:#e6edf3}
+.header-nav{display:flex;gap:16px;font-size:13px}
+
+/* Container */
+.container{max-width:1400px;margin:0 auto;padding:16px 24px}
+
+/* Control Panel */
+.control-panel{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;margin-bottom:16px}
+.control-row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+.control-group{display:flex;flex-direction:column;gap:4px}
+.control-group label{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:1px}
+.control-group input,.control-group select{background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-family:inherit;font-size:13px;padding:8px 10px;outline:none;min-width:120px}
+.control-group input:focus,.control-group select:focus{border-color:#58a6ff}
+.control-group select{cursor:pointer;min-width:160px}
+
+/* Interval Buttons */
+.interval-btns{display:flex;gap:4px}
+.interval-btn{background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#8b949e;font-family:inherit;font-size:12px;padding:8px 12px;cursor:pointer;transition:all .2s}
+.interval-btn:hover{border-color:#58a6ff;color:#e6edf3}
+.interval-btn.active{background:#58a6ff22;border-color:#58a6ff;color:#58a6ff;font-weight:600}
+
+/* Action Buttons */
+.btn{border:none;border-radius:6px;font-family:inherit;font-size:13px;font-weight:600;padding:8px 16px;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-primary{background:#58a6ff;color:#0d1117}
+.btn-primary:hover:not(:disabled){background:#79b8ff}
+.btn-secondary{background:#3fb95022;border:1px solid #3fb95044;color:#3fb950}
+.btn-secondary:hover:not(:disabled){background:#3fb95033}
+
+/* Spinner */
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite}
+
+/* Chart */
+.chart-wrapper{background:#161b22;border:1px solid #30363d;border-radius:10px;overflow:hidden;margin-bottom:16px}
+#chartContainer{width:100%;height:500px}
+
+/* Summary Cards */
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px}
+.card-label{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+.card-value{font-size:24px;font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums}
+.card-value.positive{color:#3fb950}
+.card-value.negative{color:#f85149}
+.card-sub{font-size:12px;color:#8b949e;margin-top:4px}
+
+/* Tables */
+.table-wrapper{background:#161b22;border:1px solid #30363d;border-radius:10px;overflow:hidden;margin-bottom:16px}
+.table-header{padding:12px 16px;border-bottom:1px solid #30363d;display:flex;justify-content:space-between;align-items:center}
+.table-title{font-size:14px;font-weight:600}
+.scroll-area{max-height:400px;overflow-y:auto}
+table{width:100%;border-collapse:collapse}
+thead{background:#0d1117;position:sticky;top:0;z-index:1}
+th{text-align:left;padding:8px 10px;font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #30363d}
+td{padding:7px 10px;border-bottom:1px solid #21262d;font-size:13px;font-variant-numeric:tabular-nums}
+tr:hover{background:#1c2128}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge-long{background:#3fb95022;color:#3fb950}
+.badge-short{background:#f8514922;color:#f85149}
+.badge-tp{background:#3fb95022;color:#3fb950}
+.badge-sl{background:#f8514922;color:#f85149}
+.badge-signal{background:#58a6ff22;color:#58a6ff}
+.badge-open{background:#d2992222;color:#d29922}
+.text-positive{color:#3fb950}
+.text-negative{color:#f85149}
+
+/* Optimal Section */
+.optimal-section{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;margin-bottom:16px;display:none}
+.optimal-section.visible{display:block}
+.optimal-best{display:flex;align-items:center;gap:16px;margin-bottom:16px;padding:12px;background:#0d1117;border-radius:8px;border:1px solid #3fb95044}
+.optimal-best .label{font-size:12px;color:#8b949e}
+.optimal-best .value{font-size:20px;font-weight:700;color:#3fb950}
+.btn-apply{background:#3fb95022;border:1px solid #3fb95044;color:#3fb950;border-radius:6px;font-family:inherit;font-size:13px;font-weight:600;padding:8px 16px;cursor:pointer}
+.btn-apply:hover{background:#3fb95033}
+
+/* Empty state */
+.empty-state{text-align:center;padding:40px;color:#484f58;font-size:14px}
+
+/* Toast */
+@keyframes toastIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastOut{from{opacity:1}to{opacity:0}}
+.toast-container{position:fixed;bottom:20px;right:20px;z-index:100}
+.toast{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;margin-top:8px;font-size:13px;animation:toastIn .3s ease,toastOut .3s ease 2.7s forwards;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.toast.error{border-color:#f85149}
+
+/* Responsive */
+@media(max-width:900px){
+  .cards{grid-template-columns:repeat(2,1fr)}
+  .control-row{flex-direction:column}
+  .control-group{width:100%}
+  .control-group input,.control-group select{width:100%}
+  #chartContainer{height:350px}
+}
+@media(max-width:600px){
+  .cards{grid-template-columns:1fr}
+  .container{padding:12px}
+  header{padding:12px 16px}
+}
+
+/* Search select */
+.select-wrapper{position:relative}
+.select-wrapper input[type="text"]{width:100%;min-width:160px}
+.select-dropdown{display:none;position:absolute;top:100%;left:0;right:0;background:#0d1117;border:1px solid #30363d;border-top:none;border-radius:0 0 6px 6px;max-height:250px;overflow-y:auto;z-index:20}
+.select-dropdown.open{display:block}
+.select-option{padding:6px 10px;cursor:pointer;font-size:13px;color:#e6edf3}
+.select-option:hover,.select-option.highlighted{background:#1c2128}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-title">Backtest Analizi</div>
+  <nav class="header-nav">
+    <a href="/">Ana Sayfa</a>
+    <a href="/trading">Trading</a>
+  </nav>
+</header>
+
+<div class="container">
+  <!-- Control Panel -->
+  <div class="control-panel">
+    <div class="control-row">
+      <div class="control-group">
+        <label>Coin</label>
+        <div class="select-wrapper">
+          <input type="text" id="symbolSearch" placeholder="Coin ara..." autocomplete="off">
+          <div class="select-dropdown" id="symbolDropdown"></div>
+        </div>
+      </div>
+      <div class="control-group">
+        <label>Interval</label>
+        <div class="interval-btns" id="intervalBtns">
+          <button class="interval-btn" data-iv="1m">1m</button>
+          <button class="interval-btn active" data-iv="5m">5m</button>
+          <button class="interval-btn" data-iv="15m">15m</button>
+          <button class="interval-btn" data-iv="1h">1h</button>
+          <button class="interval-btn" data-iv="4h">4h</button>
+          <button class="interval-btn" data-iv="1d">1d</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <label>Baslangic</label>
+        <input type="date" id="startDate">
+      </div>
+      <div class="control-group">
+        <label>Bitis</label>
+        <input type="date" id="endDate">
+      </div>
+      <div class="control-group">
+        <label>TP %</label>
+        <input type="number" id="tpPct" value="1.5" step="0.1" min="0.1" max="10" style="min-width:80px">
+      </div>
+      <div class="control-group">
+        <label>SL %</label>
+        <input type="number" id="slPct" value="1.0" step="0.1" min="0.1" max="10" style="min-width:80px">
+      </div>
+      <div class="control-group" style="flex-direction:row;align-items:flex-end;gap:8px">
+        <button class="btn btn-primary" id="btnRun" disabled>Backtest Calistir</button>
+        <button class="btn btn-secondary" id="btnOptimize" disabled>Optimal SL/TP Bul</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chart -->
+  <div class="chart-wrapper">
+    <div id="chartContainer"></div>
+  </div>
+
+  <!-- Summary Cards (hidden until backtest) -->
+  <div class="cards" id="summaryCards" style="display:none">
+    <div class="card">
+      <div class="card-label">Toplam PnL</div>
+      <div class="card-value" id="cardPnl">-</div>
+      <div class="card-sub" id="cardPnlDollar">-</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Kazanma Orani</div>
+      <div class="card-value" id="cardWinRate">-</div>
+      <div class="card-sub" id="cardWinLoss">-</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Toplam Islem</div>
+      <div class="card-value" id="cardTrades">-</div>
+      <div class="card-sub" id="cardAvgs">-</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Max Drawdown</div>
+      <div class="card-value negative" id="cardDrawdown">-</div>
+      <div class="card-sub" id="cardPF">-</div>
+    </div>
+  </div>
+
+  <!-- Trades Table -->
+  <div class="table-wrapper" id="tradesSection" style="display:none">
+    <div class="table-header">
+      <div class="table-title">Islem Gecmisi</div>
+      <div id="tradesCount" style="font-size:12px;color:#8b949e"></div>
+    </div>
+    <div class="scroll-area">
+      <table>
+        <thead>
+          <tr>
+            <th>Giris Zamani</th>
+            <th>Yon</th>
+            <th>Giris Fiyat</th>
+            <th>Cikis Zamani</th>
+            <th>Cikis Fiyat</th>
+            <th>PnL %</th>
+            <th>PnL $</th>
+            <th>Sebep</th>
+            <th>Kumulatif %</th>
+          </tr>
+        </thead>
+        <tbody id="tradesBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Daily Summary -->
+  <div class="table-wrapper" id="dailySection" style="display:none">
+    <div class="table-header">
+      <div class="table-title">Gunluk Ozet</div>
+    </div>
+    <div class="scroll-area">
+      <table>
+        <thead>
+          <tr>
+            <th>Tarih</th>
+            <th>Islem Sayisi</th>
+            <th>PnL %</th>
+          </tr>
+        </thead>
+        <tbody id="dailyBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Optimal SL/TP Section -->
+  <div class="optimal-section" id="optimalSection">
+    <div class="table-header" style="padding:0 0 12px 0;border:none">
+      <div class="table-title">Optimal SL/TP Sonuclari</div>
+    </div>
+    <div class="optimal-best" id="optimalBest"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>SL %</th>
+          <th>TP %</th>
+          <th>PnL %</th>
+          <th>Kazanma %</th>
+          <th>Islem</th>
+          <th>Max DD %</th>
+          <th>PF</th>
+          <th>Skor</th>
+        </tr>
+      </thead>
+      <tbody id="optimalBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="toast-container" id="toasts"></div>
+
+<script>
+// ── State ──
+let allSymbols = [];
+let selectedSymbol = '';
+let selectedInterval = '5m';
+let chart = null;
+let candleSeries = null;
+let stLineSeries = null;
+let markers = [];
+
+// ── Init ──
+document.addEventListener('DOMContentLoaded', function(){
+  setDefaultDates();
+  loadSymbols();
+  initChart();
+  setupIntervalButtons();
+  setupSymbolSearch();
+
+  document.getElementById('btnRun').addEventListener('click', runBacktest);
+  document.getElementById('btnOptimize').addEventListener('click', runOptimize);
+});
+
+function setDefaultDates(){
+  var now = new Date();
+  var end = now.toISOString().split('T')[0];
+  var start = new Date(now.getTime() - 30*24*60*60*1000).toISOString().split('T')[0];
+  document.getElementById('startDate').value = start;
+  document.getElementById('endDate').value = end;
+}
+
+// ── Symbols ──
+async function loadSymbols(){
+  try{
+    var resp = await fetch('/api/backtest/symbols');
+    var data = await resp.json();
+    allSymbols = data.symbols || [];
+    buildDropdown(allSymbols);
+  }catch(e){
+    showToast('Sembol listesi yuklenemedi', true);
+  }
+}
+
+function buildDropdown(list){
+  var dd = document.getElementById('symbolDropdown');
+  dd.innerHTML = '';
+  list.forEach(function(s){
+    var div = document.createElement('div');
+    div.className = 'select-option';
+    div.textContent = s;
+    div.addEventListener('click', function(){ selectSymbol(s); });
+    dd.appendChild(div);
+  });
+}
+
+function setupSymbolSearch(){
+  var input = document.getElementById('symbolSearch');
+  var dd = document.getElementById('symbolDropdown');
+
+  input.addEventListener('focus', function(){
+    dd.classList.add('open');
+    filterSymbols(input.value);
+  });
+
+  input.addEventListener('input', function(){
+    dd.classList.add('open');
+    filterSymbols(input.value);
+  });
+
+  document.addEventListener('click', function(e){
+    if(!e.target.closest('.select-wrapper')){
+      dd.classList.remove('open');
+    }
+  });
+}
+
+function filterSymbols(q){
+  q = q.toUpperCase();
+  var filtered = allSymbols.filter(function(s){ return s.includes(q); });
+  buildDropdown(filtered.slice(0, 50));
+}
+
+function selectSymbol(sym){
+  selectedSymbol = sym;
+  document.getElementById('symbolSearch').value = sym;
+  document.getElementById('symbolDropdown').classList.remove('open');
+  document.getElementById('btnRun').disabled = false;
+  document.getElementById('btnOptimize').disabled = false;
+  loadChart();
+}
+
+// ── Interval Buttons ──
+function setupIntervalButtons(){
+  document.querySelectorAll('.interval-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('.interval-btn').forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+      selectedInterval = btn.dataset.iv;
+      if(selectedSymbol) loadChart();
+    });
+  });
+}
+
+// ── Chart ──
+function initChart(){
+  var container = document.getElementById('chartContainer');
+  chart = LightweightCharts.createChart(container, {
+    layout: { background: { type: 'solid', color: '#161b22' }, textColor: '#8b949e' },
+    grid: { vertLines: { color: '#1c2128' }, horzLines: { color: '#1c2128' } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: '#30363d' },
+    timeScale: { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
+  });
+
+  candleSeries = chart.addCandlestickSeries({
+    upColor: '#3fb950', downColor: '#f85149',
+    borderUpColor: '#3fb950', borderDownColor: '#f85149',
+    wickUpColor: '#3fb950', wickDownColor: '#f85149',
+  });
+
+  stLineSeries = chart.addLineSeries({
+    lineWidth: 2, color: '#8b949e',
+    priceLineVisible: false, lastValueVisible: false,
+  });
+
+  window.addEventListener('resize', function(){ chart.applyOptions({ width: container.clientWidth }); });
+}
+
+async function loadChart(){
+  if(!selectedSymbol) return;
+  var start = document.getElementById('startDate').value;
+  var end = document.getElementById('endDate').value;
+  if(!start || !end) return;
+
+  try{
+    var url = '/api/backtest/chart/' + selectedSymbol + '?interval=' + selectedInterval + '&start_date=' + start + '&end_date=' + end;
+    var resp = await fetch(url);
+    if(!resp.ok){ showToast('Grafik verisi alinamadi', true); return; }
+    var data = await resp.json();
+
+    candleSeries.setData(data.candles);
+
+    // Supertrend: renk segmentleri
+    var stData = data.supertrend.map(function(s){
+      return { time: s.time, value: s.value, color: s.direction === -1 ? '#3fb950' : '#f85149' };
+    });
+
+    stLineSeries.setData(stData);
+    chart.timeScale().fitContent();
+  }catch(e){
+    showToast('Grafik yuklenemedi: ' + e.message, true);
+  }
+}
+
+// ── Backtest ──
+async function runBacktest(){
+  var btn = document.getElementById('btnRun');
+  var origText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Hesaplaniyor...';
+
+  try{
+    var body = getRequestBody();
+    var resp = await fetch('/api/backtest/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if(!resp.ok){
+      var err = await resp.json();
+      showToast(err.detail || 'Backtest hatasi', true);
+      return;
+    }
+
+    var data = await resp.json();
+    displayResults(data);
+    drawTradeMarkers(data.trades);
+    showToast('Backtest tamamlandi - ' + data.summary.total_trades + ' islem');
+  }catch(e){
+    showToast('Backtest hatasi: ' + e.message, true);
+  }finally{
+    btn.disabled = false;
+    btn.innerHTML = origText;
+  }
+}
+
+async function runOptimize(){
+  var btn = document.getElementById('btnOptimize');
+  var origText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Hesaplaniyor (~10-20sn)...';
+
+  try{
+    var body = getRequestBody();
+    var resp = await fetch('/api/backtest/optimize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if(!resp.ok){
+      var err = await resp.json();
+      showToast(err.detail || 'Optimizasyon hatasi', true);
+      return;
+    }
+
+    var data = await resp.json();
+    displayOptimal(data);
+    showToast('Optimizasyon tamamlandi - ' + data.total_combinations + ' kombinasyon test edildi');
+  }catch(e){
+    showToast('Optimizasyon hatasi: ' + e.message, true);
+  }finally{
+    btn.disabled = false;
+    btn.innerHTML = origText;
+  }
+}
+
+function getRequestBody(){
+  return {
+    symbol: selectedSymbol,
+    interval: selectedInterval,
+    start_date: document.getElementById('startDate').value,
+    end_date: document.getElementById('endDate').value,
+    tp_pct: parseFloat(document.getElementById('tpPct').value) || 1.5,
+    sl_pct: parseFloat(document.getElementById('slPct').value) || 1.0,
+  };
+}
+
+// ── Display Results ──
+function displayResults(data){
+  var s = data.summary;
+
+  document.getElementById('summaryCards').style.display = 'grid';
+
+  // PnL card
+  var pnlEl = document.getElementById('cardPnl');
+  pnlEl.textContent = (s.total_pnl_pct >= 0 ? '+' : '') + s.total_pnl_pct.toFixed(2) + '%';
+  pnlEl.className = 'card-value ' + (s.total_pnl_pct >= 0 ? 'positive' : 'negative');
+  document.getElementById('cardPnlDollar').textContent = '$' + s.total_pnl_dollar.toFixed(2) + ' ($1000 notional)';
+
+  // Win rate
+  document.getElementById('cardWinRate').textContent = s.win_rate.toFixed(1) + '%';
+  document.getElementById('cardWinLoss').textContent = s.win_count + 'W / ' + s.loss_count + 'L';
+
+  // Trades
+  document.getElementById('cardTrades').textContent = s.total_trades;
+  document.getElementById('cardAvgs').textContent = 'Ort K: ' + s.avg_win_pct.toFixed(2) + '% / Ort Z: ' + s.avg_loss_pct.toFixed(2) + '%';
+
+  // Drawdown
+  document.getElementById('cardDrawdown').textContent = '-' + s.max_drawdown_pct.toFixed(2) + '%';
+  document.getElementById('cardPF').textContent = 'Kar Faktoru: ' + s.profit_factor;
+
+  // Trades table
+  var tbody = document.getElementById('tradesBody');
+  tbody.innerHTML = '';
+  document.getElementById('tradesSection').style.display = 'block';
+  document.getElementById('tradesCount').textContent = data.trades.length + ' islem';
+
+  data.trades.forEach(function(t){
+    var row = document.createElement('tr');
+    var pnlClass = t.pnl_pct >= 0 ? 'text-positive' : 'text-negative';
+    var cumClass = t.cumulative_pnl_pct >= 0 ? 'text-positive' : 'text-negative';
+    var sideBadge = t.side === 'LONG' ? 'badge-long' : 'badge-short';
+    var reasonBadge = 'badge-' + t.reason.toLowerCase();
+
+    row.innerHTML =
+      '<td>' + formatTime(t.entry_time) + '</td>' +
+      '<td><span class="badge ' + sideBadge + '">' + t.side + '</span></td>' +
+      '<td>' + t.entry_price + '</td>' +
+      '<td>' + formatTime(t.exit_time) + '</td>' +
+      '<td>' + t.exit_price + '</td>' +
+      '<td class="' + pnlClass + '">' + (t.pnl_pct >= 0 ? '+' : '') + t.pnl_pct.toFixed(4) + '%</td>' +
+      '<td class="' + pnlClass + '">$' + t.pnl_dollar.toFixed(2) + '</td>' +
+      '<td><span class="badge ' + reasonBadge + '">' + t.reason + '</span></td>' +
+      '<td class="' + cumClass + '">' + (t.cumulative_pnl_pct >= 0 ? '+' : '') + t.cumulative_pnl_pct.toFixed(2) + '%</td>';
+    tbody.appendChild(row);
+  });
+
+  // Daily summary
+  var dailyBody = document.getElementById('dailyBody');
+  dailyBody.innerHTML = '';
+  document.getElementById('dailySection').style.display = 'block';
+
+  data.daily_summary.forEach(function(d){
+    var row = document.createElement('tr');
+    var pnlClass = d.pnl_pct >= 0 ? 'text-positive' : 'text-negative';
+    row.innerHTML =
+      '<td>' + d.date + '</td>' +
+      '<td>' + d.trades + '</td>' +
+      '<td class="' + pnlClass + '">' + (d.pnl_pct >= 0 ? '+' : '') + d.pnl_pct.toFixed(4) + '%</td>';
+    dailyBody.appendChild(row);
+  });
+}
+
+function displayOptimal(data){
+  var section = document.getElementById('optimalSection');
+  section.classList.add('visible');
+
+  var bestDiv = document.getElementById('optimalBest');
+  if(data.best){
+    var b = data.best;
+    bestDiv.innerHTML =
+      '<div><div class="label">Onerilen SL</div><div class="value">' + b.sl_pct + '%</div></div>' +
+      '<div><div class="label">Onerilen TP</div><div class="value">' + b.tp_pct + '%</div></div>' +
+      '<div><div class="label">PnL</div><div class="value">' + (b.total_pnl_pct >= 0 ? '+' : '') + b.total_pnl_pct + '%</div></div>' +
+      '<div><div class="label">Kazanma</div><div class="value">' + b.win_rate + '%</div></div>' +
+      '<div><div class="label">Skor</div><div class="value">' + b.score + '</div></div>' +
+      '<button class="btn-apply" onclick="applyOptimal(' + b.sl_pct + ',' + b.tp_pct + ')">Uygula</button>';
+  }else{
+    bestDiv.innerHTML = '<div class="label">Yeterli veri bulunamadi</div>';
+  }
+
+  var tbody = document.getElementById('optimalBody');
+  tbody.innerHTML = '';
+  data.top5.forEach(function(r, idx){
+    var row = document.createElement('tr');
+    var pnlClass = r.total_pnl_pct >= 0 ? 'text-positive' : 'text-negative';
+    row.innerHTML =
+      '<td>' + (idx + 1) + '</td>' +
+      '<td>' + r.sl_pct + '%</td>' +
+      '<td>' + r.tp_pct + '%</td>' +
+      '<td class="' + pnlClass + '">' + (r.total_pnl_pct >= 0 ? '+' : '') + r.total_pnl_pct + '%</td>' +
+      '<td>' + r.win_rate + '%</td>' +
+      '<td>' + r.total_trades + '</td>' +
+      '<td class="text-negative">-' + r.max_drawdown_pct + '%</td>' +
+      '<td>' + r.profit_factor + '</td>' +
+      '<td>' + r.score + '</td>';
+    tbody.appendChild(row);
+  });
+}
+
+function applyOptimal(sl, tp){
+  document.getElementById('slPct').value = sl;
+  document.getElementById('tpPct').value = tp;
+  showToast('SL: ' + sl + '% / TP: ' + tp + '% uygulandi');
+}
+
+// ── Trade Markers on Chart ──
+function drawTradeMarkers(trades){
+  if(!candleSeries || !trades) return;
+
+  var mkrs = [];
+  trades.forEach(function(t){
+    // Entry marker
+    mkrs.push({
+      time: t.entry_time,
+      position: t.side === 'LONG' ? 'belowBar' : 'aboveBar',
+      color: t.side === 'LONG' ? '#3fb950' : '#f85149',
+      shape: t.side === 'LONG' ? 'arrowUp' : 'arrowDown',
+      text: t.side === 'LONG' ? 'L' : 'S',
+    });
+    // Exit marker
+    mkrs.push({
+      time: t.exit_time,
+      position: t.side === 'LONG' ? 'aboveBar' : 'belowBar',
+      color: t.pnl_pct >= 0 ? '#3fb950' : '#f85149',
+      shape: 'circle',
+      text: t.reason,
+    });
+  });
+
+  // Sort by time (required by lightweight-charts)
+  mkrs.sort(function(a, b){ return a.time - b.time; });
+  candleSeries.setMarkers(mkrs);
+}
+
+// ── Helpers ──
+function formatTime(ts){
+  var d = new Date(ts * 1000);
+  var m = (d.getMonth() + 1).toString().padStart(2, '0');
+  var day = d.getDate().toString().padStart(2, '0');
+  var h = d.getHours().toString().padStart(2, '0');
+  var min = d.getMinutes().toString().padStart(2, '0');
+  return m + '/' + day + ' ' + h + ':' + min;
+}
+
+function showToast(msg, isError){
+  var container = document.getElementById('toasts');
+  var div = document.createElement('div');
+  div.className = 'toast' + (isError ? ' error' : '');
+  div.textContent = msg;
+  container.appendChild(div);
+  setTimeout(function(){ div.remove(); }, 3000);
+}
+</script>
+</body>
+</html>
