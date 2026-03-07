@@ -168,6 +168,27 @@ async def cancel_all_open_orders(symbol: str) -> dict:
     return result
 
 
+async def place_limit_order(
+    symbol: str,
+    side: str,
+    quantity: float,
+    price: float,
+) -> dict:
+    """Place a limit order with GTC time-in-force."""
+    client = await get_client()
+    params = _sign({
+        "symbol": symbol,
+        "side": side,
+        "type": "LIMIT",
+        "timeInForce": "GTC",
+        "quantity": quantity,
+        "price": price,
+    })
+    resp = await client.post("/fapi/v1/order", params=params)
+    _raise_for_binance(resp)
+    return resp.json()
+
+
 async def place_market_order(
     symbol: str,
     side: str,

@@ -57,6 +57,22 @@ header h1{font-size:18px;font-weight:600;color:#e6edf3;white-space:nowrap}
 @keyframes tickerFlashGreen{0%{text-shadow:0 0 12px rgba(63,185,80,0.8)}100%{text-shadow:none}}
 @keyframes tickerFlashRed{0%{text-shadow:0 0 12px rgba(248,81,73,0.8)}100%{text-shadow:none}}
 
+/* Chart Section */
+.chart-section{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px 20px;margin-bottom:20px}
+.chart-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px}
+.chart-header h2{font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:1px;margin:0}
+.chart-controls{display:flex;align-items:center;gap:8px}
+.interval-btn{background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#8b949e;font-family:inherit;font-size:12px;font-weight:600;padding:5px 12px;cursor:pointer;transition:background .2s,color .2s,border-color .2s}
+.interval-btn:hover{background:#1c2128;color:#c9d1d9}
+.interval-btn.active{background:#21262d;color:#58a6ff;border-color:#58a6ff}
+.vol-badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600;margin-left:8px}
+.vol-badge.high{background:#f8514922;color:#f85149;border:1px solid #f8514944}
+.vol-badge.medium{background:#d2992222;color:#d29922;border:1px solid #d2992244}
+.vol-badge.low{background:#3fb95022;color:#3fb950;border:1px solid #3fb95044}
+#chartContainer{width:100%;height:400px;position:relative}
+.chart-loading{display:flex;align-items:center;justify-content:center;height:400px;color:#8b949e;font-size:13px}
+.chart-loading .spinner{margin-right:8px}
+
 /* Position Detail */
 .position-detail{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px;margin-bottom:20px}
 .position-detail h2{font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:1px;margin-bottom:16px}
@@ -135,6 +151,31 @@ tr:hover{background:#1c2128}
 .pnl-positive{color:#3fb950;font-weight:600}
 .pnl-negative{color:#f85149;font-weight:600}
 
+/* Modal */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center}
+.modal-overlay.active{display:flex}
+.modal{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;width:90%;max-width:420px;box-shadow:0 16px 48px rgba(0,0,0,0.4)}
+.modal-title{font-size:18px;font-weight:700;margin-bottom:20px}
+.modal-title.long{color:#3fb950}
+.modal-title.short{color:#f85149}
+.modal-row{margin-bottom:16px}
+.modal-row label{display:block;font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.modal-row input{width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-family:inherit;font-size:14px;padding:10px 12px;outline:none}
+.modal-row input:focus{border-color:#58a6ff}
+.modal-row input::placeholder{color:#484f58}
+.modal-row input:disabled{opacity:0.5;cursor:not-allowed}
+.toggle-group{display:flex;border:1px solid #30363d;border-radius:6px;overflow:hidden}
+.toggle-group button{flex:1;background:#0d1117;border:none;color:#8b949e;font-family:inherit;font-size:13px;font-weight:600;padding:8px;cursor:pointer;transition:background .2s,color .2s}
+.toggle-group button.active{background:#21262d;color:#e6edf3}
+.toggle-group button:hover:not(.active){background:#1c2128}
+.modal-actions{display:flex;gap:10px;margin-top:20px}
+.modal-actions button{flex:1;padding:12px;border:none;border-radius:8px;font-weight:700;font-size:14px;font-family:inherit;cursor:pointer;transition:opacity .2s}
+.modal-actions button:hover{opacity:0.85}
+.btn-confirm-long{background:#3fb950;color:#fff}
+.btn-confirm-short{background:#f85149;color:#fff}
+.btn-cancel{background:#21262d;color:#c9d1d9;border:1px solid #30363d !important}
+.modal-live-price{font-size:13px;color:#58a6ff;margin-top:4px}
+
 /* Loading */
 .loading{text-align:center;padding:40px;color:#8b949e}
 .spinner{display:inline-block;width:20px;height:20px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite;margin-right:8px;vertical-align:middle}
@@ -181,8 +222,10 @@ tr:hover{background:#1c2128}
   .ticker-high-low{gap:12px;font-size:11px}
   .trade-actions{flex-direction:column}
   .btn-trade{width:100%;padding:14px}
+  #chartContainer{height:300px}
 }
 </style>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 
@@ -248,6 +291,23 @@ tr:hover{background:#1c2128}
     </div>
   </div>
 
+  <!-- Chart Section -->
+  <div class="chart-section" id="chartSection">
+    <div class="chart-header">
+      <h2>Grafik <span class="vol-badge medium" id="volBadge">Medium Vol</span></h2>
+      <div class="chart-controls">
+        <button class="interval-btn" data-iv="1m">1m</button>
+        <button class="interval-btn active" data-iv="5m">5m</button>
+        <button class="interval-btn" data-iv="15m">15m</button>
+        <button class="interval-btn" data-iv="1h">1h</button>
+        <button class="interval-btn" data-iv="4h">4h</button>
+      </div>
+    </div>
+    <div id="chartContainer">
+      <div class="chart-loading"><span class="spinner"></span>Grafik y&#252;kleniyor...</div>
+    </div>
+  </div>
+
   <!-- Position Detail + Progress Bar -->
   <div class="position-detail" id="posDetail">
     <h2>Pozisyon Detay&#305; &amp; Hedef Yak&#305;nl&#305;k</h2>
@@ -287,6 +347,42 @@ tr:hover{background:#1c2128}
     </div>
   </div>
 
+</div>
+
+<!-- Trade Modal -->
+<div class="modal-overlay" id="tradeModal">
+  <div class="modal">
+    <div class="modal-title" id="modalTitle">LONG A&#231;</div>
+
+    <div class="modal-row">
+      <label>Emir Tipi</label>
+      <div class="toggle-group">
+        <button id="togMarket" class="active" onclick="setOrderType('MARKET')">Market</button>
+        <button id="togLimit" onclick="setOrderType('LIMIT')">Limit</button>
+      </div>
+    </div>
+
+    <div class="modal-row">
+      <label>Giri&#351; Fiyat&#305;</label>
+      <input type="number" id="modalEntryPrice" step="any" placeholder="Mevcut fiyat" disabled>
+      <div class="modal-live-price" id="modalLivePrice"></div>
+    </div>
+
+    <div class="modal-row">
+      <label>Stop-Loss</label>
+      <input type="number" id="modalSL" step="any" placeholder="Bo&#351; = strateji varsay&#305;lan&#305;">
+    </div>
+
+    <div class="modal-row">
+      <label>Take-Profit</label>
+      <input type="number" id="modalTP" step="any" placeholder="Bo&#351; = strateji varsay&#305;lan&#305;">
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">&#304;ptal</button>
+      <button id="modalConfirmBtn" class="btn-confirm-long" onclick="confirmTrade()">Onayla</button>
+    </div>
+  </div>
 </div>
 
 <div class="toast-container" id="toastContainer"></div>
@@ -357,6 +453,7 @@ tr:hover{background:#1c2128}
           prevTickerPrice = parseFloat($('tickerPrice').textContent) || 0;
           updateTicker(newPrice);
         }
+        if(data[SYMBOL]) updateLastCandle(parseFloat(data[SYMBOL]));
       } catch(err){}
     };
     ws.onclose = function(){
@@ -389,6 +486,7 @@ tr:hover{background:#1c2128}
       renderPositionDetail();
       renderStrategy();
       updateTradeButtons();
+      drawPositionLines();
       $('lastUpdate').textContent = 'Son: ' + new Date().toLocaleTimeString('tr-TR');
     }).catch(function(err){
       $('lastUpdate').textContent = 'Hata: ' + err.message;
@@ -808,37 +906,287 @@ tr:hover{background:#1c2128}
     });
   };
 
+  // ── Modal Logic ──
+  var modalSide = null;
+  var modalOrderType = 'MARKET';
+
   window.openTrade = function(side){
-    var label = side === 'BUY' ? 'LONG' : 'SHORT';
-    if(!confirm(label + ' pozisyon acmak istediginize emin misiniz?')) return;
+    modalSide = side;
+    modalOrderType = 'MARKET';
+    var label = side === 'BUY' ? 'LONG A\u00e7' : 'SHORT A\u00e7';
+    var titleEl = $('modalTitle');
+    titleEl.textContent = label;
+    titleEl.className = 'modal-title ' + (side === 'BUY' ? 'long' : 'short');
+
+    var confirmBtn = $('modalConfirmBtn');
+    confirmBtn.className = side === 'BUY' ? 'btn-confirm-long' : 'btn-confirm-short';
+    confirmBtn.textContent = 'Onayla';
+
+    // Reset fields
+    $('modalEntryPrice').value = '';
+    $('modalEntryPrice').disabled = true;
+    $('modalSL').value = '';
+    $('modalTP').value = '';
+    $('togMarket').classList.add('active');
+    $('togLimit').classList.remove('active');
+    updateModalLivePrice();
+
+    $('tradeModal').classList.add('active');
+  };
+
+  window.setOrderType = function(type){
+    modalOrderType = type;
+    $('togMarket').classList.toggle('active', type === 'MARKET');
+    $('togLimit').classList.toggle('active', type === 'LIMIT');
+    var inp = $('modalEntryPrice');
+    if(type === 'MARKET'){
+      inp.disabled = true;
+      inp.value = '';
+      updateModalLivePrice();
+    } else {
+      inp.disabled = false;
+      inp.placeholder = 'Limit fiyat girin';
+      $('modalLivePrice').textContent = '';
+      inp.focus();
+    }
+  };
+
+  function updateModalLivePrice(){
+    if(modalOrderType === 'MARKET' && livePrice > 0){
+      $('modalLivePrice').textContent = 'Mevcut fiyat: ' + fmt(livePrice, 2);
+    } else {
+      $('modalLivePrice').textContent = '';
+    }
+  }
+
+  window.closeModal = function(){
+    $('tradeModal').classList.remove('active');
+    modalSide = null;
+  };
+
+  // ESC to close
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && $('tradeModal').classList.contains('active')){
+      closeModal();
+    }
+  });
+
+  // Click overlay to close
+  $('tradeModal').addEventListener('click', function(e){
+    if(e.target === $('tradeModal')) closeModal();
+  });
+
+  window.confirmTrade = function(){
+    if(!modalSide) return;
     var token = getAdminToken();
     if(!token) return;
 
-    setTradeButtonsLoading(true);
-    var btn = side === 'BUY' ? document.getElementById('btnLong') : document.getElementById('btnShort');
-    var origText = btn.textContent;
-    btn.textContent = 'Aciliyor...';
+    var payload = {symbol: SYMBOL, side: modalSide};
+
+    // Entry price
+    if(modalOrderType === 'LIMIT'){
+      var ep = parseFloat($('modalEntryPrice').value);
+      if(!ep || ep <= 0){
+        showToast('Ge\u00e7erli bir limit fiyat girin', 'error');
+        return;
+      }
+      payload.entry_price = ep;
+    }
+
+    // SL/TP
+    var slVal = parseFloat($('modalSL').value);
+    var tpVal = parseFloat($('modalTP').value);
+    if(slVal > 0) payload.sl_price = slVal;
+    if(tpVal > 0) payload.tp_price = tpVal;
+
+    var label = modalSide === 'BUY' ? 'LONG' : 'SHORT';
+    var confirmBtn = $('modalConfirmBtn');
+    confirmBtn.textContent = 'G\u00f6nderiliyor...';
+    confirmBtn.disabled = true;
 
     fetch('/manual/open', {
       method: 'POST',
       headers: {'Content-Type':'application/json', 'X-Admin-Token': token},
-      body: JSON.stringify({symbol: SYMBOL, side: side})
+      body: JSON.stringify(payload)
     }).then(function(r){
-      if(r.status === 401){ localStorage.removeItem('adminToken'); throw new Error('Gecersiz token'); }
+      if(r.status === 401){ localStorage.removeItem('adminToken'); throw new Error('Ge\u00e7ersiz token'); }
       if(!r.ok) return r.json().then(function(d){ throw new Error(d.detail || 'Hata'); });
       return r.json();
     }).then(function(data){
-      showToast(label + ' acildi: ' + data.qty + ' @ ' + Number(data.entry_price).toFixed(2) + ' | SL:' + Number(data.sl_price).toFixed(2) + ' TP:' + Number(data.tp_price).toFixed(2), 'success');
+      closeModal();
+      showToast(label + ' a\u00e7\u0131ld\u0131: ' + data.qty + ' @ ' + Number(data.entry_price).toFixed(2) + ' | SL:' + Number(data.sl_price).toFixed(2) + ' TP:' + Number(data.tp_price).toFixed(2), 'success');
       fetchDiagnosis();
     }).catch(function(e){
       showToast('Hata: ' + e.message, 'error');
     }).finally(function(){
-      btn.textContent = origText;
-      setTimeout(updateTradeButtons, 1000);
+      confirmBtn.textContent = 'Onayla';
+      confirmBtn.disabled = false;
     });
   };
 
+  // ── 9. Chart (Lightweight Charts + Adaptive Supertrend) ──
+  var chart = null;
+  var candleSeries = null;
+  var stLineSeries = null;
+  var entryLine = null;
+  var slLine = null;
+  var tpLine = null;
+  var chartInterval = '5m';
+  var lastStData = [];
+  var chartMarkers = [];
+
+  function initChart(){
+    var container = document.getElementById('chartContainer');
+    container.innerHTML = '';
+    chart = LightweightCharts.createChart(container, {
+      layout: { background: { type: 'solid', color: '#0d1117' }, textColor: '#8b949e' },
+      grid: { vertLines: { color: '#1c2128' }, horzLines: { color: '#1c2128' } },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      rightPriceScale: { borderColor: '#30363d' },
+      timeScale: { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
+      width: container.clientWidth,
+      height: container.clientHeight,
+    });
+
+    candleSeries = chart.addCandlestickSeries({
+      upColor: '#3fb950', downColor: '#f85149',
+      borderUpColor: '#3fb950', borderDownColor: '#f85149',
+      wickUpColor: '#3fb950', wickDownColor: '#f85149',
+    });
+
+    stLineSeries = chart.addLineSeries({
+      lineWidth: 2,
+      color: '#8b949e',
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
+    // Responsive resize
+    var ro = new ResizeObserver(function(){ chart.applyOptions({ width: container.clientWidth }); });
+    ro.observe(container);
+  }
+
+  function fetchChartData(){
+    var sym = SYMBOL;
+    fetch('/api/chart/' + sym + '?interval=' + chartInterval + '&limit=300')
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if(!data.candles) return;
+      lastStData = data.supertrend || [];
+
+      candleSeries.setData(data.candles);
+
+      // Supertrend line — split into colored segments
+      var segments = buildColoredSegments(data.supertrend);
+      stLineSeries.setData(segments);
+
+      // Markers for direction changes (buy/sell signals)
+      chartMarkers = [];
+      var st = data.supertrend;
+      for(var i = 1; i < st.length; i++){
+        if(st[i].direction === -1 && st[i-1].direction === 1){
+          chartMarkers.push({ time: st[i].time, position: 'belowBar', color: '#3fb950', shape: 'arrowUp', text: 'AL' });
+        } else if(st[i].direction === 1 && st[i-1].direction === -1){
+          chartMarkers.push({ time: st[i].time, position: 'aboveBar', color: '#f85149', shape: 'arrowDown', text: 'SAT' });
+        }
+      }
+      candleSeries.setMarkers(chartMarkers);
+
+      // Volatility badge
+      if(st.length > 0){
+        var lastCluster = st[st.length - 1].cluster;
+        var badge = $('volBadge');
+        if(lastCluster === 0){ badge.className = 'vol-badge high'; badge.textContent = 'High Vol'; }
+        else if(lastCluster === 1){ badge.className = 'vol-badge medium'; badge.textContent = 'Medium Vol'; }
+        else { badge.className = 'vol-badge low'; badge.textContent = 'Low Vol'; }
+      }
+
+      // Position lines
+      drawPositionLines();
+
+      chart.timeScale().fitContent();
+    }).catch(function(e){ console.error('chart fetch error:', e); });
+  }
+
+  function buildColoredSegments(stArr){
+    // Build line data with color per point
+    var result = [];
+    for(var i = 0; i < stArr.length; i++){
+      var color = stArr[i].direction === -1 ? '#3fb950' : '#f85149';
+      result.push({ time: stArr[i].time, value: stArr[i].value, color: color });
+    }
+    return result;
+  }
+
+  function drawPositionLines(){
+    if(!candleSeries) return;
+    // Remove old lines
+    if(entryLine){ candleSeries.removePriceLine(entryLine); entryLine = null; }
+    if(slLine){ candleSeries.removePriceLine(slLine); slLine = null; }
+    if(tpLine){ candleSeries.removePriceLine(tpLine); tpLine = null; }
+
+    if(!diagData || !diagData.position) return;
+    var pos = diagData.position;
+    var amt = parseFloat(pos.positionAmt);
+    if(amt === 0) return;
+
+    var entry = parseFloat(pos.entryPrice);
+    var isLong = amt > 0;
+    var config = diagData.config;
+    var slPct = config.strategies ? config.strategies['5m'].sl_pct : 0.01;
+    var tpPct = config.strategies ? config.strategies['5m'].tp_pct : 0.005;
+
+    var slPrice = isLong ? entry * (1 - slPct) : entry * (1 + slPct);
+    var tpPrice = isLong ? entry * (1 + tpPct) : entry * (1 - tpPct);
+
+    entryLine = candleSeries.createPriceLine({
+      price: entry, color: '#58a6ff', lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true, title: 'Giriş',
+    });
+    slLine = candleSeries.createPriceLine({
+      price: slPrice, color: '#f85149', lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dotted,
+      axisLabelVisible: true, title: 'SL',
+    });
+    tpLine = candleSeries.createPriceLine({
+      price: tpPrice, color: '#3fb950', lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dotted,
+      axisLabelVisible: true, title: 'TP',
+    });
+  }
+
+  // Interval buttons
+  document.querySelectorAll('.interval-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('.interval-btn').forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+      chartInterval = btn.dataset.iv;
+      fetchChartData();
+    });
+  });
+
+  // Real-time candle update via WebSocket prices
+  function updateLastCandle(price){
+    if(!candleSeries || !price) return;
+    var now = Math.floor(Date.now() / 1000);
+    // Determine bar period in seconds
+    var periods = {'1m':60,'5m':300,'15m':900,'1h':3600,'4h':14400};
+    var period = periods[chartInterval] || 300;
+    var barTime = Math.floor(now / period) * period;
+
+    candleSeries.update({
+      time: barTime,
+      open: price, high: price, low: price, close: price,
+    });
+  }
+
   // ── Init ──
+  initChart();
+  fetchChartData();
+  // Refresh chart every 60s
+  setInterval(fetchChartData, 60000);
+
   connectWS();
   fetchAll();
   fetch24hOpen();

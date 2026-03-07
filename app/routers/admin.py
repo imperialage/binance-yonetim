@@ -14,6 +14,7 @@ from app.modules.binance_client import (
     get_exchange_info,
     get_position_risk,
     get_usdt_balance,
+    place_limit_order,
     place_market_order,
     place_stop_market_order,
     place_take_profit_market_order,
@@ -37,6 +38,9 @@ class ManualCloseRequest(BaseModel):
 class ManualOpenRequest(BaseModel):
     symbol: str = "ETHUSDT"
     side: str  # "BUY" or "SELL"
+    entry_price: float | None = None  # None → MARKET, set → LIMIT
+    sl_price: float | None = None     # None → strategy %, set → custom
+    tp_price: float | None = None     # None → strategy %, set → custom
 
 
 @router.post("/config", response_model=RuntimeConfig)
@@ -189,27 +193,48 @@ async def manual_open_position(
     if quantity < min_qty:
         raise HTTPException(status_code=400, detail=f"Insufficient balance: qty={quantity} < min={min_qty}")
 
-    # Place market entry
-    order_result = await place_market_order(symbol, side, quantity)
-    entry_price = float(order_result.get("avgPrice", 0))
-    if entry_price <= 0:
-        entry_price = mark_price
-
-    # Get SL/TP from active strategy
-    active_tf = settings.trading_timeframes.split(",")[0].strip()
-    sl_pct, tp_pct = settings.get_strategy(active_tf)
-
-    # Calculate & place SL
-    if side == "BUY":
-        raw_sl = entry_price * (1 - sl_pct)
-        raw_tp = entry_price * (1 + tp_pct)
-        sl_side = "SELL"
-        tp_side = "SELL"
+    # Place entry order: LIMIT if entry_price given, else MARKET
+    if body.entry_price is not None:
+        limit_price = round_price(body.entry_price, tick_size)
+        order_result = await place_limit_order(symbol, side, quantity, limit_price)
+        entry_price = limit_price
     else:
-        raw_sl = entry_price * (1 + sl_pct)
-        raw_tp = entry_price * (1 - tp_pct)
-        sl_side = "BUY"
-        tp_side = "BUY"
+        order_result = await place_market_order(symbol, side, quantity)
+        entry_price = float(order_result.get("avgPrice", 0))
+        if entry_price <= 0:
+            entry_price = mark_price
+
+    # SL/TP: use custom values if provided, otherwise calculate from strategy
+    if body.sl_price is not None or body.tp_price is not None:
+        # At least one custom value
+        active_tf = settings.trading_timeframes.split(",")[0].strip()
+        sl_pct, tp_pct = settings.get_strategy(active_tf)
+
+        if side == "BUY":
+            sl_side = "SELL"
+            tp_side = "SELL"
+            raw_sl = body.sl_price if body.sl_price is not None else entry_price * (1 - sl_pct)
+            raw_tp = body.tp_price if body.tp_price is not None else entry_price * (1 + tp_pct)
+        else:
+            sl_side = "BUY"
+            tp_side = "BUY"
+            raw_sl = body.sl_price if body.sl_price is not None else entry_price * (1 + sl_pct)
+            raw_tp = body.tp_price if body.tp_price is not None else entry_price * (1 - tp_pct)
+    else:
+        # All from strategy
+        active_tf = settings.trading_timeframes.split(",")[0].strip()
+        sl_pct, tp_pct = settings.get_strategy(active_tf)
+
+        if side == "BUY":
+            raw_sl = entry_price * (1 - sl_pct)
+            raw_tp = entry_price * (1 + tp_pct)
+            sl_side = "SELL"
+            tp_side = "SELL"
+        else:
+            raw_sl = entry_price * (1 + sl_pct)
+            raw_tp = entry_price * (1 - tp_pct)
+            sl_side = "BUY"
+            tp_side = "BUY"
 
     sl_price = round_price(raw_sl, tick_size)
     tp_price = round_price(raw_tp, tick_size)
