@@ -290,6 +290,9 @@ let markers = [];
 // Timezone offset: UTC → yerel saat
 var tzOffsetSec = -(new Date().getTimezoneOffset() * 60);
 
+// Interval → saniye (marker pozisyonlama için)
+var INTERVAL_SEC = {'1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,'1h':3600,'2h':7200,'4h':14400,'1d':86400};
+
 function shiftTimes(arr){
   for(var i = 0; i < arr.length; i++){
     arr[i] = Object.assign({}, arr[i], { time: arr[i].time + tzOffsetSec });
@@ -632,18 +635,20 @@ function drawTradeMarkers(trades){
   if(!candleSeries || !trades) return;
 
   var mkrs = [];
+  // Backend close_time gönderir, chart open_time kullanır → interval çıkar
+  var ivSec = INTERVAL_SEC[selectedInterval] || 300;
   trades.forEach(function(t){
-    // Entry marker (zaman shift)
+    // Entry marker: close_time - interval = open_time (grafikteki mum)
     mkrs.push({
-      time: t.entry_time + tzOffsetSec,
+      time: t.entry_time - ivSec + tzOffsetSec,
       position: t.side === 'LONG' ? 'belowBar' : 'aboveBar',
       color: t.side === 'LONG' ? '#3fb950' : '#f85149',
       shape: t.side === 'LONG' ? 'arrowUp' : 'arrowDown',
       text: t.side === 'LONG' ? 'L' : 'S',
     });
-    // Exit marker (zaman shift)
+    // Exit marker
     mkrs.push({
-      time: t.exit_time + tzOffsetSec,
+      time: t.exit_time - ivSec + tzOffsetSec,
       position: t.side === 'LONG' ? 'aboveBar' : 'belowBar',
       color: t.pnl_pct >= 0 ? '#3fb950' : '#f85149',
       shape: 'circle',

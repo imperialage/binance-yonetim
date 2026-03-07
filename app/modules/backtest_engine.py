@@ -74,7 +74,7 @@ async def fetch_klines_range(
     interval: str,
     start_ms: int,
     end_ms: int,
-    extra_warmup: int = 500,
+    extra_warmup: int = 2000,
 ) -> list[list[Any]]:
     """Tarih aralığı için paginated kline çekme (Binance max 1000/istek).
 
@@ -138,6 +138,7 @@ def run_backtest(
     tp_pct: float,
     sl_pct: float,
     start_ms: int,
+    interval: str = "5m",
     supertrend_data: list[dict] | None = None,
     candles_data: list[dict] | None = None,
 ) -> dict:
@@ -148,6 +149,7 @@ def run_backtest(
         tp_pct: Take profit yüzdesi (ör: 1.5 = %1.5)
         sl_pct: Stop loss yüzdesi (ör: 1.0 = %1.0)
         start_ms: Backtest başlangıç zamanı (warmup hariç)
+        interval: Kline interval (zaman gösterimi için)
         supertrend_data: Önceden hesaplanmış supertrend (optimize için)
         candles_data: Önceden hesaplanmış candle verisi (optimize için)
 
@@ -160,6 +162,9 @@ def run_backtest(
 
     if len(supertrend_data) < 2:
         return _empty_result()
+
+    # Interval → saniye (sinyal zamanını close_time olarak göstermek için)
+    interval_sec = INTERVAL_MS.get(interval, 300_000) // 1000
 
     start_sec = start_ms // 1000
     tp_mult = tp_pct / 100.0
@@ -196,15 +201,17 @@ def run_backtest(
                 hit_tp = low <= tp_price
 
             # SL öncelikli (worst-case)
+            # Zaman gösterimi: close_time = open_time + interval
+            t_close = t + interval_sec
             if hit_sl:
                 exit_price = sl_price
                 pnl_pct = -sl_pct - (commission * 100)
-                trades.append(_make_trade(position, t, exit_price, pnl_pct, "SL"))
+                trades.append(_make_trade(position, t_close, exit_price, pnl_pct, "SL"))
                 position = None
             elif hit_tp:
                 exit_price = tp_price
                 pnl_pct = tp_pct - (commission * 100)
-                trades.append(_make_trade(position, t, exit_price, pnl_pct, "TP"))
+                trades.append(_make_trade(position, t_close, exit_price, pnl_pct, "TP"))
                 position = None
             elif prev_dir != curr_dir:
                 # Ters sinyal geldi - pozisyonu sinyal mumunun close'unda kapat
@@ -215,7 +222,7 @@ def run_backtest(
                     raw_pnl = ((entry - exit_price) / entry) * 100
                 pnl_pct = raw_pnl - (commission * 100)
                 trades.append(
-                    _make_trade(position, t, exit_price, pnl_pct, "SIGNAL")
+                    _make_trade(position, t_close, exit_price, pnl_pct, "SIGNAL")
                 )
                 position = None
 
@@ -224,14 +231,13 @@ def run_backtest(
             continue
 
         # Yeni sinyal: direction değişimi → sinyal mumunun close'unda gir
-        # (Gerçek sistemde TradingView alert mum kapanışında ateşlenir,
-        #  emir anında piyasa fiyatından ≈ close fiyatı ile doldurulur)
+        # TradingView alert mum kapanışında ateşlenir (close_time)
         if prev_dir != curr_dir and position is None:
             side = "LONG" if curr_dir == -1 else "SHORT"
             position = {
                 "side": side,
                 "entry_price": close,
-                "entry_time": t,
+                "entry_time": t + interval_sec,  # close_time
                 "entry_idx": i,
             }
 
@@ -247,7 +253,7 @@ def run_backtest(
             raw_pnl = ((entry - exit_price) / entry) * 100
         pnl_pct = raw_pnl - (commission * 100)
         trades.append(
-            _make_trade(position, last["time"], exit_price, pnl_pct, "OPEN")
+            _make_trade(position, last["time"] + interval_sec, exit_price, pnl_pct, "OPEN")
         )
 
     return _build_result(trades)
@@ -256,6 +262,7 @@ def run_backtest(
 def find_optimal_sl_tp(
     klines: list[list[Any]],
     start_ms: int,
+    interval: str = "5m",
 ) -> dict:
     """Grid search ile en iyi SL/TP kombinasyonunu bul.
 
@@ -275,6 +282,7 @@ def find_optimal_sl_tp(
         for tp in tp_values:
             result = run_backtest(
                 klines, tp, sl, start_ms,
+                interval=interval,
                 supertrend_data=supertrend_data,
                 candles_data=candles_data,
             )

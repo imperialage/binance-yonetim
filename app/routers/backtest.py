@@ -139,7 +139,7 @@ async def run_backtest_endpoint(req: BacktestRequest):
     if not klines:
         raise HTTPException(status_code=404, detail="Veri bulunamadı")
 
-    result = run_backtest(klines, req.tp_pct, req.sl_pct, start_ms)
+    result = run_backtest(klines, req.tp_pct, req.sl_pct, start_ms, interval=req.interval)
 
     return {
         "symbol": symbol,
@@ -172,7 +172,7 @@ async def optimize_sl_tp(req: BacktestRequest):
     if not klines:
         raise HTTPException(status_code=404, detail="Veri bulunamadı")
 
-    result = find_optimal_sl_tp(klines, start_ms)
+    result = find_optimal_sl_tp(klines, start_ms, interval=req.interval)
 
     return {
         "symbol": symbol,

@@ -24,7 +24,7 @@ def _kmeans_on_window(
     c_mid = mn + rng * midvol
     c_low = mn + rng * lowvol
 
-    for _ in range(10):
+    for _ in range(20):
         s_high = 0.0; n_high = 0
         s_mid = 0.0; n_mid = 0
         s_low = 0.0; n_low = 0
