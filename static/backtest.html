@@ -287,6 +287,16 @@ let candleSeries = null;
 let stLineSeries = null;
 let markers = [];
 
+// Timezone offset: UTC → yerel saat
+var tzOffsetSec = -(new Date().getTimezoneOffset() * 60);
+
+function shiftTimes(arr){
+  for(var i = 0; i < arr.length; i++){
+    arr[i] = Object.assign({}, arr[i], { time: arr[i].time + tzOffsetSec });
+  }
+  return arr;
+}
+
 // ── Init ──
 document.addEventListener('DOMContentLoaded', function(){
   setDefaultDates();
@@ -415,6 +425,9 @@ async function loadChart(){
     var resp = await fetch(url);
     if(!resp.ok){ showToast('Grafik verisi alinamadi', true); return; }
     var data = await resp.json();
+
+    shiftTimes(data.candles);
+    shiftTimes(data.supertrend);
 
     candleSeries.setData(data.candles);
 
@@ -620,17 +633,17 @@ function drawTradeMarkers(trades){
 
   var mkrs = [];
   trades.forEach(function(t){
-    // Entry marker
+    // Entry marker (zaman shift)
     mkrs.push({
-      time: t.entry_time,
+      time: t.entry_time + tzOffsetSec,
       position: t.side === 'LONG' ? 'belowBar' : 'aboveBar',
       color: t.side === 'LONG' ? '#3fb950' : '#f85149',
       shape: t.side === 'LONG' ? 'arrowUp' : 'arrowDown',
       text: t.side === 'LONG' ? 'L' : 'S',
     });
-    // Exit marker
+    // Exit marker (zaman shift)
     mkrs.push({
-      time: t.exit_time,
+      time: t.exit_time + tzOffsetSec,
       position: t.side === 'LONG' ? 'aboveBar' : 'belowBar',
       color: t.pnl_pct >= 0 ? '#3fb950' : '#f85149',
       shape: 'circle',
