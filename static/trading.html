@@ -1098,12 +1098,24 @@ tr:hover{background:#1c2128}
     ro.observe(container);
   }
 
+  // Timezone offset: tarayıcının yerel saatine çevir
+  var tzOffsetSec = -(new Date().getTimezoneOffset() * 60);
+
+  function shiftTimes(arr){
+    for(var i = 0; i < arr.length; i++){
+      arr[i] = Object.assign({}, arr[i], { time: arr[i].time + tzOffsetSec });
+    }
+    return arr;
+  }
+
   function fetchChartData(){
     var sym = SYMBOL;
     fetch('/api/chart/' + sym + '?interval=' + chartInterval + '&limit=300')
     .then(function(r){ return r.json(); })
     .then(function(data){
       if(!data.candles) return;
+      shiftTimes(data.candles);
+      shiftTimes(data.supertrend);
       lastStData = data.supertrend || [];
 
       candleSeries.setData(data.candles);
@@ -1205,7 +1217,7 @@ tr:hover{background:#1c2128}
     // Determine bar period in seconds
     var periods = {'1m':60,'5m':300,'15m':900,'1h':3600,'4h':14400};
     var period = periods[chartInterval] || 300;
-    var barTime = Math.floor(now / period) * period;
+    var barTime = Math.floor(now / period) * period + tzOffsetSec;
 
     candleSeries.update({
       time: barTime,
