@@ -34,6 +34,27 @@ header h1{font-size:18px;font-weight:600;color:#e6edf3;white-space:nowrap}
 .card-value.short{color:#f85149}
 .card-value.neutral{color:#8b949e}
 
+/* Live Price Ticker */
+.price-ticker{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+.ticker-left{display:flex;align-items:center;gap:14px}
+.ticker-symbol{font-size:20px;font-weight:700;color:#e6edf3}
+.ticker-price{font-size:32px;font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums;transition:color .3s}
+.ticker-price.up{color:#3fb950}
+.ticker-price.down{color:#f85149}
+.ticker-change{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.ticker-change-val{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
+.ticker-change-pct{font-size:13px;font-weight:600;padding:2px 8px;border-radius:6px}
+.ticker-change-val.up,.ticker-change-pct.up{color:#3fb950}
+.ticker-change-val.down,.ticker-change-pct.down{color:#f85149}
+.ticker-change-pct.up{background:#3fb95018}
+.ticker-change-pct.down{background:#f8514918}
+.ticker-high-low{display:flex;gap:20px;font-size:12px;color:#8b949e}
+.ticker-high-low span{color:#e6edf3;font-weight:600;margin-left:4px}
+.ticker-flash-up{animation:tickerFlashGreen .5s ease-out}
+.ticker-flash-down{animation:tickerFlashRed .5s ease-out}
+@keyframes tickerFlashGreen{0%{text-shadow:0 0 12px rgba(63,185,80,0.8)}100%{text-shadow:none}}
+@keyframes tickerFlashRed{0%{text-shadow:0 0 12px rgba(248,81,73,0.8)}100%{text-shadow:none}}
+
 /* Position Detail */
 .position-detail{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px;margin-bottom:20px}
 .position-detail h2{font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:1px;margin-bottom:16px}
@@ -151,6 +172,11 @@ tr:hover{background:#1c2128}
   .summary-chip{padding:4px 10px;font-size:11px}
   .progress-labels{font-size:10px}
   .progress-pct{font-size:11px}
+  .price-ticker{padding:12px 14px}
+  .ticker-symbol{font-size:16px}
+  .ticker-price{font-size:24px}
+  .ticker-change-val{font-size:14px}
+  .ticker-high-low{gap:12px;font-size:11px}
   .trade-actions{flex-direction:column}
   .btn-trade{width:100%;padding:14px}
 }
@@ -193,6 +219,18 @@ tr:hover{background:#1c2128}
       <div class="card-label">7 G&#252;nl&#252;k PnL</div>
       <div class="card-value" id="weekPnlVal">--</div>
       <div class="card-sub" id="weekPnlSub"></div>
+    </div>
+  </div>
+
+  <!-- Live Price Ticker -->
+  <div class="price-ticker" id="priceTicker">
+    <div class="ticker-left">
+      <span class="ticker-symbol">ETH/USDT</span>
+      <span class="ticker-price" id="tickerPrice">--</span>
+    </div>
+    <div class="ticker-change">
+      <span class="ticker-change-val" id="tickerChangeVal">--</span>
+      <span class="ticker-change-pct" id="tickerChangePct">--</span>
     </div>
   </div>
 
@@ -246,6 +284,8 @@ tr:hover{background:#1c2128}
   let incomeData = null;
   let signalsData = null;
   let livePrice = 0;
+  let prevTickerPrice = 0;
+  let openPrice24h = 0;
   let ws = null;
   let reconnectTimer = null;
 
@@ -292,8 +332,10 @@ tr:hover{background:#1c2128}
       try {
         var data = JSON.parse(e.data);
         if(data[SYMBOL]) {
+          prevTickerPrice = livePrice;
           livePrice = parseFloat(data[SYMBOL]);
           updatePositionProgress();
+          updateTicker();
         }
       } catch(err){}
     };
@@ -639,7 +681,43 @@ tr:hover{background:#1c2128}
     $('signalsContent').innerHTML = html;
   }
 
-  // ── 7. Trade Actions ──
+  // ── 7. Live Price Ticker ──
+  function fetch24hOpen(){
+    fetch('https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=' + SYMBOL)
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      openPrice24h = parseFloat(d.openPrice || 0);
+      updateTicker();
+    }).catch(function(){});
+  }
+
+  function updateTicker(){
+    if(!livePrice) return;
+    var el = $('tickerPrice');
+    el.textContent = fmt(livePrice, 2);
+
+    // Flash animation on price change
+    if(prevTickerPrice && prevTickerPrice !== livePrice){
+      var dir = livePrice > prevTickerPrice ? 'up' : 'down';
+      el.className = 'ticker-price ' + dir + ' ticker-flash-' + dir;
+      setTimeout(function(){ el.className = 'ticker-price ' + dir; }, 500);
+    }
+
+    // 24h change
+    if(openPrice24h > 0){
+      var change = livePrice - openPrice24h;
+      var changePct = (change / openPrice24h) * 100;
+      var cls = change >= 0 ? 'up' : 'down';
+      var sign = change >= 0 ? '+' : '';
+
+      $('tickerChangeVal').textContent = sign + fmt(change, 2) + ' $';
+      $('tickerChangeVal').className = 'ticker-change-val ' + cls;
+      $('tickerChangePct').textContent = sign + fmt(changePct, 2) + '%';
+      $('tickerChangePct').className = 'ticker-change-pct ' + cls;
+    }
+  }
+
+  // ── 8. Trade Actions ──
   function getAdminToken(){
     var t = localStorage.getItem('adminToken');
     if(!t){
@@ -731,9 +809,11 @@ tr:hover{background:#1c2128}
   // ── Init ──
   connectWS();
   fetchAll();
+  fetch24hOpen();
   setInterval(fetchSignals, 10000);     // Sinyaller: 10s (API yok)
   setInterval(fetchDiagnosis, 60000);   // Pozisyon/bakiye: 60s
   setInterval(fetchIncome, 300000);     // Gelir: 5dk
+  setInterval(fetch24hOpen, 300000);    // 24h open: 5dk
 })();
 </script>
 
