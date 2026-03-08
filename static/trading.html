@@ -331,9 +331,9 @@ tr:hover{background:#1c2128}
 
   <!-- Trade Action Buttons -->
   <div class="trade-actions" id="tradeActions">
-    <button class="btn-trade btn-close-pos" id="btnClosePos" onclick="closePosition()" disabled>Pozisyonu Kapat</button>
-    <button class="btn-trade btn-long" id="btnLong" onclick="openTrade('BUY')">LONG A&#231;</button>
-    <button class="btn-trade btn-short" id="btnShort" onclick="openTrade('SELL')">SHORT A&#231;</button>
+    <button class="btn-trade btn-close-pos" id="btnClosePos" disabled>Pozisyonu Kapat</button>
+    <button class="btn-trade btn-long" id="btnLong">LONG A&#231;</button>
+    <button class="btn-trade btn-short" id="btnShort">SHORT A&#231;</button>
   </div>
 
   <!-- Strategy Card -->
@@ -370,8 +370,8 @@ tr:hover{background:#1c2128}
     <div class="modal-row">
       <label>Emir Tipi</label>
       <div class="toggle-group">
-        <button id="togMarket" class="active" onclick="setOrderType('MARKET')">Market</button>
-        <button id="togLimit" onclick="setOrderType('LIMIT')">Limit</button>
+        <button id="togMarket" class="active">Market</button>
+        <button id="togLimit">Limit</button>
       </div>
     </div>
 
@@ -392,8 +392,8 @@ tr:hover{background:#1c2128}
     </div>
 
     <div class="modal-actions">
-      <button class="btn-cancel" onclick="closeModal()">&#304;ptal</button>
-      <button id="modalConfirmBtn" class="btn-confirm-long" onclick="confirmTrade()">Onayla</button>
+      <button class="btn-cancel" id="modalCancelBtn">&#304;ptal</button>
+      <button id="modalConfirmBtn" class="btn-confirm-long">Onayla</button>
     </div>
   </div>
 </div>
@@ -1225,6 +1225,15 @@ tr:hover{background:#1c2128}
       open: price, high: price, low: price, close: price,
     });
   }
+
+  // ── Button event listeners ──
+  $('btnLong').addEventListener('click', function(){ openTrade('BUY'); });
+  $('btnShort').addEventListener('click', function(){ openTrade('SELL'); });
+  $('btnClosePos').addEventListener('click', function(){ closePosition(); });
+  $('togMarket').addEventListener('click', function(){ setOrderType('MARKET'); });
+  $('togLimit').addEventListener('click', function(){ setOrderType('LIMIT'); });
+  $('modalCancelBtn').addEventListener('click', function(){ closeModal(); });
+  $('modalConfirmBtn').addEventListener('click', function(){ confirmTrade(); });
 
   // ── Init ──
   initChart();
