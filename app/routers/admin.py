@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel
@@ -143,72 +144,70 @@ async def manual_open_position(
     if side not in ("BUY", "SELL"):
         raise HTTPException(status_code=400, detail="side must be BUY or SELL")
 
-    # Check current position
-    positions = await get_position_risk(symbol)
-    pos_amt = 0.0
-    for p in positions:
-        if p.get("symbol") == symbol:
-            pos_amt = float(p.get("positionAmt", 0))
-            break
-
-    # Same direction already open → reject
-    if (side == "BUY" and pos_amt > 0) or (side == "SELL" and pos_amt < 0):
-        raise HTTPException(status_code=400, detail="Same direction position already open")
-
-    # Opposite position open → close it first
-    if pos_amt != 0:
-        await cancel_all_open_orders(symbol)
-        close_side = "SELL" if pos_amt > 0 else "BUY"
-        await place_market_order(symbol, close_side, abs(pos_amt), reduce_only=True)
-        log.info("manual_open_closed_opposite", symbol=symbol, closed_side=close_side, qty=abs(pos_amt))
-
-    # Set leverage
     try:
-        await set_leverage(symbol, leverage=1)
-    except BinanceAPIError as e:
-        if "-4028" not in str(e):
-            raise
+        # Check current position
+        positions = await get_position_risk(symbol)
+        pos_amt = 0.0
+        for p in positions:
+            if p.get("symbol") == symbol:
+                pos_amt = float(p.get("positionAmt", 0))
+                break
 
-    # Get exchange info for rounding
-    info = await get_exchange_info(symbol)
-    step_size = info["lotSize"]["stepSize"]
-    min_qty = info["lotSize"]["minQty"]
-    tick_size = info["priceFilter"]["tickSize"]
+        # Same direction already open → reject
+        if (side == "BUY" and pos_amt > 0) or (side == "SELL" and pos_amt < 0):
+            raise HTTPException(status_code=400, detail="Same direction position already open")
 
-    # Calculate position size — sabit ~6 USDT (min notional 5 USDT + rounding buffer)
-    target_usdt = 6.0
-    # Get current price from position risk or mark price
-    mark_price = 0.0
-    fresh_positions = await get_position_risk(symbol)
-    for p in fresh_positions:
-        if p.get("symbol") == symbol:
-            mark_price = float(p.get("markPrice", 0))
-            break
-    if mark_price <= 0:
-        raise HTTPException(status_code=400, detail="Cannot determine current price")
+        # Opposite position open → close it first
+        if pos_amt != 0:
+            await cancel_all_open_orders(symbol)
+            close_side = "SELL" if pos_amt > 0 else "BUY"
+            await place_market_order(symbol, close_side, abs(pos_amt), reduce_only=True)
+            log.info("manual_open_closed_opposite", symbol=symbol, closed_side=close_side, qty=abs(pos_amt))
 
-    raw_qty = target_usdt / mark_price
-    # Yukarı yuvarla: min notional'ın altına düşmemesi için
-    import math
-    precision = max(0, int(round(-math.log10(step_size)))) if step_size > 0 else 3
-    quantity = round(math.ceil(raw_qty / step_size) * step_size, precision)
-    if quantity < min_qty:
-        raise HTTPException(status_code=400, detail=f"Insufficient balance: qty={quantity} < min={min_qty}")
+        # Set leverage
+        try:
+            await set_leverage(symbol, leverage=1)
+        except BinanceAPIError as e:
+            if "-4028" not in str(e):
+                raise
 
-    # Place entry order: LIMIT if entry_price given, else MARKET
-    if body.entry_price is not None:
-        limit_price = round_price(body.entry_price, tick_size)
-        order_result = await place_limit_order(symbol, side, quantity, limit_price)
-        entry_price = limit_price
-    else:
-        order_result = await place_market_order(symbol, side, quantity)
-        entry_price = float(order_result.get("avgPrice", 0))
-        if entry_price <= 0:
-            entry_price = mark_price
+        # Get exchange info for rounding
+        info = await get_exchange_info(symbol)
+        step_size = info["lotSize"]["stepSize"]
+        min_qty = info["lotSize"]["minQty"]
+        tick_size = info["priceFilter"]["tickSize"]
 
-    # SL/TP: use custom values if provided, otherwise calculate from strategy
-    if body.sl_price is not None or body.tp_price is not None:
-        # At least one custom value
+        # Calculate position size — sabit ~6 USDT (min notional 5 USDT + rounding buffer)
+        target_usdt = 6.0
+        # Get current price from position risk or mark price
+        mark_price = 0.0
+        fresh_positions = await get_position_risk(symbol)
+        for p in fresh_positions:
+            if p.get("symbol") == symbol:
+                mark_price = float(p.get("markPrice", 0))
+                break
+        if mark_price <= 0:
+            raise HTTPException(status_code=400, detail="Cannot determine current price")
+
+        raw_qty = target_usdt / mark_price
+        # Yukarı yuvarla: min notional'ın altına düşmemesi için
+        precision = max(0, int(round(-math.log10(step_size)))) if step_size > 0 else 3
+        quantity = round(math.ceil(raw_qty / step_size) * step_size, precision)
+        if quantity < min_qty:
+            raise HTTPException(status_code=400, detail=f"Insufficient balance: qty={quantity} < min={min_qty}")
+
+        # Place entry order: LIMIT if entry_price given, else MARKET
+        if body.entry_price is not None:
+            limit_price = round_price(body.entry_price, tick_size)
+            order_result = await place_limit_order(symbol, side, quantity, limit_price)
+            entry_price = limit_price
+        else:
+            order_result = await place_market_order(symbol, side, quantity)
+            entry_price = float(order_result.get("avgPrice", 0))
+            if entry_price <= 0:
+                entry_price = mark_price
+
+        # SL/TP: use custom values if provided, otherwise calculate from strategy
         active_tf = settings.trading_timeframes.split(",")[0].strip()
         sl_pct, tp_pct = settings.get_strategy(active_tf)
 
@@ -222,39 +221,33 @@ async def manual_open_position(
             tp_side = "BUY"
             raw_sl = body.sl_price if body.sl_price is not None else entry_price * (1 + sl_pct)
             raw_tp = body.tp_price if body.tp_price is not None else entry_price * (1 - tp_pct)
-    else:
-        # All from strategy
-        active_tf = settings.trading_timeframes.split(",")[0].strip()
-        sl_pct, tp_pct = settings.get_strategy(active_tf)
 
-        if side == "BUY":
-            raw_sl = entry_price * (1 - sl_pct)
-            raw_tp = entry_price * (1 + tp_pct)
-            sl_side = "SELL"
-            tp_side = "SELL"
-        else:
-            raw_sl = entry_price * (1 + sl_pct)
-            raw_tp = entry_price * (1 - tp_pct)
-            sl_side = "BUY"
-            tp_side = "BUY"
+        sl_price = round_price(raw_sl, tick_size)
+        tp_price = round_price(raw_tp, tick_size)
 
-    sl_price = round_price(raw_sl, tick_size)
-    tp_price = round_price(raw_tp, tick_size)
+        await place_stop_market_order(symbol, sl_side, quantity, sl_price)
+        await place_take_profit_market_order(symbol, tp_side, quantity, tp_price)
 
-    await place_stop_market_order(symbol, sl_side, quantity, sl_price)
-    await place_take_profit_market_order(symbol, tp_side, quantity, tp_price)
+        log.info(
+            "manual_open",
+            symbol=symbol, side=side, qty=quantity,
+            entry=entry_price, sl=sl_price, tp=tp_price,
+        )
 
-    log.info(
-        "manual_open",
-        symbol=symbol, side=side, qty=quantity,
-        entry=entry_price, sl=sl_price, tp=tp_price,
-    )
+        return {
+            "ok": True,
+            "side": side,
+            "qty": quantity,
+            "entry_price": entry_price,
+            "sl_price": sl_price,
+            "tp_price": tp_price,
+        }
 
-    return {
-        "ok": True,
-        "side": side,
-        "qty": quantity,
-        "entry_price": entry_price,
-        "sl_price": sl_price,
-        "tp_price": tp_price,
-    }
+    except HTTPException:
+        raise
+    except BinanceAPIError as e:
+        log.error("manual_open_binance_error", symbol=symbol, side=side, error=str(e))
+        raise HTTPException(status_code=400, detail=f"Binance API: {e.msg}")
+    except Exception as e:
+        log.error("manual_open_error", symbol=symbol, side=side, error=str(e), error_type=type(e).__name__)
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
