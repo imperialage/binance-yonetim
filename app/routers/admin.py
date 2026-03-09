@@ -175,9 +175,8 @@ async def manual_open_position(
     min_qty = info["lotSize"]["minQty"]
     tick_size = info["priceFilter"]["tickSize"]
 
-    # Calculate position size from balance
-    balance = await get_usdt_balance()
-    usable = balance * 0.98
+    # Calculate position size — sabit 1 USDT
+    usable = 1.0
     # Get current price from a small position risk or mark price
     mark_price = 0.0
     fresh_positions = await get_position_risk(symbol)
