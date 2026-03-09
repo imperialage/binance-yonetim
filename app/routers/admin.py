@@ -177,8 +177,8 @@ async def manual_open_position(
         min_qty = info["lotSize"]["minQty"]
         tick_size = info["priceFilter"]["tickSize"]
 
-        # Calculate position size — sabit ~6 USDT (min notional 5 USDT + rounding buffer)
-        target_usdt = 6.0
+        # Calculate position size — sabit ~21 USDT (min notional 20 USDT + rounding buffer)
+        target_usdt = 21.0
         # Get current price from position risk or mark price
         mark_price = 0.0
         fresh_positions = await get_position_risk(symbol)
