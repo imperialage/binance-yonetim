@@ -175,9 +175,9 @@ async def manual_open_position(
     min_qty = info["lotSize"]["minQty"]
     tick_size = info["priceFilter"]["tickSize"]
 
-    # Calculate position size — sabit 5 USDT
-    usable = 5.0
-    # Get current price from a small position risk or mark price
+    # Calculate position size — sabit ~6 USDT (min notional 5 USDT + rounding buffer)
+    target_usdt = 6.0
+    # Get current price from position risk or mark price
     mark_price = 0.0
     fresh_positions = await get_position_risk(symbol)
     for p in fresh_positions:
@@ -187,8 +187,11 @@ async def manual_open_position(
     if mark_price <= 0:
         raise HTTPException(status_code=400, detail="Cannot determine current price")
 
-    raw_qty = usable / mark_price
-    quantity = round_step_size(raw_qty, step_size)
+    raw_qty = target_usdt / mark_price
+    # Yukarı yuvarla: min notional'ın altına düşmemesi için
+    import math
+    precision = max(0, int(round(-math.log10(step_size)))) if step_size > 0 else 3
+    quantity = round(math.ceil(raw_qty / step_size) * step_size, precision)
     if quantity < min_qty:
         raise HTTPException(status_code=400, detail=f"Insufficient balance: qty={quantity} < min={min_qty}")
 
