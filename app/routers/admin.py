@@ -203,9 +203,23 @@ async def manual_open_position(
             entry_price = limit_price
         else:
             order_result = await place_market_order(symbol, side, quantity)
-            entry_price = float(order_result.get("avgPrice", 0))
+            # Gerçek giriş fiyatını pozisyon verisinden al (avgPrice güvenilmez olabilir)
+            import asyncio
+            await asyncio.sleep(0.3)  # Pozisyon güncellemesi için kısa bekle
+            pos_data = await get_position_risk(symbol)
+            entry_price = 0.0
+            current_mark = 0.0
+            for p in pos_data:
+                if p.get("symbol") == symbol:
+                    entry_price = float(p.get("entryPrice", 0))
+                    current_mark = float(p.get("markPrice", 0))
+                    break
+            if entry_price <= 0:
+                entry_price = float(order_result.get("avgPrice", 0))
             if entry_price <= 0:
                 entry_price = mark_price
+            if current_mark <= 0:
+                current_mark = entry_price
 
         # SL/TP: use custom values if provided, otherwise calculate from strategy
         active_tf = settings.trading_timeframes.split(",")[0].strip()
@@ -224,6 +238,21 @@ async def manual_open_position(
 
         sl_price = round_price(raw_sl, tick_size)
         tp_price = round_price(raw_tp, tick_size)
+
+        # SL/TP'nin mevcut fiyata göre doğru tarafta olduğunu kontrol et
+        ref_price = current_mark if body.entry_price is None else entry_price
+        if side == "BUY":
+            # SL mark'ın altında, TP mark'ın üstünde olmalı
+            if sl_price >= ref_price:
+                sl_price = round_price(ref_price * (1 - sl_pct), tick_size)
+            if tp_price <= ref_price:
+                tp_price = round_price(ref_price * (1 + tp_pct), tick_size)
+        else:
+            # SL mark'ın üstünde, TP mark'ın altında olmalı
+            if sl_price <= ref_price:
+                sl_price = round_price(ref_price * (1 + sl_pct), tick_size)
+            if tp_price >= ref_price:
+                tp_price = round_price(ref_price * (1 - tp_pct), tick_size)
 
         await place_stop_market_order(symbol, sl_side, quantity, sl_price)
         await place_take_profit_market_order(symbol, tp_side, quantity, tp_price)
