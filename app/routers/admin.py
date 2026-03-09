@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 
@@ -204,7 +205,6 @@ async def manual_open_position(
         else:
             order_result = await place_market_order(symbol, side, quantity)
             # Gerçek giriş fiyatını pozisyon verisinden al (avgPrice güvenilmez olabilir)
-            import asyncio
             await asyncio.sleep(0.3)  # Pozisyon güncellemesi için kısa bekle
             pos_data = await get_position_risk(symbol)
             entry_price = 0.0
@@ -254,16 +254,23 @@ async def manual_open_position(
             if tp_price >= ref_price:
                 tp_price = round_price(ref_price * (1 - tp_pct), tick_size)
 
-        await place_stop_market_order(symbol, sl_side, quantity, sl_price)
-        await place_take_profit_market_order(symbol, tp_side, quantity, tp_price)
+        # SL/TP emirlerini yerleştir — başarısız olursa pozisyon açık kalır
+        sl_tp_error = None
+        try:
+            await place_stop_market_order(symbol, sl_side, quantity, sl_price)
+            await place_take_profit_market_order(symbol, tp_side, quantity, tp_price)
+        except (BinanceAPIError, Exception) as e:
+            sl_tp_error = str(e)
+            log.warning("manual_open_sl_tp_failed", symbol=symbol, error=sl_tp_error)
 
         log.info(
             "manual_open",
             symbol=symbol, side=side, qty=quantity,
             entry=entry_price, sl=sl_price, tp=tp_price,
+            sl_tp_error=sl_tp_error,
         )
 
-        return {
+        result = {
             "ok": True,
             "side": side,
             "qty": quantity,
@@ -271,6 +278,9 @@ async def manual_open_position(
             "sl_price": sl_price,
             "tp_price": tp_price,
         }
+        if sl_tp_error:
+            result["warning"] = f"Pozisyon açıldı ama SL/TP yerleştirilemedi: {sl_tp_error}"
+        return result
 
     except HTTPException:
         raise

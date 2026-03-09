@@ -1047,13 +1047,19 @@ tr:hover{background:#1c2128}
       return r.json();
     }).then(function(data){
       closeModal();
-      showToast(label + ' a\u00e7\u0131ld\u0131: ' + data.qty + ' @ ' + Number(data.entry_price).toFixed(2) + ' | SL:' + Number(data.sl_price).toFixed(2) + ' TP:' + Number(data.tp_price).toFixed(2), 'success');
-      fetchDiagnosis();
+      var msg = label + ' açıldı: ' + data.qty + ' @ ' + Number(data.entry_price).toFixed(2) + ' | SL:' + Number(data.sl_price).toFixed(2) + ' TP:' + Number(data.tp_price).toFixed(2);
+      if(data.warning){
+        showToast(msg + '\n⚠️ ' + data.warning, 'warning');
+      } else {
+        showToast(msg, 'success');
+      }
     }).catch(function(e){
       showToast('Hata: ' + e.message, 'error');
     }).finally(function(){
       confirmBtn.textContent = 'Onayla';
       confirmBtn.disabled = false;
+      // Her durumda pozisyon bilgisini güncelle (başarı veya hata)
+      setTimeout(fetchDiagnosis, 500);
     });
   };
 
