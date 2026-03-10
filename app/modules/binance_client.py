@@ -153,18 +153,28 @@ async def cancel_all_open_orders(symbol: str) -> dict:
     resp = await client.delete("/fapi/v1/allOpenOrders", params=params)
     _raise_for_binance(resp)
     result = resp.json()
-    # Cancel algo (conditional) orders
+    # Cancel algo (conditional) orders — SL/TP
     try:
         algo_params = _sign({"symbol": symbol})
-        algo_resp = await client.get("/fapi/v1/openAlgoOrders", params=algo_params)
+        algo_resp = await client.get("/fapi/v1/algoOrder/openOrders", params=algo_params)
         algo_resp.raise_for_status()
-        for order in algo_resp.json():
+        algo_data = algo_resp.json()
+        orders_list = algo_data.get("orders", []) if isinstance(algo_data, dict) else []
+        cancelled_algo = 0
+        for order in orders_list:
             algo_id = order.get("algoId")
-            if algo_id and order.get("symbol") == symbol:
-                del_params = _sign({"algoId": algo_id})
-                await client.delete("/fapi/v1/algoOrder", params=del_params)
-    except Exception:
-        pass  # Best-effort algo cancellation
+            if algo_id:
+                try:
+                    del_params = _sign({"algoId": int(algo_id)})
+                    del_resp = await client.delete("/fapi/v1/algoOrder", params=del_params)
+                    del_resp.raise_for_status()
+                    cancelled_algo += 1
+                except Exception as e:
+                    log.warning("algo_order_cancel_failed", algo_id=algo_id, error=str(e))
+        if cancelled_algo > 0:
+            log.info("algo_orders_cancelled", symbol=symbol, count=cancelled_algo)
+    except Exception as e:
+        log.warning("algo_orders_list_failed", symbol=symbol, error=str(e))
     return result
 
 
