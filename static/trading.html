@@ -229,6 +229,30 @@ tr:hover{background:#1c2128}
   .btn-trade{width:100%;padding:14px}
   #chartContainer{height:300px}
 }
+
+/* Modal Info Row */
+.modal-info-row{display:flex;justify-content:space-between;background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px 14px;margin-bottom:16px}
+.modal-info-col{display:flex;flex-direction:column;gap:2px}
+.modal-info-col.right{text-align:right}
+.modal-info-label{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px}
+.modal-info-value{font-size:18px;font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums}
+.modal-info-value.price{color:#58a6ff}
+
+/* Modal Signal Box */
+.modal-signal-box{display:flex;align-items:center;gap:8px;background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#8b949e}
+.modal-signal-box .badge{font-size:12px}
+.modal-signal-box .signal-price{color:#e6edf3;font-weight:600;margin-left:auto}
+
+/* Modal Slider */
+.modal-slider-wrap{position:relative;margin-top:8px}
+.modal-slider{-webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:3px;background:#21262d;outline:none;cursor:pointer}
+.modal-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;background:#58a6ff;cursor:pointer;border:2px solid #0d1117;box-shadow:0 0 6px rgba(88,166,255,0.4)}
+.modal-slider::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:#58a6ff;cursor:pointer;border:2px solid #0d1117}
+.modal-slider::-webkit-slider-runnable-track{height:6px;border-radius:3px}
+.modal-slider-marks{display:flex;justify-content:space-between;margin-top:8px}
+.modal-slider-marks span{font-size:11px;color:#8b949e;cursor:pointer;padding:2px 6px;border-radius:4px;transition:color .2s,background .2s;user-select:none}
+.modal-slider-marks span:hover{color:#58a6ff;background:#58a6ff18}
+.modal-slider-marks span.active{color:#58a6ff;font-weight:600}
 </style>
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
@@ -367,6 +391,25 @@ tr:hover{background:#1c2128}
   <div class="modal">
     <div class="modal-title" id="modalTitle">LONG A&#231;</div>
 
+    <!-- Balance + Price Row -->
+    <div class="modal-info-row">
+      <div class="modal-info-col">
+        <span class="modal-info-label">Bakiye</span>
+        <span class="modal-info-value" id="modalBalance">--</span>
+      </div>
+      <div class="modal-info-col right">
+        <span class="modal-info-label" id="modalSymbolLabel">ETHUSDT</span>
+        <span class="modal-info-value price" id="modalPrice">--</span>
+      </div>
+    </div>
+
+    <!-- Last Signal -->
+    <div class="modal-signal-box" id="modalSignalBox">
+      <span>Son Sinyal:</span>
+      <span id="modalSignalBadge">--</span>
+      <span class="signal-price" id="modalSignalPrice"></span>
+    </div>
+
     <div class="modal-row">
       <label>Emir Tipi</label>
       <div class="toggle-group">
@@ -379,6 +422,21 @@ tr:hover{background:#1c2128}
       <label>Giri&#351; Fiyat&#305;</label>
       <input type="number" id="modalEntryPrice" step="any" placeholder="Mevcut fiyat" disabled>
       <div class="modal-live-price" id="modalLivePrice"></div>
+    </div>
+
+    <div class="modal-row">
+      <label>Miktar (USDT)</label>
+      <input type="number" id="modalAmount" step="0.1" min="20" placeholder="21.0">
+      <div class="modal-slider-wrap">
+        <input type="range" class="modal-slider" id="modalSlider" min="20" max="1000" step="0.1" value="21">
+        <div class="modal-slider-marks">
+          <span data-pct="0">Min</span>
+          <span data-pct="25">25%</span>
+          <span data-pct="50">50%</span>
+          <span data-pct="75">75%</span>
+          <span data-pct="100">100%</span>
+        </div>
+      </div>
     </div>
 
     <div class="modal-row">
@@ -401,6 +459,7 @@ tr:hover{background:#1c2128}
   let diagData = null;
   let incomeData = null;
   let signalsData = null;
+  let lastSignal = null;
   let livePrice = 0;
   let prevTickerPrice = 0;
   let openPrice24h = 0;
@@ -455,6 +514,7 @@ tr:hover{background:#1c2128}
         if(data[SYMBOL]) {
           livePrice = parseFloat(data[SYMBOL]);
           updatePositionProgress();
+          updateModalLivePrice();
         }
         if(data[tickerSymbol]) {
           var newPrice = parseFloat(data[tickerSymbol]);
@@ -482,6 +542,9 @@ tr:hover{background:#1c2128}
     .then(function(data){
       signalsData = data;
       console.log('signals:', data.count, 'events');
+      // Capture last signal for modal
+      var evts = data.events || [];
+      if(evts.length > 0) lastSignal = evts[0];
       renderSignals();
     }).catch(function(e){ console.error('fetchSignals error:', e); });
   }
@@ -932,6 +995,7 @@ tr:hover{background:#1c2128}
   // ── Modal Logic ──
   var modalSide = null;
   var modalOrderType = 'MARKET';
+  var modalBalance = 0;
 
   window.openTrade = function(side){
     modalSide = side;
@@ -944,6 +1008,25 @@ tr:hover{background:#1c2128}
     var confirmBtn = $('modalConfirmBtn');
     confirmBtn.className = side === 'BUY' ? 'btn-confirm-long' : 'btn-confirm-short';
     confirmBtn.textContent = 'Onayla';
+    confirmBtn.disabled = false;
+
+    // Populate balance
+    modalBalance = diagData && diagData.balance != null ? parseFloat(diagData.balance) : 0;
+    $('modalBalance').textContent = modalBalance > 0 ? fmt(modalBalance, 2) + ' USDT' : '--';
+
+    // Populate symbol + price
+    $('modalSymbolLabel').textContent = SYMBOL;
+    $('modalPrice').textContent = livePrice > 0 ? fmt(livePrice, 2) : '--';
+
+    // Populate last signal
+    if(lastSignal){
+      var sigType = (lastSignal.signal === 'BUY' || lastSignal.signal === 'LONG') ? 'buy' : 'sell';
+      $('modalSignalBadge').innerHTML = '<span class="badge badge-' + sigType + '">' + lastSignal.signal + '</span>';
+      $('modalSignalPrice').textContent = lastSignal.price ? '@ ' + fmt(lastSignal.price, 2) : '';
+      $('modalSignalBox').style.display = 'flex';
+    } else {
+      $('modalSignalBox').style.display = 'none';
+    }
 
     // Reset fields
     $('modalEntryPrice').value = '';
@@ -951,10 +1034,67 @@ tr:hover{background:#1c2128}
     $('modalTP').value = '';
     $('togMarket').classList.add('active');
     $('togLimit').classList.remove('active');
-    updateModalLivePrice();
 
+    // Setup slider
+    var slider = $('modalSlider');
+    var amountInput = $('modalAmount');
+    var maxVal = Math.max(modalBalance, 20);
+    slider.min = 20;
+    slider.max = maxVal;
+    slider.step = 0.1;
+    var defaultAmt = Math.min(21, maxVal);
+    slider.value = defaultAmt;
+    amountInput.value = defaultAmt;
+    amountInput.max = maxVal;
+    updateSliderMarks(defaultAmt, maxVal);
+
+    updateModalLivePrice();
     $('tradeModal').classList.add('active');
   };
+
+  // Slider ↔ Input sync
+  function setupSliderSync(){
+    var slider = $('modalSlider');
+    var amountInput = $('modalAmount');
+
+    slider.addEventListener('input', function(){
+      amountInput.value = parseFloat(slider.value).toFixed(1);
+      updateSliderMarks(parseFloat(slider.value), parseFloat(slider.max));
+    });
+
+    amountInput.addEventListener('input', function(){
+      var v = parseFloat(amountInput.value);
+      if(!isNaN(v)){
+        v = Math.max(20, Math.min(v, parseFloat(slider.max)));
+        slider.value = v;
+        updateSliderMarks(v, parseFloat(slider.max));
+      }
+    });
+
+    // Percentage marks click
+    document.querySelectorAll('.modal-slider-marks span').forEach(function(mark){
+      mark.addEventListener('click', function(){
+        var pct = parseInt(mark.dataset.pct);
+        var max = parseFloat(slider.max);
+        var val;
+        if(pct === 0) val = 20;
+        else val = Math.max(20, (max * pct / 100));
+        val = Math.round(val * 10) / 10;
+        slider.value = val;
+        amountInput.value = val.toFixed(1);
+        updateSliderMarks(val, max);
+      });
+    });
+  }
+
+  function updateSliderMarks(val, max){
+    if(max <= 0) return;
+    var pct = (val / max) * 100;
+    document.querySelectorAll('.modal-slider-marks span').forEach(function(mark){
+      var mPct = parseInt(mark.dataset.pct);
+      mark.classList.toggle('active', Math.abs(pct - mPct) < 3);
+    });
+  }
 
   window.setOrderType = function(type){
     modalOrderType = type;
@@ -974,10 +1114,15 @@ tr:hover{background:#1c2128}
   };
 
   function updateModalLivePrice(){
-    if(modalOrderType === 'MARKET' && livePrice > 0){
-      $('modalLivePrice').textContent = 'Mevcut fiyat: ' + fmt(livePrice, 2);
-    } else {
-      $('modalLivePrice').textContent = '';
+    if($('tradeModal').classList.contains('active')){
+      if(livePrice > 0){
+        $('modalPrice').textContent = fmt(livePrice, 2);
+      }
+      if(modalOrderType === 'MARKET' && livePrice > 0){
+        $('modalLivePrice').textContent = 'Mevcut fiyat: ' + fmt(livePrice, 2);
+      } else {
+        $('modalLivePrice').textContent = '';
+      }
     }
   }
 
@@ -1003,7 +1148,18 @@ tr:hover{background:#1c2128}
     var token = getAdminToken();
     if(!token) return;
 
-    var payload = {symbol: SYMBOL, side: modalSide};
+    // Get amount
+    var amountUsdt = parseFloat($('modalAmount').value);
+    if(isNaN(amountUsdt) || amountUsdt < 20){
+      showToast('Minimum miktar 20 USDT', 'error');
+      return;
+    }
+    if(modalBalance > 0 && amountUsdt > modalBalance){
+      showToast('Yetersiz bakiye: ' + fmt(amountUsdt, 2) + ' > ' + fmt(modalBalance, 2) + ' USDT', 'error');
+      return;
+    }
+
+    var payload = {symbol: SYMBOL, side: modalSide, amount_usdt: amountUsdt};
 
     // Entry price
     if(modalOrderType === 'LIMIT'){
@@ -1220,6 +1376,7 @@ tr:hover{background:#1c2128}
   $('modalConfirmBtn').addEventListener('click', function(){ confirmTrade(); });
 
   // ── Init ──
+  setupSliderSync();
   initChart();
   fetchChartData();
   // Refresh chart every 60s

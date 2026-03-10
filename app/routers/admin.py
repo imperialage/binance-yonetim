@@ -15,6 +15,7 @@ from app.modules.binance_client import (
     cancel_all_open_orders,
     get_exchange_info,
     get_position_risk,
+    get_usdt_balance,
     place_limit_order,
     place_market_order,
     place_take_profit_market_order,
@@ -39,6 +40,7 @@ class ManualOpenRequest(BaseModel):
     side: str  # "BUY" or "SELL"
     entry_price: float | None = None  # None → MARKET, set → LIMIT
     tp_price: float | None = None     # None → strategy %, set → custom
+    amount_usdt: float | None = None  # None → 21.0 fallback
 
 
 @router.post("/config", response_model=RuntimeConfig)
@@ -174,8 +176,19 @@ async def manual_open_position(
         min_qty = info["lotSize"]["minQty"]
         tick_size = info["priceFilter"]["tickSize"]
 
-        # Calculate position size — sabit ~21 USDT (min notional 20 USDT + rounding buffer)
-        target_usdt = 21.0
+        # Calculate position size
+        target_usdt = body.amount_usdt if body.amount_usdt is not None else 21.0
+        if target_usdt < 20:
+            raise HTTPException(status_code=400, detail="Minimum miktar 20 USDT")
+
+        # Balance check
+        available_balance = await get_usdt_balance()
+        if target_usdt > available_balance:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Yetersiz bakiye: {target_usdt:.2f} > {available_balance:.2f} USDT",
+            )
+
         # Get current price from position risk or mark price
         mark_price = 0.0
         fresh_positions = await get_position_risk(symbol)
@@ -259,6 +272,7 @@ async def manual_open_position(
             "entry_price": entry_price,
             "sl_price": 0.0,
             "tp_price": tp_price,
+            "amount_usdt": target_usdt,
         }
         if sl_tp_error:
             result["warning"] = f"Pozisyon açıldı ama TP yerleştirilemedi: {sl_tp_error}"
