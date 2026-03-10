@@ -331,6 +331,30 @@ async def get_user_trades(
     return all_trades
 
 
+async def get_all_orders(
+    symbol: str = "ETHUSDT",
+    days: int = 3,
+) -> list[dict]:
+    """Get all orders (filled, cancelled, etc.) from Binance Futures."""
+    client = await get_client()
+    start_time = int((time.time() - days * 86400) * 1000)
+    params = _sign({"symbol": symbol, "startTime": start_time, "limit": 100})
+    resp = await client.get("/fapi/v1/allOrders", params=params)
+    _raise_for_binance(resp)
+    return resp.json()
+
+
+async def get_algo_orders(
+    symbol: str = "ETHUSDT",
+) -> list[dict]:
+    """Get algo/conditional order history from Binance Futures."""
+    client = await get_client()
+    params = _sign({"symbol": symbol})
+    resp = await client.get("/fapi/v1/algoOrder/openOrders", params=params)
+    _raise_for_binance(resp)
+    return resp.json()
+
+
 def round_step_size(quantity: float, step_size: float) -> float:
     """Round quantity down to the nearest valid step size."""
     if step_size <= 0:

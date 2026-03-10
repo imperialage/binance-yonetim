@@ -369,6 +369,56 @@ async def debug_income() -> dict:
         return {"error": str(e)}
 
 
+@router.get("/debug/orders")
+async def debug_orders() -> dict:
+    """Get all Binance orders (regular + algo) for the last 3 days."""
+    from app.modules.binance_client import get_all_orders, get_algo_orders
+    from datetime import datetime, timezone, timedelta
+    tz = timezone(timedelta(hours=3))
+    try:
+        regular_orders, algo_result = await asyncio.gather(
+            get_all_orders("ETHUSDT", days=3),
+            get_algo_orders("ETHUSDT"),
+        )
+
+        orders = []
+        for o in regular_orders:
+            ts = int(o.get("time", 0))
+            orders.append({
+                "time": datetime.fromtimestamp(ts / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S") if ts else "",
+                "order_id": str(o.get("orderId", "")),
+                "type": o.get("type", ""),
+                "side": o.get("side", ""),
+                "price": o.get("price", ""),
+                "avg_price": o.get("avgPrice", ""),
+                "stop_price": o.get("stopPrice", ""),
+                "qty": o.get("origQty", ""),
+                "filled_qty": o.get("executedQty", ""),
+                "status": o.get("status", ""),
+                "reduce_only": o.get("reduceOnly", False),
+                "source": "regular",
+            })
+
+        algo_orders = algo_result.get("orders", []) if isinstance(algo_result, dict) else []
+        for o in algo_orders:
+            ts = int(o.get("bookTime", 0) or o.get("updateTime", 0))
+            orders.append({
+                "time": datetime.fromtimestamp(ts / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S") if ts else "",
+                "algo_id": str(o.get("algoId", "")),
+                "type": o.get("algoType", "") + "/" + o.get("type", ""),
+                "side": o.get("side", ""),
+                "trigger_price": o.get("triggerPrice", ""),
+                "qty": o.get("origQty", ""),
+                "status": o.get("algoStatus", ""),
+                "source": "algo",
+            })
+
+        orders.sort(key=lambda x: x.get("time", ""), reverse=True)
+        return {"orders": orders, "count": len(orders)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/debug/reset-directions")
 async def debug_reset_directions() -> dict:
     """Reset all direction filter keys so next signal of any direction passes through."""
