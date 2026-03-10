@@ -248,7 +248,17 @@ async def _execute_trade_inner(
         # Market order fallback
         order_result = await place_market_order(symbol, side, quantity)
         order_id = str(order_result.get("orderId", ""))
-        entry_price = float(order_result.get("avgPrice", 0))
+        # Binance market order response'unda avgPrice=0 dönebilir,
+        # pozisyon verisinden gerçek giriş fiyatını al
+        await asyncio.sleep(0.3)
+        pos_data = await get_position_risk(symbol)
+        entry_price = 0.0
+        for p in pos_data:
+            if p.get("symbol") == symbol:
+                entry_price = float(p.get("entryPrice", 0))
+                break
+        if entry_price <= 0:
+            entry_price = float(order_result.get("avgPrice", 0))
         if entry_price <= 0:
             entry_price = price
         log.info(
