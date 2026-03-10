@@ -189,6 +189,24 @@ async def place_limit_order(
     return resp.json()
 
 
+async def get_order_status(symbol: str, order_id: int) -> dict:
+    """Get order status by orderId."""
+    client = await get_client()
+    params = _sign({"symbol": symbol, "orderId": order_id})
+    resp = await client.get("/fapi/v1/order", params=params)
+    _raise_for_binance(resp)
+    return resp.json()
+
+
+async def cancel_order(symbol: str, order_id: int) -> dict:
+    """Cancel an open order by orderId."""
+    client = await get_client()
+    params = _sign({"symbol": symbol, "orderId": order_id})
+    resp = await client.delete("/fapi/v1/order", params=params)
+    _raise_for_binance(resp)
+    return resp.json()
+
+
 async def place_market_order(
     symbol: str,
     side: str,

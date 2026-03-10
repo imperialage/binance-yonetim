@@ -8,9 +8,12 @@ import time
 from app.config import settings
 from app.modules.binance_client import (
     cancel_all_open_orders,
+    cancel_order,
     get_exchange_info,
+    get_order_status,
     get_position_risk,
     get_usdt_balance,
+    place_limit_order,
     place_market_order,
     place_stop_market_order,
     place_take_profit_market_order,
@@ -195,24 +198,75 @@ async def _execute_trade_inner(
         )
         return
 
-    # ── 8. Place market order ────────────────────────
-    order_result = await place_market_order(symbol, side, quantity)
-    order_id = str(order_result.get("orderId", ""))
+    # ── 8. Place limit order (LONG: sinyal-$1, SHORT: sinyal+$1) ──
+    LIMIT_OFFSET = 1.0  # $1 offset
+    if side == "BUY":
+        limit_price = round_price(price - LIMIT_OFFSET, tick_size)
+    else:
+        limit_price = round_price(price + LIMIT_OFFSET, tick_size)
 
-    # Use avgPrice from order result if available, else use signal price
-    entry_price = float(order_result.get("avgPrice", 0))
-    if entry_price <= 0:
-        entry_price = price
+    order_result = await place_limit_order(symbol, side, quantity, limit_price)
+    order_id_int = int(order_result.get("orderId", 0))
+    order_id = str(order_id_int)
 
     log.info(
-        "market_order_filled",
+        "limit_order_placed",
         symbol=symbol,
         side=side,
         tf=tf,
         quantity=quantity,
-        entry_price=entry_price,
+        limit_price=limit_price,
+        signal_price=price,
         order_id=order_id,
     )
+
+    # Limit order dolmasını bekle (max 60 saniye, her 1sn kontrol)
+    FILL_TIMEOUT = 60
+    filled = False
+    entry_price = limit_price
+    for _ in range(FILL_TIMEOUT):
+        await asyncio.sleep(1)
+        try:
+            status = await get_order_status(symbol, order_id_int)
+            order_status = status.get("status", "")
+            if order_status == "FILLED":
+                entry_price = float(status.get("avgPrice", 0)) or limit_price
+                filled = True
+                break
+            elif order_status in ("CANCELED", "EXPIRED", "REJECTED"):
+                break
+        except Exception:
+            pass
+
+    if not filled:
+        # Dolmadı — iptal et ve market order ile gir
+        try:
+            await cancel_order(symbol, order_id_int)
+            log.info("limit_order_cancelled_timeout", symbol=symbol, order_id=order_id)
+        except Exception:
+            pass  # Zaten dolmuş veya iptal olmuş olabilir
+
+        # Market order fallback
+        order_result = await place_market_order(symbol, side, quantity)
+        order_id = str(order_result.get("orderId", ""))
+        entry_price = float(order_result.get("avgPrice", 0))
+        if entry_price <= 0:
+            entry_price = price
+        log.info(
+            "market_order_fallback",
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            entry_price=entry_price,
+        )
+    else:
+        log.info(
+            "limit_order_filled",
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            entry_price=entry_price,
+        )
 
     # ── 9. Place stop-loss (per-TF strategy) ────────────
     sl_pct, tp_pct = settings.get_strategy(tf)
