@@ -344,15 +344,34 @@ async def get_all_orders(
     return resp.json()
 
 
-async def get_algo_orders(
+async def get_algo_orders_history(
     symbol: str = "ETHUSDT",
 ) -> list[dict]:
-    """Get algo/conditional order history from Binance Futures."""
+    """Get algo/conditional order history (open + historical) from Binance Futures."""
     client = await get_client()
-    params = _sign({"symbol": symbol})
-    resp = await client.get("/fapi/v1/algoOrder/openOrders", params=params)
-    _raise_for_binance(resp)
-    return resp.json()
+    all_orders: list[dict] = []
+
+    # Open algo orders
+    try:
+        params = _sign({"symbol": symbol})
+        resp = await client.get("/fapi/v1/algoOrder/openOrders", params=params)
+        _raise_for_binance(resp)
+        data = resp.json()
+        all_orders.extend(data.get("orders", []) if isinstance(data, dict) else [])
+    except Exception:
+        pass
+
+    # Historical algo orders
+    try:
+        params = _sign({"symbol": symbol, "pageSize": 100})
+        resp = await client.get("/fapi/v1/algoOrder/historicalOrders", params=params)
+        _raise_for_binance(resp)
+        data = resp.json()
+        all_orders.extend(data.get("orders", []) if isinstance(data, dict) else [])
+    except Exception:
+        pass
+
+    return all_orders
 
 
 def round_step_size(quantity: float, step_size: float) -> float:

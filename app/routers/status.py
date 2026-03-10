@@ -372,13 +372,13 @@ async def debug_income() -> dict:
 @router.get("/debug/orders")
 async def debug_orders() -> dict:
     """Get all Binance orders (regular + algo) for the last 3 days."""
-    from app.modules.binance_client import get_all_orders, get_algo_orders
+    from app.modules.binance_client import get_all_orders, get_algo_orders_history
     from datetime import datetime, timezone, timedelta
     tz = timezone(timedelta(hours=3))
     try:
-        regular_orders, algo_result = await asyncio.gather(
+        regular_orders, algo_list = await asyncio.gather(
             get_all_orders("ETHUSDT", days=3),
-            get_algo_orders("ETHUSDT"),
+            get_algo_orders_history("ETHUSDT"),
         )
 
         orders = []
@@ -399,8 +399,7 @@ async def debug_orders() -> dict:
                 "source": "regular",
             })
 
-        algo_orders = algo_result.get("orders", []) if isinstance(algo_result, dict) else []
-        for o in algo_orders:
+        for o in algo_list:
             ts = int(o.get("bookTime", 0) or o.get("updateTime", 0))
             orders.append({
                 "time": datetime.fromtimestamp(ts / 1000, tz=tz).strftime("%Y-%m-%d %H:%M:%S") if ts else "",
