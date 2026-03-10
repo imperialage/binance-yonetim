@@ -15,13 +15,10 @@ from app.modules.binance_client import (
     cancel_all_open_orders,
     get_exchange_info,
     get_position_risk,
-    get_usdt_balance,
     place_limit_order,
     place_market_order,
-    place_stop_market_order,
     place_take_profit_market_order,
     round_price,
-    round_step_size,
     set_leverage,
 )
 from app.modules.redis_client import get_redis
@@ -41,7 +38,6 @@ class ManualOpenRequest(BaseModel):
     symbol: str = "ETHUSDT"
     side: str  # "BUY" or "SELL"
     entry_price: float | None = None  # None → MARKET, set → LIMIT
-    sl_price: float | None = None     # None → strategy %, set → custom
     tp_price: float | None = None     # None → strategy %, set → custom
 
 
@@ -221,52 +217,38 @@ async def manual_open_position(
             if current_mark <= 0:
                 current_mark = entry_price
 
-        # SL/TP: use custom values if provided, otherwise calculate from strategy
+        # TP only (SL yok — ters sinyal ile kapanır)
         active_tf = settings.trading_timeframes.split(",")[0].strip()
-        sl_pct, tp_pct = settings.get_strategy(active_tf)
+        _sl_pct, tp_pct = settings.get_strategy(active_tf)
 
         if side == "BUY":
-            sl_side = "SELL"
             tp_side = "SELL"
-            raw_sl = body.sl_price if body.sl_price is not None else entry_price * (1 - sl_pct)
             raw_tp = body.tp_price if body.tp_price is not None else entry_price * (1 + tp_pct)
         else:
-            sl_side = "BUY"
             tp_side = "BUY"
-            raw_sl = body.sl_price if body.sl_price is not None else entry_price * (1 + sl_pct)
             raw_tp = body.tp_price if body.tp_price is not None else entry_price * (1 - tp_pct)
 
-        sl_price = round_price(raw_sl, tick_size)
         tp_price = round_price(raw_tp, tick_size)
 
-        # SL/TP'nin mevcut fiyata göre doğru tarafta olduğunu kontrol et
+        # TP'nin mevcut fiyata göre doğru tarafta olduğunu kontrol et
         ref_price = current_mark if body.entry_price is None else entry_price
-        if side == "BUY":
-            # SL mark'ın altında, TP mark'ın üstünde olmalı
-            if sl_price >= ref_price:
-                sl_price = round_price(ref_price * (1 - sl_pct), tick_size)
-            if tp_price <= ref_price:
-                tp_price = round_price(ref_price * (1 + tp_pct), tick_size)
-        else:
-            # SL mark'ın üstünde, TP mark'ın altında olmalı
-            if sl_price <= ref_price:
-                sl_price = round_price(ref_price * (1 + sl_pct), tick_size)
-            if tp_price >= ref_price:
-                tp_price = round_price(ref_price * (1 - tp_pct), tick_size)
+        if side == "BUY" and tp_price <= ref_price:
+            tp_price = round_price(ref_price * (1 + tp_pct), tick_size)
+        elif side == "SELL" and tp_price >= ref_price:
+            tp_price = round_price(ref_price * (1 - tp_pct), tick_size)
 
-        # SL/TP emirlerini yerleştir — başarısız olursa pozisyon açık kalır
+        # TP emri yerleştir — başarısız olursa pozisyon açık kalır
         sl_tp_error = None
         try:
-            await place_stop_market_order(symbol, sl_side, quantity, sl_price)
             await place_take_profit_market_order(symbol, tp_side, quantity, tp_price)
         except (BinanceAPIError, Exception) as e:
             sl_tp_error = str(e)
-            log.warning("manual_open_sl_tp_failed", symbol=symbol, error=sl_tp_error)
+            log.warning("manual_open_tp_failed", symbol=symbol, error=sl_tp_error)
 
         log.info(
             "manual_open",
             symbol=symbol, side=side, qty=quantity,
-            entry=entry_price, sl=sl_price, tp=tp_price,
+            entry=entry_price, tp=tp_price,
             sl_tp_error=sl_tp_error,
         )
 
@@ -275,11 +257,11 @@ async def manual_open_position(
             "side": side,
             "qty": quantity,
             "entry_price": entry_price,
-            "sl_price": sl_price,
+            "sl_price": 0.0,
             "tp_price": tp_price,
         }
         if sl_tp_error:
-            result["warning"] = f"Pozisyon açıldı ama SL/TP yerleştirilemedi: {sl_tp_error}"
+            result["warning"] = f"Pozisyon açıldı ama TP yerleştirilemedi: {sl_tp_error}"
         return result
 
     except HTTPException:

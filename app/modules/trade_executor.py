@@ -15,7 +15,6 @@ from app.modules.binance_client import (
     get_usdt_balance,
     place_limit_order,
     place_market_order,
-    place_stop_market_order,
     place_take_profit_market_order,
     round_price,
     round_step_size,
@@ -268,32 +267,8 @@ async def _execute_trade_inner(
             entry_price=entry_price,
         )
 
-    # ── 9. Place stop-loss (per-TF strategy) ────────────
-    sl_pct, tp_pct = settings.get_strategy(tf)
-    if side == "BUY":
-        raw_stop = entry_price * (1 - sl_pct)
-        stop_side = "SELL"
-    else:
-        raw_stop = entry_price * (1 + sl_pct)
-        stop_side = "BUY"
-
-    stop_price = round_price(raw_stop, tick_size)
-
-    stop_order_id = None
-    try:
-        stop_result = await place_stop_market_order(symbol, stop_side, quantity, stop_price)
-        stop_order_id = str(stop_result.get("algoId", stop_result.get("orderId", "")))
-        log.info(
-            "stop_loss_placed",
-            symbol=symbol,
-            stop_side=stop_side,
-            stop_price=stop_price,
-            stop_order_id=stop_order_id,
-        )
-    except Exception as e:
-        log.error("stop_loss_failed", symbol=symbol, error=str(e))
-
-    # ── 10. Place take-profit (per-TF strategy) ─────────
+    # ── 9. Place take-profit only (SL yok — ters sinyal ile kapanır) ──
+    _sl_pct, tp_pct = settings.get_strategy(tf)
     if side == "BUY":
         raw_tp = entry_price * (1 + tp_pct)
         tp_side = "SELL"
@@ -317,7 +292,7 @@ async def _execute_trade_inner(
     except Exception as e:
         log.error("take_profit_failed", symbol=symbol, error=str(e))
 
-    # ── 11. Log trade ────────────────────────────────
+    # ── 10. Log trade ────────────────────────────────
     duration = (time.monotonic_ns() // 1_000_000) - start_ms
     await log_trade(
         event_id=event_id,
@@ -326,9 +301,9 @@ async def _execute_trade_inner(
         side=side,
         quantity=quantity,
         entry_price=entry_price,
-        stop_price=stop_price,
+        stop_price=0.0,
         order_id=order_id,
-        stop_order_id=stop_order_id,
+        stop_order_id=None,
         status="FILLED",
         closed_previous=closed_previous,
         balance_used=balance,

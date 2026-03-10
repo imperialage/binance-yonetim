@@ -382,11 +382,6 @@ tr:hover{background:#1c2128}
     </div>
 
     <div class="modal-row">
-      <label>Stop-Loss</label>
-      <input type="number" id="modalSL" step="any" placeholder="Bo&#351; = strateji varsay&#305;lan&#305;">
-    </div>
-
-    <div class="modal-row">
       <label>Take-Profit</label>
       <input type="number" id="modalTP" step="any" placeholder="Bo&#351; = strateji varsay&#305;lan&#305;">
     </div>
@@ -603,16 +598,13 @@ tr:hover{background:#1c2128}
     var mark = parseFloat(pos.markPrice || 0);
     var isLong = amt > 0;
 
-    // Calculate SL/TP from strategy (use 5m as default since that's the primary)
-    var slPct = config.strategies ? config.strategies['5m'].sl_pct : 0.01;
+    // Calculate TP from strategy (SL yok — ters sinyal ile kapanır)
     var tpPct = config.strategies ? config.strategies['5m'].tp_pct : 0.005;
 
-    var slPrice, tpPrice;
+    var tpPrice;
     if(isLong){
-      slPrice = entry * (1 - slPct);
       tpPrice = entry * (1 + tpPct);
     } else {
-      slPrice = entry * (1 + slPct);
       tpPrice = entry * (1 - tpPct);
     }
 
@@ -624,23 +616,25 @@ tr:hover{background:#1c2128}
     }
 
     var html = '<div class="pos-grid">';
-    html += '<div class="pos-item"><div class="label">Giri\u015f Zaman\u0131</div><div class="value" style="font-size:13px">' + entryTime + '</div></div>';
-    html += '<div class="pos-item"><div class="label">Giri\u015f Fiyat\u0131</div><div class="value">' + fmt(entry, 2) + '</div></div>';
+    html += '<div class="pos-item"><div class="label">Giriş Zamanı</div><div class="value" style="font-size:13px">' + entryTime + '</div></div>';
+    html += '<div class="pos-item"><div class="label">Giriş Fiyatı</div><div class="value">' + fmt(entry, 2) + '</div></div>';
     html += '<div class="pos-item"><div class="label">Mevcut Fiyat</div><div class="value" id="liveMarkPrice">' + fmt(mark || livePrice, 2) + '</div></div>';
-    html += '<div class="pos-item"><div class="label">Stop-Loss</div><div class="value" style="color:#f85149">' + fmt(slPrice, 2) + '</div></div>';
     html += '<div class="pos-item"><div class="label">Take-Profit</div><div class="value" style="color:#3fb950">' + fmt(tpPrice, 2) + '</div></div>';
+    html += '<div class="pos-item"><div class="label">Çıkış</div><div class="value" style="color:#8b949e">Ters Sinyal</div></div>';
     html += '</div>';
 
-    // Progress bar
+    // Progress bar (entry → TP arası)
+    var progMin, progMax;
+    if(isLong){ progMin = entry; progMax = tpPrice; }
+    else { progMin = tpPrice; progMax = entry; }
     html += '<div class="progress-container">';
-    html += '<div class="progress-labels"><span class="sl-label">SL: ' + fmt(slPrice, 2) + '</span><span style="color:#8b949e">Giri\u015f: ' + fmt(entry, 2) + '</span><span class="tp-label">TP: ' + fmt(tpPrice, 2) + '</span></div>';
-    html += '<div class="progress-bar" id="progressBar" data-sl="' + slPrice + '" data-tp="' + tpPrice + '" data-entry="' + entry + '" data-long="' + (isLong?1:0) + '">';
-    html += '<div class="progress-fill-danger" style="width:50%"></div>';
-    html += '<div class="progress-fill-profit" style="width:50%"></div>';
+    html += '<div class="progress-labels"><span style="color:#8b949e">Giriş: ' + fmt(entry, 2) + '</span><span class="tp-label">TP: ' + fmt(tpPrice, 2) + '</span></div>';
+    html += '<div class="progress-bar" id="progressBar" data-min="' + progMin + '" data-max="' + progMax + '" data-entry="' + entry + '" data-long="' + (isLong?1:0) + '">';
+    html += '<div class="progress-fill-profit" style="width:100%"></div>';
     html += '<div class="progress-entry" id="entryMarker"></div>';
     html += '<div class="progress-marker" id="priceMarker"></div>';
     html += '</div>';
-    html += '<div class="progress-pct"><span class="to-sl" id="pctToSL">--</span><span class="to-tp" id="pctToTP">--</span></div>';
+    html += '<div class="progress-pct"><span class="to-tp" id="pctToTP">--</span></div>';
     html += '</div>';
 
     $('posContent').innerHTML = html;
@@ -650,24 +644,24 @@ tr:hover{background:#1c2128}
   function updatePositionProgress(){
     var bar = document.getElementById('progressBar');
     if(!bar) return;
-    var sl = parseFloat(bar.dataset.sl);
-    var tp = parseFloat(bar.dataset.tp);
+    var rangeMin = parseFloat(bar.dataset.min);
+    var rangeMax = parseFloat(bar.dataset.max);
     var entry = parseFloat(bar.dataset.entry);
     var isLong = bar.dataset.long === '1';
     var price = livePrice || (diagData && diagData.position ? parseFloat(diagData.position.markPrice) : 0);
-    if(!price || !sl || !tp) return;
+    if(!price || !rangeMin || !rangeMax) return;
 
     // Update live price display
     var lpEl = document.getElementById('liveMarkPrice');
     if(lpEl) lpEl.textContent = fmt(price, 2);
 
-    // Calculate position on bar (0% = SL, 100% = TP)
-    var range = tp - sl;
+    // Calculate position on bar (0% = entry, 100% = TP)
+    var range = rangeMax - rangeMin;
     if(range === 0) return;
-    var pct = ((price - sl) / range) * 100;
+    var pct = ((price - rangeMin) / range) * 100;
     pct = Math.max(0, Math.min(100, pct));
 
-    var entryPct = ((entry - sl) / range) * 100;
+    var entryPct = ((entry - rangeMin) / range) * 100;
     entryPct = Math.max(0, Math.min(100, entryPct));
 
     var marker = document.getElementById('priceMarker');
@@ -675,19 +669,15 @@ tr:hover{background:#1c2128}
     if(marker) marker.style.left = pct + '%';
     if(entryM) entryM.style.left = entryPct + '%';
 
-    // Percentages to SL and TP
-    var toSlPct, toTpPct;
+    // Percentage to TP
+    var toTpPct;
     if(isLong){
-      toSlPct = ((price - sl) / price) * 100;
-      toTpPct = ((tp - price) / price) * 100;
+      toTpPct = ((rangeMax - price) / price) * 100;
     } else {
-      toSlPct = ((sl - price) / price) * 100;
-      toTpPct = ((price - tp) / price) * 100;
+      toTpPct = ((price - rangeMin) / price) * 100;
     }
 
-    var slEl = document.getElementById('pctToSL');
     var tpEl = document.getElementById('pctToTP');
-    if(slEl) slEl.textContent = 'SL\'e: %' + fmt(Math.abs(toSlPct), 2);
     if(tpEl) tpEl.textContent = 'TP\'ye: %' + fmt(Math.abs(toTpPct), 2);
 
     // Update unrealized PnL card live
@@ -742,8 +732,8 @@ tr:hover{background:#1c2128}
       var active = enabledSet[tf];
       html += '<div class="strat-item ' + (active ? 'strat-active' : 'strat-inactive') + '">';
       html += '<div class="tf-name">' + tf.toUpperCase() + (active ? ' \u2705' : ' (pasif)') + '</div>';
-      html += '<div class="strat-row"><span class="k">Stop-Loss</span><span class="v" style="color:#f85149">%' + (s.sl_pct * 100).toFixed(2) + '</span></div>';
       html += '<div class="strat-row"><span class="k">Take-Profit</span><span class="v" style="color:#3fb950">%' + (s.tp_pct * 100).toFixed(2) + '</span></div>';
+      html += '<div class="strat-row"><span class="k">Çıkış</span><span class="v" style="color:#8b949e">Ters Sinyal</span></div>';
       html += '</div>';
     });
     html += '</div>';
@@ -958,7 +948,6 @@ tr:hover{background:#1c2128}
     // Reset fields
     $('modalEntryPrice').value = '';
     $('modalEntryPrice').disabled = true;
-    $('modalSL').value = '';
     $('modalTP').value = '';
     $('togMarket').classList.add('active');
     $('togLimit').classList.remove('active');
@@ -1026,10 +1015,8 @@ tr:hover{background:#1c2128}
       payload.entry_price = ep;
     }
 
-    // SL/TP
-    var slVal = parseFloat($('modalSL').value);
+    // TP
     var tpVal = parseFloat($('modalTP').value);
-    if(slVal > 0) payload.sl_price = slVal;
     if(tpVal > 0) payload.tp_price = tpVal;
 
     var label = modalSide === 'BUY' ? 'LONG' : 'SHORT';
@@ -1047,7 +1034,7 @@ tr:hover{background:#1c2128}
       return r.json();
     }).then(function(data){
       closeModal();
-      var msg = label + ' açıldı: ' + data.qty + ' @ ' + Number(data.entry_price).toFixed(2) + ' | SL:' + Number(data.sl_price).toFixed(2) + ' TP:' + Number(data.tp_price).toFixed(2);
+      var msg = label + ' açıldı: ' + data.qty + ' @ ' + Number(data.entry_price).toFixed(2) + ' | TP:' + Number(data.tp_price).toFixed(2);
       if(data.warning){
         showToast(msg + '\n⚠️ ' + data.warning, 'warning');
       } else {
@@ -1068,7 +1055,6 @@ tr:hover{background:#1c2128}
   var candleSeries = null;
   var stLineSeries = null;
   var entryLine = null;
-  var slLine = null;
   var tpLine = null;
   var chartInterval = '5m';
   var lastStData = [];
@@ -1173,7 +1159,6 @@ tr:hover{background:#1c2128}
     if(!candleSeries) return;
     // Remove old lines
     if(entryLine){ candleSeries.removePriceLine(entryLine); entryLine = null; }
-    if(slLine){ candleSeries.removePriceLine(slLine); slLine = null; }
     if(tpLine){ candleSeries.removePriceLine(tpLine); tpLine = null; }
 
     if(!diagData || !diagData.position) return;
@@ -1184,21 +1169,14 @@ tr:hover{background:#1c2128}
     var entry = parseFloat(pos.entryPrice);
     var isLong = amt > 0;
     var config = diagData.config;
-    var slPct = config.strategies ? config.strategies['5m'].sl_pct : 0.01;
     var tpPct = config.strategies ? config.strategies['5m'].tp_pct : 0.005;
 
-    var slPrice = isLong ? entry * (1 - slPct) : entry * (1 + slPct);
     var tpPrice = isLong ? entry * (1 + tpPct) : entry * (1 - tpPct);
 
     entryLine = candleSeries.createPriceLine({
       price: entry, color: '#58a6ff', lineWidth: 1,
       lineStyle: LightweightCharts.LineStyle.Dashed,
       axisLabelVisible: true, title: 'Giriş',
-    });
-    slLine = candleSeries.createPriceLine({
-      price: slPrice, color: '#f85149', lineWidth: 1,
-      lineStyle: LightweightCharts.LineStyle.Dotted,
-      axisLabelVisible: true, title: 'SL',
     });
     tpLine = candleSeries.createPriceLine({
       price: tpPrice, color: '#3fb950', lineWidth: 1,
