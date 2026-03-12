@@ -18,6 +18,7 @@ from app.modules.binance_client import (
     get_usdt_balance,
     place_limit_order,
     place_market_order,
+    place_stop_market_order,
     place_take_profit_market_order,
     round_price,
     set_leverage,
@@ -40,6 +41,7 @@ class ManualOpenRequest(BaseModel):
     side: str  # "BUY" or "SELL"
     entry_price: float | None = None  # None → MARKET, set → LIMIT
     tp_price: float | None = None     # None → strategy %, set → custom
+    sl_price: float | None = None     # None → no SL, set → custom SL
     amount_usdt: float | None = None  # None → 21.0 fallback
 
 
@@ -258,11 +260,35 @@ async def manual_open_position(
             sl_tp_error = str(e)
             log.warning("manual_open_tp_failed", symbol=symbol, error=sl_tp_error)
 
+        # SL emri yerleştir (opsiyonel)
+        sl_price_final = 0.0
+        sl_error = None
+        if body.sl_price is not None and body.sl_price > 0:
+            raw_sl = body.sl_price
+            sl_price_final = round_price(raw_sl, tick_size)
+            # SL yön doğrulaması
+            if side == "BUY" and sl_price_final >= ref_price:
+                sl_error = f"SL fiyatı ({sl_price_final}) giriş fiyatından düşük olmalı"
+            elif side == "SELL" and sl_price_final <= ref_price:
+                sl_error = f"SL fiyatı ({sl_price_final}) giriş fiyatından yüksek olmalı"
+            else:
+                try:
+                    await place_stop_market_order(symbol, tp_side, quantity, sl_price_final)
+                except (BinanceAPIError, Exception) as e:
+                    sl_error = str(e)
+                    log.warning("manual_open_sl_failed", symbol=symbol, error=sl_error)
+
+        warnings = []
+        if sl_tp_error:
+            warnings.append(f"TP yerleştirilemedi: {sl_tp_error}")
+        if sl_error:
+            warnings.append(f"SL yerleştirilemedi: {sl_error}")
+
         log.info(
             "manual_open",
             symbol=symbol, side=side, qty=quantity,
-            entry=entry_price, tp=tp_price,
-            sl_tp_error=sl_tp_error,
+            entry=entry_price, tp=tp_price, sl=sl_price_final,
+            sl_tp_error=sl_tp_error, sl_error=sl_error,
         )
 
         result = {
@@ -270,12 +296,12 @@ async def manual_open_position(
             "side": side,
             "qty": quantity,
             "entry_price": entry_price,
-            "sl_price": 0.0,
+            "sl_price": sl_price_final,
             "tp_price": tp_price,
             "amount_usdt": target_usdt,
         }
-        if sl_tp_error:
-            result["warning"] = f"Pozisyon açıldı ama TP yerleştirilemedi: {sl_tp_error}"
+        if warnings:
+            result["warning"] = "Pozisyon açıldı ama: " + " | ".join(warnings)
         return result
 
     except HTTPException:

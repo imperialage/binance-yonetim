@@ -444,6 +444,11 @@ tr:hover{background:#1c2128}
       <input type="number" id="modalTP" step="any" placeholder="Bo&#351; = strateji varsay&#305;lan&#305;">
     </div>
 
+    <div class="modal-row">
+      <label>Stop-Loss</label>
+      <input type="number" id="modalSL" step="any" placeholder="Bo&#351; = SL yok">
+    </div>
+
     <div class="modal-actions">
       <button class="btn-cancel" id="modalCancelBtn">&#304;ptal</button>
       <button id="modalConfirmBtn" class="btn-confirm-long">Onayla</button>
@@ -1032,6 +1037,7 @@ tr:hover{background:#1c2128}
     $('modalEntryPrice').value = '';
     $('modalEntryPrice').disabled = true;
     $('modalTP').value = '';
+    $('modalSL').value = '';
     $('togMarket').classList.add('active');
     $('togLimit').classList.remove('active');
 
@@ -1175,6 +1181,10 @@ tr:hover{background:#1c2128}
     var tpVal = parseFloat($('modalTP').value);
     if(tpVal > 0) payload.tp_price = tpVal;
 
+    // SL
+    var slVal = parseFloat($('modalSL').value);
+    if(slVal > 0) payload.sl_price = slVal;
+
     var label = modalSide === 'BUY' ? 'LONG' : 'SHORT';
     var confirmBtn = $('modalConfirmBtn');
     confirmBtn.textContent = 'G\u00f6nderiliyor...';
@@ -1190,7 +1200,7 @@ tr:hover{background:#1c2128}
       return r.json();
     }).then(function(data){
       closeModal();
-      var msg = label + ' açıldı: ' + data.qty + ' @ ' + Number(data.entry_price).toFixed(2) + ' | TP:' + Number(data.tp_price).toFixed(2);
+      var msg = label + ' açıldı: ' + data.qty + ' @ ' + Number(data.entry_price).toFixed(2) + ' | TP:' + Number(data.tp_price).toFixed(2) + (data.sl_price ? ' | SL:' + Number(data.sl_price).toFixed(2) : '');
       if(data.warning){
         showToast(msg + '\n⚠️ ' + data.warning, 'warning');
       } else {
