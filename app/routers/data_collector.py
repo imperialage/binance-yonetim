@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app.modules.candle_store import (
+    get_candle_stats,
+    get_last_open_time,
+    query_candles,
+    upsert_candles,
+)
 from app.modules.data_collector import (
-    _csv_path,
-    fetch_all_klines,
     compute_signals,
+    fetch_all_klines,
     get_all_status,
-    get_csv_stats,
-    read_csv_tail,
-    save_to_csv,
     start_collection,
     stop_collection,
     INTERVAL_MS,
@@ -35,7 +37,7 @@ class CollectionRequest(BaseModel):
 class FetchHistoryRequest(BaseModel):
     symbol: str = "ETHUSDT"
     interval: str = "5m"
-    days: int = 30
+    days: int = 730  # Varsayılan: 2 yıl (mümkün olan maksimum)
 
 
 # ── Toplama kontrolü ──
@@ -73,22 +75,29 @@ async def collector_status():
 
 @router.post("/fetch-history")
 async def fetch_history(req: FetchHistoryRequest):
-    """Geçmiş veriyi çek, SuperTrend hesapla, CSV'ye kaydet."""
+    """Geçmiş veriyi çek, SuperTrend hesapla, DB'ye kaydet.
+
+    DB'de zaten veri varsa sadece eksik kısmı çeker.
+    """
     symbol = req.symbol.upper()
     interval = req.interval
-    days = min(req.days, 365)
+    days = min(req.days, 730)
 
     if interval not in INTERVAL_MS:
         raise HTTPException(status_code=400, detail=f"Geçersiz interval: {interval}")
 
     iv_ms = INTERVAL_MS[interval]
-    end_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
-    # Warmup için ekstra 2000 mum
+    now_ms = int(time.time() * 1000)
+
+    # İstenen başlangıç zamanı
+    desired_start_ms = now_ms - (days * 86400 * 1000)
+
+    # SuperTrend warmup: 2000 mum öncesinden çek
     warmup_ms = 2000 * iv_ms
-    start_ms = end_ms - (days * 86400 * 1000) - warmup_ms
+    fetch_start_ms = desired_start_ms - warmup_ms
 
     try:
-        klines = await fetch_all_klines(symbol, interval, start_ms, end_ms)
+        klines = await fetch_all_klines(symbol, interval, fetch_start_ms, now_ms)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Kline verisi alınamadı: {e}")
 
@@ -97,31 +106,24 @@ async def fetch_history(req: FetchHistoryRequest):
 
     rows = compute_signals(klines)
 
-    # Warmup kısmını kes (ilk 2000 mum sadece hesaplama içindi)
-    actual_start = end_ms - (days * 86400 * 1000)
-    actual_start_str = datetime.fromtimestamp(
-        actual_start / 1000, tz=timezone(timedelta(hours=3))
-    ).strftime("%Y-%m-%d %H:%M:%S")
-    rows = [r for r in rows if r["date"] >= actual_start_str]
-
-    filepath = _csv_path(symbol, interval)
-    count = save_to_csv(rows, filepath)
-
-    signals = [r for r in rows if r.get("signal")]
+    # Tüm hesaplanmış satırları DB'ye yaz (upsert — duplicate sorun olmaz)
+    count = await upsert_candles(rows, symbol, interval)
+    stats = await get_candle_stats(symbol, interval)
 
     return {
         "symbol": symbol,
         "interval": interval,
         "days": days,
-        "total_candles": count,
-        "total_signals": len(signals),
-        "buy_signals": sum(1 for s in signals if s["signal"] == "BUY"),
-        "sell_signals": sum(1 for s in signals if s["signal"] == "SELL"),
-        "csv_path": str(filepath),
+        "total_candles": stats["rows"],
+        "total_signals": stats["total_signals"],
+        "buy_signals": stats["buy_signals"],
+        "sell_signals": stats["sell_signals"],
+        "first_date": stats.get("first_date"),
+        "last_date": stats.get("last_date"),
     }
 
 
-# ── CSV veri okuma ──
+# ── Veri okuma ──
 
 
 @router.get("/data/{symbol}")
@@ -131,22 +133,19 @@ async def get_data(
     limit: int = Query(200, ge=1, le=5000),
     signals_only: bool = Query(False),
 ):
-    """CSV'den son N satırı oku."""
+    """DB'den son N mumu oku."""
     symbol = symbol.upper()
-    filepath = _csv_path(symbol, interval)
-    stats = get_csv_stats(filepath)
+    stats = await get_candle_stats(symbol, interval)
 
     if not stats["exists"]:
         raise HTTPException(
             status_code=404,
-            detail=f"{symbol} {interval} verisi bulunamadı. Önce /fetch-history çalıştırın.",
+            detail=f"{symbol} {interval} verisi bulunamadı. Önce veri çekin.",
         )
 
-    rows = read_csv_tail(filepath, limit=limit if not signals_only else 5000)
-
-    if signals_only:
-        rows = [r for r in rows if r.get("signal")]
-        rows = rows[-limit:]
+    rows = await query_candles(
+        symbol, interval, limit=limit, signals_only=signals_only
+    )
 
     return {
         "symbol": symbol,
@@ -158,23 +157,7 @@ async def get_data(
 
 @router.get("/stats/{symbol}")
 async def get_stats(symbol: str, interval: str = Query("5m")):
-    """CSV dosyası istatistikleri."""
+    """Mum verisi istatistikleri."""
     symbol = symbol.upper()
-    filepath = _csv_path(symbol, interval)
-    stats = get_csv_stats(filepath)
+    stats = await get_candle_stats(symbol, interval)
     return {"symbol": symbol, "interval": interval, **stats}
-
-
-@router.get("/download/{symbol}")
-async def download_csv(symbol: str, interval: str = Query("5m")):
-    """CSV dosyasını indir."""
-    symbol = symbol.upper()
-    filepath = _csv_path(symbol, interval)
-    if not filepath.exists():
-        raise HTTPException(status_code=404, detail="CSV dosyası bulunamadı")
-
-    return FileResponse(
-        str(filepath),
-        media_type="text/csv",
-        filename=f"{symbol}_{interval}_supertrend.csv",
-    )

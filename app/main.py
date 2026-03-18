@@ -18,6 +18,7 @@ from app.modules.redis_client import close_redis
 from app.modules.binance_client import close_client as close_binance
 from app.modules.signal_store import close_db, init_db
 from app.modules.trade_store import init_trade_db, close_trade_db
+from app.modules.candle_store import init_candle_db, close_candle_db
 from app.modules.scheduler import start_scheduler, stop_scheduler
 from app.modules.data_collector import stop_all_collections
 from app.routers import admin, backtest, chart, data_collector, events, latest, status, webhook, ws
@@ -32,6 +33,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     log.info("startup", env=settings.app_env)
     await init_db()
     await init_trade_db()
+    await init_candle_db()
     start_scheduler()
     start_price_stream()
     yield
@@ -40,6 +42,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await stop_scheduler()
     await close_binance()
     await close_redis()
+    await close_candle_db()
     await close_trade_db()
     await close_db()
     log.info("shutdown")

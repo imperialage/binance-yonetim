@@ -1,34 +1,29 @@
 """Binance mum verisi toplama + Adaptive SuperTrend sinyal hesaplama modülü.
 
 Sürekli çalışan background task ile yeni mumları çeker, SuperTrend hesaplar,
-sinyalleri tespit eder ve CSV'ye kaydeder.
+sinyalleri tespit eder ve SQLite'a kaydeder.
 """
 
 from __future__ import annotations
 
 import asyncio
-import csv
-import os
 import time
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 from typing import Any
 
 import httpx
 
+from app.modules.candle_store import (
+    get_last_open_time,
+    upsert_candles,
+    get_candle_stats,
+)
 from app.modules.supertrend import calculate_adaptive_supertrend
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
 
 BINANCE_FAPI_BASE = "https://fapi.binance.com"
-DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
-
-# CSV sütun başlıkları
-CSV_HEADERS = [
-    "date", "open", "high", "low", "close", "volume",
-    "supertrend", "direction", "cluster", "signal",
-]
 
 # Interval → milisaniye
 INTERVAL_MS: dict[str, int] = {
@@ -37,17 +32,11 @@ INTERVAL_MS: dict[str, int] = {
     "4h": 14_400_000, "1d": 86_400_000,
 }
 
+_TZ_ISTANBUL = timezone(timedelta(hours=3))
+
 # Aktif koleksiyon görevleri
 _tasks: dict[str, asyncio.Task] = {}
 _status: dict[str, dict] = {}
-
-
-def _csv_path(symbol: str, interval: str) -> Path:
-    """CSV dosya yolunu döndür."""
-    return DATA_DIR / f"{symbol}_{interval}_supertrend.csv"
-
-
-_TZ_ISTANBUL = timezone(timedelta(hours=3))
 
 
 def _format_ts(unix_sec: int) -> str:
@@ -55,30 +44,6 @@ def _format_ts(unix_sec: int) -> str:
     return datetime.fromtimestamp(unix_sec, tz=_TZ_ISTANBUL).strftime(
         "%Y-%m-%d %H:%M:%S"
     )
-
-
-async def _fetch_klines(
-    symbol: str,
-    interval: str,
-    start_ms: int | None = None,
-    end_ms: int | None = None,
-    limit: int = 1000,
-) -> list[list[Any]]:
-    """Binance'dan kline verisi çek."""
-    params: dict[str, Any] = {
-        "symbol": symbol,
-        "interval": interval,
-        "limit": limit,
-    }
-    if start_ms is not None:
-        params["startTime"] = start_ms
-    if end_ms is not None:
-        params["endTime"] = end_ms
-
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(f"{BINANCE_FAPI_BASE}/fapi/v1/klines", params=params)
-        resp.raise_for_status()
-        return resp.json()
 
 
 async def fetch_all_klines(
@@ -142,7 +107,7 @@ def compute_signals(
     atr_len: int = 10,
     factor: float = 3.0,
 ) -> list[dict]:
-    """Kline verisinden SuperTrend + sinyal hesapla, CSV satırları döndür."""
+    """Kline verisinden SuperTrend + sinyal hesapla, DB satırları döndür."""
     if len(klines) < 2:
         return []
 
@@ -166,6 +131,7 @@ def compute_signals(
         cluster_label = {0: "HIGH", 1: "MID", 2: "LOW"}.get(st["cluster"], "MID")
 
         rows.append({
+            "open_time": c["time"] * 1000,  # unix ms (Binance formatı)
             "date": _format_ts(c["time"]),
             "open": c["open"],
             "high": c["high"],
@@ -181,84 +147,12 @@ def compute_signals(
     return rows
 
 
-def save_to_csv(rows: list[dict], filepath: Path) -> int:
-    """Satırları CSV dosyasına yaz (üzerine yazar)."""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with open(filepath, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
-        writer.writeheader()
-        writer.writerows(rows)
-    return len(rows)
-
-
-def append_to_csv(rows: list[dict], filepath: Path) -> int:
-    """Yeni satırları CSV'ye ekle (varsa mevcut tarihleri atla)."""
-    existing_dates: set[str] = set()
-    if filepath.exists():
-        with open(filepath, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                existing_dates.add(row["date"])
-
-    new_rows = [r for r in rows if r["date"] not in existing_dates]
-    if not new_rows:
-        return 0
-
-    write_header = not filepath.exists() or os.path.getsize(filepath) == 0
-    with open(filepath, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
-        if write_header:
-            writer.writeheader()
-        writer.writerows(new_rows)
-    return len(new_rows)
-
-
-def read_csv_tail(filepath: Path, limit: int = 100) -> list[dict]:
-    """CSV'nin son N satırını oku."""
-    if not filepath.exists():
-        return []
-    with open(filepath, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-    return rows[-limit:]
-
-
-def get_csv_stats(filepath: Path) -> dict:
-    """CSV dosyası hakkında istatistikler."""
-    if not filepath.exists():
-        return {"exists": False, "rows": 0, "size_kb": 0}
-
-    size_kb = round(os.path.getsize(filepath) / 1024, 1)
-    with open(filepath, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    if not rows:
-        return {"exists": True, "rows": 0, "size_kb": size_kb}
-
-    signals = [r for r in rows if r.get("signal")]
-    buy_count = sum(1 for r in rows if r.get("signal") == "BUY")
-    sell_count = sum(1 for r in rows if r.get("signal") == "SELL")
-
-    return {
-        "exists": True,
-        "rows": len(rows),
-        "size_kb": size_kb,
-        "first_date": rows[0]["date"],
-        "last_date": rows[-1]["date"],
-        "total_signals": len(signals),
-        "buy_signals": buy_count,
-        "sell_signals": sell_count,
-    }
-
-
 # ── Background collection task ──
 
 
 async def _collection_loop(symbol: str, interval: str):
     """Sürekli çalışan veri toplama döngüsü."""
     iv_ms = INTERVAL_MS[interval]
-    filepath = _csv_path(symbol, interval)
     key = f"{symbol}_{interval}"
 
     _status[key] = {
@@ -273,39 +167,35 @@ async def _collection_loop(symbol: str, interval: str):
     await log.ainfo("data_collector_started", symbol=symbol, interval=interval)
 
     try:
-        # İlk çalıştırmada: varsa CSV'deki son tarihi bul, yoksa 30 gün geriden başla
-        last_ms: int | None = None
-        if filepath.exists():
-            stats = get_csv_stats(filepath)
-            if stats["rows"] > 0:
-                last_date = stats["last_date"]
-                dt = datetime.strptime(last_date, "%Y-%m-%d %H:%M:%S").replace(
-                    tzinfo=_TZ_ISTANBUL
-                )
-                last_ms = int(dt.timestamp() * 1000)
+        # DB'deki en son mum zamanını bul
+        last_ms = await get_last_open_time(symbol, interval)
 
         if last_ms is None:
-            # 30 gün geriden başla (warmup için yeterli)
-            last_ms = int(time.time() * 1000) - (30 * 86400 * 1000)
+            # DB boş → Binance'ın izin verdiği en eskiden başla
+            # Binance Futures genelde ~2 yıl veri tutar
+            # 5m için: 2 yıl ≈ 210.000 mum
+            last_ms = int(time.time() * 1000) - (730 * 86400 * 1000)  # 2 yıl geriden
 
-        # İlk tam çekme (warmup dahil)
-        warmup_start = last_ms - (2000 * iv_ms)  # 2000 mum warmup
-        klines = await fetch_all_klines(symbol, interval, warmup_start)
+        # SuperTrend warmup için 2000 mum öncesinden çekmeliyiz
+        warmup_start = last_ms - (2000 * iv_ms)
+        now_ms = int(time.time() * 1000)
+
+        await log.ainfo(
+            "data_collector_fetching",
+            symbol=symbol,
+            interval=interval,
+            from_ms=warmup_start,
+        )
+
+        klines = await fetch_all_klines(symbol, interval, warmup_start, now_ms)
 
         if klines:
             rows = compute_signals(klines)
-            # İlk seferde: warmup dışı satırları kaydet
-            start_sec = last_ms // 1000
-            # Eğer ilk çalıştırmaysa tümünü kaydet, devamsa sadece yenileri
-            if not filepath.exists() or os.path.getsize(filepath) == 0:
-                save_to_csv(rows, filepath)
-            else:
-                new_rows = [r for r in rows if r["date"] > stats["last_date"]]
-                if new_rows:
-                    # Sinyalleri doğru hesaplamak için son birkaç mumu da dahil et
-                    append_to_csv(new_rows, filepath)
-
-            _status[key]["total_rows"] = get_csv_stats(filepath)["rows"]
+            # Warmup mumlarını da dahil et (SuperTrend doğruluğu için)
+            # DB upsert kullanıyor, duplicate sorun olmaz
+            count = await upsert_candles(rows, symbol, interval)
+            stats = await get_candle_stats(symbol, interval)
+            _status[key]["total_rows"] = stats["rows"]
             _status[key]["last_update"] = _format_ts(int(time.time()))
 
         await log.ainfo(
@@ -331,19 +221,17 @@ async def _collection_loop(symbol: str, interval: str):
 
                 if klines:
                     rows = compute_signals(klines)
-                    added = append_to_csv(rows, filepath)
-                    stats = get_csv_stats(filepath)
+                    added = await upsert_candles(rows, symbol, interval)
+                    stats = await get_candle_stats(symbol, interval)
                     _status[key]["total_rows"] = stats["rows"]
                     _status[key]["last_update"] = _format_ts(int(time.time()))
                     _status[key]["error"] = None
 
-                    if added > 0:
-                        await log.ainfo(
-                            "data_collector_update",
-                            symbol=symbol,
-                            new_rows=added,
-                            total=stats["rows"],
-                        )
+                    await log.ainfo(
+                        "data_collector_update",
+                        symbol=symbol,
+                        total=stats["rows"],
+                    )
 
             except Exception as e:
                 _status[key]["error"] = str(e)
@@ -391,12 +279,10 @@ def stop_collection(symbol: str, interval: str) -> dict:
 
 def get_all_status() -> dict:
     """Tüm koleksiyon durumlarını döndür."""
-    # Tamamlanmış task'ları temizle
     for key in list(_tasks.keys()):
         if _tasks[key].done():
             if key in _status:
                 _status[key]["running"] = False
-
     return dict(_status)
 
 

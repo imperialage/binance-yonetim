@@ -113,7 +113,7 @@ tr:hover{background:#1c2128}
   <div class="cards" id="summaryCards">
     <div class="card"><div class="card-label">Toplam Mum</div><div class="card-value" id="totalCandles">-</div><div class="card-sub" id="dateRange">-</div></div>
     <div class="card"><div class="card-label">Toplam Sinyal</div><div class="card-value" id="totalSignals">-</div><div class="card-sub" id="signalBreakdown">-</div></div>
-    <div class="card"><div class="card-label">CSV Boyutu</div><div class="card-value" id="csvSize">-</div><div class="card-sub" id="csvFile">-</div></div>
+    <div class="card"><div class="card-label">Veritaban&#x131;</div><div class="card-value" id="dbStatus">-</div><div class="card-sub" id="dbFile">candles.db</div></div>
     <div class="card"><div class="card-label">Koleksiyon</div><div class="card-value" id="collectionStatus">-</div><div class="card-sub" id="lastUpdate">-</div></div>
   </div>
 
@@ -149,12 +149,11 @@ tr:hover{background:#1c2128}
       </div>
       <div class="form-group">
         <label>Ge&ccedil;mi&scedil; (g&uuml;n)</label>
-        <input type="number" id="daysInput" value="30" min="1" max="365" style="width:80px">
+        <input type="number" id="daysInput" value="730" min="1" max="730" style="width:80px">
       </div>
       <button class="btn btn-blue" id="btnFetch" onclick="fetchHistory()">Ge&ccedil;mi&scedil; Veriyi &Ccedil;ek</button>
       <button class="btn btn-primary" id="btnStart" onclick="startCollection()">Toplamaya Ba&scedil;la</button>
       <button class="btn btn-danger" id="btnStop" onclick="stopCollection()">Durdur</button>
-      <button class="btn" id="btnDownload" onclick="downloadCSV()">CSV &Inodot;ndir</button>
     </div>
   </div>
 
@@ -288,16 +287,14 @@ tr:hover{background:#1c2128}
         $('#dateRange').textContent = 'Veri yok';
         $('#totalSignals').textContent = '0';
         $('#signalBreakdown').textContent = '-';
-        $('#csvSize').textContent = '0 KB';
-        $('#csvFile').textContent = '-';
+        $('#dbStatus').textContent = 'Bo\u015f';
         return;
       }
       $('#totalCandles').textContent = d.rows.toLocaleString('tr-TR');
       $('#dateRange').textContent = (d.first_date||'') + ' ~ ' + (d.last_date||'');
       $('#totalSignals').textContent = (d.total_signals||0).toString();
       $('#signalBreakdown').textContent = 'BUY: ' + (d.buy_signals||0) + ' | SELL: ' + (d.sell_signals||0);
-      $('#csvSize').textContent = d.size_kb + ' KB';
-      $('#csvFile').textContent = getSymbol() + '_' + getInterval() + '_supertrend.csv';
+      $('#dbStatus').textContent = d.rows.toLocaleString('tr-TR') + ' sat\u0131r';
     }catch(e){}
   }
 
@@ -474,10 +471,6 @@ tr:hover{background:#1c2128}
       loadCollectors();
       loadCollectionStatus();
     }catch(e){}
-  };
-
-  window.downloadCSV = function(){
-    window.open('/api/collector/download/' + getSymbol() + '?interval=' + getInterval(), '_blank');
   };
 
   // ── Refresh all ──
