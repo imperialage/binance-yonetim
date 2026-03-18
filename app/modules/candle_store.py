@@ -139,14 +139,24 @@ async def query_candles(
     *,
     limit: int = 200,
     signals_only: bool = False,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Son N mumu veritabanından oku."""
+    """Son N mumu veritabanından oku. Opsiyonel tarih filtresi."""
     db = await get_candle_db()
     where = "symbol = ? AND interval = ?"
     params: list[Any] = [symbol, interval]
 
     if signals_only:
         where += " AND signal != ''"
+
+    if date_from:
+        where += " AND date >= ?"
+        params.append(date_from)
+
+    if date_to:
+        where += " AND date <= ?"
+        params.append(date_to + " 23:59:59")
 
     cursor = await db.execute(
         f"SELECT * FROM candles WHERE {where} ORDER BY open_time DESC LIMIT ?",  # noqa: S608

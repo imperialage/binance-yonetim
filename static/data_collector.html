@@ -168,15 +168,19 @@ tr:hover{background:#1c2128}
   <div class="tab-content active" id="tab-data">
     <div class="table-wrap">
       <div class="table-header">
-        <h3>Son Mum Verileri</h3>
-        <div style="display:flex;gap:8px;align-items:center">
+        <h3>Mum Verileri</h3>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="date" id="dateFrom" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:4px 8px;border-radius:4px;font-size:12px" title="Ba&#x15F;lang&#x131;&#x e7; tarihi">
+          <input type="date" id="dateTo" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:4px 8px;border-radius:4px;font-size:12px" title="Biti&#x15F; tarihi">
           <select id="dataLimit" onchange="loadData()" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:4px 8px;border-radius:4px;font-size:12px">
-            <option value="50">Son 50</option>
-            <option value="100" selected>Son 100</option>
-            <option value="200">Son 200</option>
-            <option value="500">Son 500</option>
+            <option value="100">100</option>
+            <option value="200" selected>200</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+            <option value="5000">5000</option>
           </select>
-          <button class="btn" onclick="loadData()" style="padding:4px 10px;font-size:12px">Yenile</button>
+          <button class="btn" onclick="loadData()" style="padding:4px 10px;font-size:12px">Filtrele</button>
+          <button class="btn" onclick="clearDateFilter()" style="padding:4px 10px;font-size:12px">Temizle</button>
         </div>
       </div>
       <div class="table-scroll">
@@ -206,7 +210,11 @@ tr:hover{background:#1c2128}
     <div class="table-wrap">
       <div class="table-header">
         <h3>SuperTrend Sinyalleri</h3>
-        <button class="btn" onclick="loadSignals()" style="padding:4px 10px;font-size:12px">Yenile</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="date" id="signalDateFrom" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:4px 8px;border-radius:4px;font-size:12px">
+          <input type="date" id="signalDateTo" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:4px 8px;border-radius:4px;font-size:12px">
+          <button class="btn" onclick="loadSignals()" style="padding:4px 10px;font-size:12px">Filtrele</button>
+        </div>
       </div>
       <div class="table-scroll">
         <table>
@@ -317,11 +325,23 @@ tr:hover{background:#1c2128}
     }
   }
 
+  // ── Clear date filter ──
+  window.clearDateFilter = function(){
+    $('#dateFrom').value = '';
+    $('#dateTo').value = '';
+    loadData();
+  };
+
   // ── Load Data Table ──
   window.loadData = async function(){
     const limit = $('#dataLimit').value;
+    let url = '/api/collector/data/' + getSymbol() + '?interval=' + getInterval() + '&limit=' + limit;
+    const df = $('#dateFrom').value;
+    const dt = $('#dateTo').value;
+    if(df) url += '&date_from=' + df;
+    if(dt) url += '&date_to=' + dt;
     try{
-      const resp = await fetch('/api/collector/data/' + getSymbol() + '?interval=' + getInterval() + '&limit=' + limit);
+      const resp = await fetch(url);
       if(!resp.ok){ $('#dataBody').innerHTML = '<tr><td colspan="10" style="text-align:center;color:#8b949e">Veri bulunamad&#x131;</td></tr>'; return; }
       const d = await resp.json();
       const rows = d.data;
@@ -353,7 +373,12 @@ tr:hover{background:#1c2128}
   // ── Load Signals ──
   window.loadSignals = async function(){
     try{
-      const resp = await fetch('/api/collector/data/' + getSymbol() + '?interval=' + getInterval() + '&limit=200&signals_only=true');
+      let url = '/api/collector/data/' + getSymbol() + '?interval=' + getInterval() + '&limit=500&signals_only=true';
+      const sdf = $('#signalDateFrom').value;
+      const sdt = $('#signalDateTo').value;
+      if(sdf) url += '&date_from=' + sdf;
+      if(sdt) url += '&date_to=' + sdt;
+      const resp = await fetch(url);
       if(!resp.ok){ $('#signalsBody').innerHTML = '<tr><td colspan="6" style="text-align:center;color:#8b949e">Sinyal bulunamad&#x131;</td></tr>'; return; }
       const d = await resp.json();
       const rows = d.data;

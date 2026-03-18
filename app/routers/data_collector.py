@@ -110,6 +110,9 @@ async def fetch_history(req: FetchHistoryRequest):
     count = await upsert_candles(rows, symbol, interval)
     stats = await get_candle_stats(symbol, interval)
 
+    # Geçmiş çekildikten sonra otomatik olarak sürekli toplamayı başlat
+    start_collection(symbol, interval)
+
     return {
         "symbol": symbol,
         "interval": interval,
@@ -132,8 +135,10 @@ async def get_data(
     interval: str = Query("5m"),
     limit: int = Query(200, ge=1, le=5000),
     signals_only: bool = Query(False),
+    date_from: str | None = Query(None, description="Başlangıç tarihi (YYYY-MM-DD)"),
+    date_to: str | None = Query(None, description="Bitiş tarihi (YYYY-MM-DD)"),
 ):
-    """DB'den son N mumu oku."""
+    """DB'den son N mumu oku. Opsiyonel tarih filtresi."""
     symbol = symbol.upper()
     stats = await get_candle_stats(symbol, interval)
 
@@ -144,7 +149,8 @@ async def get_data(
         )
 
     rows = await query_candles(
-        symbol, interval, limit=limit, signals_only=signals_only
+        symbol, interval, limit=limit, signals_only=signals_only,
+        date_from=date_from, date_to=date_to,
     )
 
     return {
