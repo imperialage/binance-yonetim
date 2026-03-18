@@ -19,7 +19,8 @@ from app.modules.binance_client import close_client as close_binance
 from app.modules.signal_store import close_db, init_db
 from app.modules.trade_store import init_trade_db, close_trade_db
 from app.modules.scheduler import start_scheduler, stop_scheduler
-from app.routers import admin, backtest, chart, events, latest, status, webhook, ws
+from app.modules.data_collector import stop_all_collections
+from app.routers import admin, backtest, chart, data_collector, events, latest, status, webhook, ws
 from app.utils.logging import get_logger, setup_logging
 
 setup_logging(log_level=settings.log_level, json_output=settings.log_json)
@@ -35,6 +36,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     start_price_stream()
     yield
     await stop_price_stream()
+    await stop_all_collections()
     await stop_scheduler()
     await close_binance()
     await close_redis()
@@ -59,6 +61,7 @@ app.include_router(admin.router, tags=["admin"])
 app.include_router(ws.router, tags=["websocket"])
 app.include_router(chart.router, tags=["chart"])
 app.include_router(backtest.router, tags=["backtest"])
+app.include_router(data_collector.router, tags=["data-collector"])
 
 # ── Static files & page routes ────────────────────────
 _static_dir = Path(__file__).resolve().parent.parent / "static"
@@ -71,12 +74,23 @@ async def root() -> FileResponse:
 
 @app.get("/trading")
 async def trading_page() -> FileResponse:
-    return FileResponse(str(_static_dir / "trading.html"))
+    return FileResponse(
+        str(_static_dir / "trading.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/backtest")
 async def backtest_page() -> FileResponse:
     return FileResponse(str(_static_dir / "backtest.html"))
+
+
+@app.get("/collector")
+async def collector_page() -> FileResponse:
+    return FileResponse(
+        str(_static_dir / "data_collector.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")

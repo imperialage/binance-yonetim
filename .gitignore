@@ -26,3 +26,8 @@ Thumbs.db
 
 # Claude Code
 .claude/
+CLAUDE.md
+
+# Runtime data
+data/
+uvicorn.log

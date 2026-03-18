@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Veri Toplama - SuperTrend Sinyalleri</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0d1117;color:#e6edf3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5}
+a{color:#58a6ff;text-decoration:none}
+.container{max-width:1400px;margin:0 auto;padding:16px}
+
+/* Header */
+.header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#161b22;border-bottom:1px solid #30363d;position:sticky;top:0;z-index:100}
+.header h1{font-size:18px;font-weight:600}
+.nav{display:flex;gap:12px}
+.nav a{color:#8b949e;font-size:13px;padding:4px 10px;border-radius:6px;transition:all .2s}
+.nav a:hover,.nav a.active{color:#e6edf3;background:#21262d}
+
+/* Cards */
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px}
+.card-label{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.card-value{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.card-sub{font-size:11px;color:#8b949e;margin-top:4px}
+
+/* Control Panel */
+.panel{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;margin-bottom:16px}
+.panel-title{font-size:15px;font-weight:600;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.panel-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+.form-group{display:flex;flex-direction:column;gap:4px}
+.form-group label{font-size:12px;color:#8b949e}
+.form-group input,.form-group select{background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:7px 10px;border-radius:6px;font-size:13px;min-width:120px}
+.form-group input:focus,.form-group select:focus{outline:none;border-color:#58a6ff}
+
+.btn{padding:8px 16px;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;border:1px solid #30363d;background:#21262d;color:#e6edf3;transition:all .15s;white-space:nowrap}
+.btn:hover{background:#30363d}
+.btn-primary{background:#238636;border-color:#238636;color:#fff}
+.btn-primary:hover{background:#2ea043}
+.btn-danger{background:#da3633;border-color:#da3633;color:#fff}
+.btn-danger:hover{background:#f85149}
+.btn-blue{background:#1f6feb;border-color:#1f6feb;color:#fff}
+.btn-blue:hover{background:#388bfd}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn .spinner{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Status badge */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:500}
+.badge-green{background:rgba(63,185,80,.15);color:#3fb950}
+.badge-red{background:rgba(248,81,73,.15);color:#f85149}
+.badge-yellow{background:rgba(210,153,34,.15);color:#d29922}
+.badge::before{content:'';width:6px;height:6px;border-radius:50%;display:inline-block}
+.badge-green::before{background:#3fb950}
+.badge-red::before{background:#f85149}
+.badge-yellow::before{background:#d29922}
+
+/* Collectors list */
+.collectors{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:16px}
+.collector-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}
+.collector-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.collector-symbol{font-size:15px;font-weight:600}
+.collector-info{font-size:12px;color:#8b949e;display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.collector-info span{font-variant-numeric:tabular-nums}
+
+/* Table */
+.table-wrap{background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden;margin-bottom:16px}
+.table-header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid #30363d}
+.table-header h3{font-size:14px;font-weight:600}
+.table-scroll{max-height:500px;overflow-y:auto}
+table{width:100%;border-collapse:collapse}
+th{position:sticky;top:0;background:#161b22;font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;padding:8px 12px;text-align:left;border-bottom:1px solid #30363d}
+td{padding:7px 12px;border-bottom:1px solid #21262d;font-size:13px;font-variant-numeric:tabular-nums}
+tr:hover{background:#1c2128}
+.text-green{color:#3fb950}
+.text-red{color:#f85149}
+.text-muted{color:#8b949e}
+.signal-badge{display:inline-block;padding:1px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.signal-buy{background:rgba(63,185,80,.15);color:#3fb950}
+.signal-sell{background:rgba(248,81,73,.15);color:#f85149}
+
+/* Tabs */
+.tabs{display:flex;gap:2px;margin-bottom:16px;background:#161b22;border-radius:8px;padding:3px;border:1px solid #30363d;width:fit-content}
+.tab{padding:6px 14px;border-radius:6px;font-size:13px;cursor:pointer;color:#8b949e;transition:all .15s}
+.tab:hover{color:#e6edf3}
+.tab.active{background:#21262d;color:#e6edf3;font-weight:500}
+.tab-content{display:none}
+.tab-content.active{display:block}
+
+/* Toast */
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:10px 20px;border-radius:8px;font-size:13px;z-index:1000;display:none;animation:fadeUp .3s ease}
+.toast-success{background:#238636;color:#fff}
+.toast-error{background:#da3633;color:#fff}
+@keyframes fadeUp{from{opacity:0;transform:translateX(-50%) translateY(10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+
+/* Responsive */
+@media(max-width:768px){.cards{grid-template-columns:repeat(2,1fr)}.panel-row{flex-direction:column}.collectors{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Veri Toplama & SuperTrend Sinyalleri</h1>
+  <div class="nav">
+    <a href="/">Piyasa</a>
+    <a href="/trading">Trading</a>
+    <a href="/backtest">Backtest</a>
+    <a href="/collector" class="active">Veri Toplama</a>
+  </div>
+</div>
+
+<div class="container">
+  <!-- Summary Cards -->
+  <div class="cards" id="summaryCards">
+    <div class="card"><div class="card-label">Toplam Mum</div><div class="card-value" id="totalCandles">-</div><div class="card-sub" id="dateRange">-</div></div>
+    <div class="card"><div class="card-label">Toplam Sinyal</div><div class="card-value" id="totalSignals">-</div><div class="card-sub" id="signalBreakdown">-</div></div>
+    <div class="card"><div class="card-label">CSV Boyutu</div><div class="card-value" id="csvSize">-</div><div class="card-sub" id="csvFile">-</div></div>
+    <div class="card"><div class="card-label">Koleksiyon</div><div class="card-value" id="collectionStatus">-</div><div class="card-sub" id="lastUpdate">-</div></div>
+  </div>
+
+  <!-- Control Panel -->
+  <div class="panel">
+    <div class="panel-title">Kontrol Paneli</div>
+    <div class="panel-row">
+      <div class="form-group">
+        <label>Sembol</label>
+        <select id="symbolSelect">
+          <option value="ETHUSDT" selected>ETH/USDT</option>
+          <option value="BTCUSDT">BTC/USDT</option>
+          <option value="BNBUSDT">BNB/USDT</option>
+          <option value="SOLUSDT">SOL/USDT</option>
+          <option value="XRPUSDT">XRP/USDT</option>
+          <option value="DOGEUSDT">DOGE/USDT</option>
+          <option value="ADAUSDT">ADA/USDT</option>
+          <option value="AVAXUSDT">AVAX/USDT</option>
+          <option value="DOTUSDT">DOT/USDT</option>
+          <option value="LINKUSDT">LINK/USDT</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Zaman Dilimi</label>
+        <select id="intervalSelect">
+          <option value="1m">1 Dakika</option>
+          <option value="5m" selected>5 Dakika</option>
+          <option value="15m">15 Dakika</option>
+          <option value="1h">1 Saat</option>
+          <option value="4h">4 Saat</option>
+          <option value="1d">1 G&uuml;n</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Ge&ccedil;mi&scedil; (g&uuml;n)</label>
+        <input type="number" id="daysInput" value="30" min="1" max="365" style="width:80px">
+      </div>
+      <button class="btn btn-blue" id="btnFetch" onclick="fetchHistory()">Ge&ccedil;mi&scedil; Veriyi &Ccedil;ek</button>
+      <button class="btn btn-primary" id="btnStart" onclick="startCollection()">Toplamaya Ba&scedil;la</button>
+      <button class="btn btn-danger" id="btnStop" onclick="stopCollection()">Durdur</button>
+      <button class="btn" id="btnDownload" onclick="downloadCSV()">CSV &Inodot;ndir</button>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('data')">Mum Verileri</div>
+    <div class="tab" onclick="switchTab('signals')">Sinyaller</div>
+    <div class="tab" onclick="switchTab('collectors')">Koleksiyonlar</div>
+  </div>
+
+  <!-- Tab: Data -->
+  <div class="tab-content active" id="tab-data">
+    <div class="table-wrap">
+      <div class="table-header">
+        <h3>Son Mum Verileri</h3>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="dataLimit" onchange="loadData()" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:4px 8px;border-radius:4px;font-size:12px">
+            <option value="50">Son 50</option>
+            <option value="100" selected>Son 100</option>
+            <option value="200">Son 200</option>
+            <option value="500">Son 500</option>
+          </select>
+          <button class="btn" onclick="loadData()" style="padding:4px 10px;font-size:12px">Yenile</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Tarih</th>
+              <th>A&ccedil;&inodot;l&inodot;&scedil;</th>
+              <th>Y&uuml;ksek</th>
+              <th>D&uuml;&scedil;&uuml;k</th>
+              <th>Kapan&inodot;&scedil;</th>
+              <th>Hacim</th>
+              <th>SuperTrend</th>
+              <th>Y&ouml;n</th>
+              <th>K&uuml;me</th>
+              <th>Sinyal</th>
+            </tr>
+          </thead>
+          <tbody id="dataBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab: Signals -->
+  <div class="tab-content" id="tab-signals">
+    <div class="table-wrap">
+      <div class="table-header">
+        <h3>SuperTrend Sinyalleri</h3>
+        <button class="btn" onclick="loadSignals()" style="padding:4px 10px;font-size:12px">Yenile</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Tarih</th>
+              <th>Kapan&inodot;&scedil;</th>
+              <th>SuperTrend</th>
+              <th>Y&ouml;n</th>
+              <th>K&uuml;me</th>
+              <th>Sinyal</th>
+            </tr>
+          </thead>
+          <tbody id="signalsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab: Collectors -->
+  <div class="tab-content" id="tab-collectors">
+    <div class="collectors" id="collectorsGrid"></div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  const $ = s => document.querySelector(s);
+
+  function getSymbol(){ return $('#symbolSelect').value; }
+  function getInterval(){ return $('#intervalSelect').value; }
+
+  // ── Toast ──
+  window.showToast = function(msg, type='success'){
+    const t = $('#toast');
+    t.textContent = msg;
+    t.className = 'toast toast-' + type;
+    t.style.display = 'block';
+    setTimeout(() => { t.style.display = 'none'; }, 3000);
+  };
+
+  // ── Tabs ──
+  window.switchTab = function(tab){
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    event.target.classList.add('active');
+    $('#tab-' + tab).classList.add('active');
+    if(tab === 'signals') loadSignals();
+    if(tab === 'collectors') loadCollectors();
+  };
+
+  // ── Format helpers ──
+  function fmtPrice(v){
+    const n = parseFloat(v);
+    if(isNaN(n)) return v;
+    if(n >= 100) return n.toFixed(2);
+    if(n >= 1) return n.toFixed(4);
+    return n.toFixed(6);
+  }
+  function fmtVol(v){
+    const n = parseFloat(v);
+    if(isNaN(n)) return v;
+    if(n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+    if(n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+    return n.toFixed(0);
+  }
+
+  // ── Load Stats ──
+  async function loadStats(){
+    try{
+      const resp = await fetch('/api/collector/stats/' + getSymbol() + '?interval=' + getInterval());
+      const d = await resp.json();
+      if(!d.exists){
+        $('#totalCandles').textContent = '0';
+        $('#dateRange').textContent = 'Veri yok';
+        $('#totalSignals').textContent = '0';
+        $('#signalBreakdown').textContent = '-';
+        $('#csvSize').textContent = '0 KB';
+        $('#csvFile').textContent = '-';
+        return;
+      }
+      $('#totalCandles').textContent = d.rows.toLocaleString('tr-TR');
+      $('#dateRange').textContent = (d.first_date||'') + ' ~ ' + (d.last_date||'');
+      $('#totalSignals').textContent = (d.total_signals||0).toString();
+      $('#signalBreakdown').textContent = 'BUY: ' + (d.buy_signals||0) + ' | SELL: ' + (d.sell_signals||0);
+      $('#csvSize').textContent = d.size_kb + ' KB';
+      $('#csvFile').textContent = getSymbol() + '_' + getInterval() + '_supertrend.csv';
+    }catch(e){}
+  }
+
+  // ── Load Collection Status ──
+  async function loadCollectionStatus(){
+    try{
+      const resp = await fetch('/api/collector/status');
+      const d = await resp.json();
+      const key = getSymbol() + '_' + getInterval();
+      const c = d.collectors[key];
+      if(c && c.running){
+        $('#collectionStatus').innerHTML = '<span class="badge badge-green">Aktif</span>';
+        $('#lastUpdate').textContent = c.last_update || '-';
+      } else {
+        $('#collectionStatus').innerHTML = '<span class="badge badge-red">Durdu</span>';
+        $('#lastUpdate').textContent = '-';
+      }
+    }catch(e){
+      $('#collectionStatus').innerHTML = '<span class="badge badge-red">Hata</span>';
+    }
+  }
+
+  // ── Load Data Table ──
+  window.loadData = async function(){
+    const limit = $('#dataLimit').value;
+    try{
+      const resp = await fetch('/api/collector/data/' + getSymbol() + '?interval=' + getInterval() + '&limit=' + limit);
+      if(!resp.ok){ $('#dataBody').innerHTML = '<tr><td colspan="10" style="text-align:center;color:#8b949e">Veri bulunamad&#x131;</td></tr>'; return; }
+      const d = await resp.json();
+      const rows = d.data;
+      let html = '';
+      for(let i = rows.length - 1; i >= 0; i--){
+        const r = rows[i];
+        const dirClass = r.direction === 'UP' ? 'text-green' : 'text-red';
+        let signalHtml = '';
+        if(r.signal === 'BUY') signalHtml = '<span class="signal-badge signal-buy">BUY</span>';
+        else if(r.signal === 'SELL') signalHtml = '<span class="signal-badge signal-sell">SELL</span>';
+        html += '<tr' + (r.signal ? ' style="background:rgba(56,139,253,.06)"' : '') + '>' +
+          '<td>' + r.date + '</td>' +
+          '<td>' + fmtPrice(r.open) + '</td>' +
+          '<td>' + fmtPrice(r.high) + '</td>' +
+          '<td>' + fmtPrice(r.low) + '</td>' +
+          '<td>' + fmtPrice(r.close) + '</td>' +
+          '<td>' + fmtVol(r.volume) + '</td>' +
+          '<td>' + fmtPrice(r.supertrend) + '</td>' +
+          '<td class="' + dirClass + '">' + r.direction + '</td>' +
+          '<td>' + r.cluster + '</td>' +
+          '<td>' + signalHtml + '</td></tr>';
+      }
+      $('#dataBody').innerHTML = html || '<tr><td colspan="10" style="text-align:center;color:#8b949e">Veri yok</td></tr>';
+    }catch(e){
+      $('#dataBody').innerHTML = '<tr><td colspan="10" style="text-align:center;color:#f85149">Hata: ' + e.message + '</td></tr>';
+    }
+  };
+
+  // ── Load Signals ──
+  window.loadSignals = async function(){
+    try{
+      const resp = await fetch('/api/collector/data/' + getSymbol() + '?interval=' + getInterval() + '&limit=200&signals_only=true');
+      if(!resp.ok){ $('#signalsBody').innerHTML = '<tr><td colspan="6" style="text-align:center;color:#8b949e">Sinyal bulunamad&#x131;</td></tr>'; return; }
+      const d = await resp.json();
+      const rows = d.data;
+      let html = '';
+      for(let i = rows.length - 1; i >= 0; i--){
+        const r = rows[i];
+        const dirClass = r.direction === 'UP' ? 'text-green' : 'text-red';
+        let signalHtml = r.signal === 'BUY'
+          ? '<span class="signal-badge signal-buy">BUY</span>'
+          : '<span class="signal-badge signal-sell">SELL</span>';
+        html += '<tr>' +
+          '<td>' + r.date + '</td>' +
+          '<td>' + fmtPrice(r.close) + '</td>' +
+          '<td>' + fmtPrice(r.supertrend) + '</td>' +
+          '<td class="' + dirClass + '">' + r.direction + '</td>' +
+          '<td>' + r.cluster + '</td>' +
+          '<td>' + signalHtml + '</td></tr>';
+      }
+      $('#signalsBody').innerHTML = html || '<tr><td colspan="6" style="text-align:center;color:#8b949e">Sinyal yok</td></tr>';
+    }catch(e){
+      $('#signalsBody').innerHTML = '<tr><td colspan="6" style="text-align:center;color:#f85149">Hata</td></tr>';
+    }
+  };
+
+  // ── Load Collectors ──
+  window.loadCollectors = async function(){
+    try{
+      const resp = await fetch('/api/collector/status');
+      const d = await resp.json();
+      const grid = $('#collectorsGrid');
+      const keys = Object.keys(d.collectors);
+      if(!keys.length){ grid.innerHTML = '<div style="color:#8b949e;padding:20px">Aktif koleksiyon yok</div>'; return; }
+      let html = '';
+      for(const key of keys){
+        const c = d.collectors[key];
+        const badge = c.running ? '<span class="badge badge-green">Aktif</span>' : '<span class="badge badge-red">Durdu</span>';
+        const err = c.error ? '<div style="color:#f85149;font-size:11px;margin-top:6px">Hata: ' + c.error + '</div>' : '';
+        html += '<div class="collector-card">' +
+          '<div class="collector-header"><span class="collector-symbol">' + c.symbol + ' ' + c.interval + '</span>' + badge + '</div>' +
+          '<div class="collector-info">' +
+            '<span>Toplam Sat&#x131;r:</span><span>' + (c.total_rows||0).toLocaleString() + '</span>' +
+            '<span>Son G&uuml;ncelleme:</span><span>' + (c.last_update||'-') + '</span>' +
+          '</div>' + err +
+          '<div style="margin-top:8px"><button class="btn btn-danger" onclick="stopSpecific(\'' + c.symbol + '\',\'' + c.interval + '\')" style="padding:4px 10px;font-size:11px"' + (!c.running ? ' disabled' : '') + '>Durdur</button></div>' +
+        '</div>';
+      }
+      grid.innerHTML = html;
+    }catch(e){
+      $('#collectorsGrid').innerHTML = '<div style="color:#f85149;padding:20px">Durum al&#x131;namad&#x131;</div>';
+    }
+  };
+
+  // ── Actions ──
+  window.fetchHistory = async function(){
+    const btn = $('#btnFetch');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Veri &ccedil;ekiliyor...';
+    try{
+      const resp = await fetch('/api/collector/fetch-history', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          symbol: getSymbol(),
+          interval: getInterval(),
+          days: parseInt($('#daysInput').value) || 30
+        })
+      });
+      const d = await resp.json();
+      if(!resp.ok){ showToast(d.detail || 'Hata', 'error'); return; }
+      showToast(d.total_candles + ' mum, ' + d.total_signals + ' sinyal kaydedildi');
+      await refresh();
+    }catch(e){
+      showToast('Hata: ' + e.message, 'error');
+    }finally{
+      btn.disabled = false;
+      btn.innerHTML = 'Ge\u00e7mi\u015f Veriyi \u00c7ek';
+    }
+  };
+
+  window.startCollection = async function(){
+    try{
+      const resp = await fetch('/api/collector/start', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ symbol: getSymbol(), interval: getInterval() })
+      });
+      const d = await resp.json();
+      if(d.status === 'already_running') showToast('Zaten \u00e7al\u0131\u015f\u0131yor', 'error');
+      else showToast('Veri toplama ba\u015flat\u0131ld\u0131');
+      await loadCollectionStatus();
+    }catch(e){ showToast('Hata: ' + e.message, 'error'); }
+  };
+
+  window.stopCollection = async function(){
+    try{
+      const resp = await fetch('/api/collector/stop', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ symbol: getSymbol(), interval: getInterval() })
+      });
+      const d = await resp.json();
+      showToast('Durduruldu');
+      await loadCollectionStatus();
+    }catch(e){ showToast('Hata: ' + e.message, 'error'); }
+  };
+
+  window.stopSpecific = async function(sym, iv){
+    try{
+      await fetch('/api/collector/stop', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ symbol: sym, interval: iv })
+      });
+      showToast(sym + ' ' + iv + ' durduruldu');
+      loadCollectors();
+      loadCollectionStatus();
+    }catch(e){}
+  };
+
+  window.downloadCSV = function(){
+    window.open('/api/collector/download/' + getSymbol() + '?interval=' + getInterval(), '_blank');
+  };
+
+  // ── Refresh all ──
+  async function refresh(){
+    await Promise.all([loadStats(), loadCollectionStatus(), loadData()]);
+  }
+
+  // ── Symbol/interval change ──
+  $('#symbolSelect').addEventListener('change', refresh);
+  $('#intervalSelect').addEventListener('change', refresh);
+
+  // ── Init ──
+  refresh();
+
+  // Auto-refresh every 30s
+  setInterval(() => {
+    loadStats();
+    loadCollectionStatus();
+  }, 30000);
+
+})();
+</script>
+</body>
+</html>
