@@ -10,7 +10,7 @@ import asyncio
 import csv
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -47,9 +47,12 @@ def _csv_path(symbol: str, interval: str) -> Path:
     return DATA_DIR / f"{symbol}_{interval}_supertrend.csv"
 
 
+_TZ_ISTANBUL = timezone(timedelta(hours=3))
+
+
 def _format_ts(unix_sec: int) -> str:
-    """Unix timestamp → ISO 8601 string."""
-    return datetime.fromtimestamp(unix_sec, tz=timezone.utc).strftime(
+    """Unix timestamp → Istanbul (UTC+3) string."""
+    return datetime.fromtimestamp(unix_sec, tz=_TZ_ISTANBUL).strftime(
         "%Y-%m-%d %H:%M:%S"
     )
 
@@ -277,7 +280,7 @@ async def _collection_loop(symbol: str, interval: str):
             if stats["rows"] > 0:
                 last_date = stats["last_date"]
                 dt = datetime.strptime(last_date, "%Y-%m-%d %H:%M:%S").replace(
-                    tzinfo=timezone.utc
+                    tzinfo=_TZ_ISTANBUL
                 )
                 last_ms = int(dt.timestamp() * 1000)
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -100,7 +100,7 @@ async def fetch_history(req: FetchHistoryRequest):
     # Warmup kısmını kes (ilk 2000 mum sadece hesaplama içindi)
     actual_start = end_ms - (days * 86400 * 1000)
     actual_start_str = datetime.fromtimestamp(
-        actual_start / 1000, tz=timezone.utc
+        actual_start / 1000, tz=timezone(timedelta(hours=3))
     ).strftime("%Y-%m-%d %H:%M:%S")
     rows = [r for r in rows if r["date"] >= actual_start_str]
 
