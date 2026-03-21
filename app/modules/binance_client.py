@@ -384,6 +384,20 @@ async def get_algo_orders_history(
     return all_orders
 
 
+async def get_funding_rate(symbol: str) -> float | None:
+    """Get the latest funding rate for a symbol (unsigned endpoint)."""
+    client = await get_client()
+    resp = await client.get(
+        "/fapi/v1/premiumIndex", params={"symbol": symbol}
+    )
+    _raise_for_binance(resp)
+    data = resp.json()
+    rate_str = data.get("lastFundingRate")
+    if rate_str is not None:
+        return float(rate_str)
+    return None
+
+
 def round_step_size(quantity: float, step_size: float) -> float:
     """Round quantity down to the nearest valid step size."""
     if step_size <= 0:

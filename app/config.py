@@ -35,13 +35,17 @@ class Settings(BaseSettings):
     rate_limit_window_sec: int = 10
     rate_limit_max_events: int = 30
 
+    # ── Data Collector ─────────────────────────────
+    collector_symbols: str = "ETHUSDT,BTCUSDT,SOLUSDT,BNBUSDT,XRPUSDT,DOGEUSDT"
+    collector_interval: str = "5m"
+
     # ── Binance Futures Trading ─────────────────────
     binance_api_key: str = ""
     binance_api_secret: str = ""
     binance_testnet: bool = True       # Safety: default to testnet
     trading_enabled: bool = False      # Kill-switch: default off
-    stop_loss_pct: float = 0.005      # 0.5% stop-loss (fallback)
-    take_profit_pct: float = 0.005    # 0.5% take-profit (fallback)
+    stop_loss_pct: float = 0.015      # 1.5% stop-loss (grid search optimal)
+    take_profit_pct: float = 0.005    # 0.5% take-profit (grid search optimal)
     binance_proxy_url: str = ""       # SOCKS5 proxy for static IP
     trading_symbols: str = ""         # Comma-separated whitelist e.g. "ETHUSDT,BTCUSDT"
 
@@ -49,8 +53,8 @@ class Settings(BaseSettings):
     trading_timeframes: str = "5m"      # Active TFs: "5m" or "1m" or "1m,5m"
     strategy_1m_sl_pct: float = 0.0035  # 1m: %0.35 stop-loss
     strategy_1m_tp_pct: float = 0.0033  # 1m: %0.33 take-profit
-    strategy_5m_sl_pct: float = 0.01    # 5m: %1.00 stop-loss
-    strategy_5m_tp_pct: float = 0.005   # 5m: %0.50 take-profit
+    strategy_5m_sl_pct: float = 0.015   # 5m: %1.5 stop-loss (grid search optimal)
+    strategy_5m_tp_pct: float = 0.005   # 5m: %0.5 take-profit (grid search optimal)
 
     def get_strategy(self, tf: str) -> tuple[float, float]:
         """Return (sl_pct, tp_pct) for given timeframe."""

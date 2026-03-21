@@ -286,6 +286,25 @@ def get_all_status() -> dict:
     return dict(_status)
 
 
+def start_default_collections() -> list[dict]:
+    """Config'deki varsayılan sembollerde veri toplamayı başlat."""
+    from app.config import settings
+
+    symbols_str = settings.collector_symbols.strip()
+    if not symbols_str:
+        return []
+
+    interval = settings.collector_interval.strip() or "5m"
+    results = []
+    for sym in symbols_str.split(","):
+        sym = sym.strip().upper()
+        if sym:
+            result = start_collection(sym, interval)
+            results.append(result)
+            log.info("auto_start_collection", symbol=sym, interval=interval, status=result["status"])
+    return results
+
+
 async def stop_all_collections():
     """Tüm koleksiyonları durdur (shutdown için)."""
     for key, task in list(_tasks.items()):
