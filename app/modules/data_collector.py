@@ -2,6 +2,9 @@
 
 Sürekli çalışan background task ile yeni mumları çeker, SuperTrend hesaplar,
 sinyalleri tespit eder ve SQLite'a kaydeder.
+
+Otomatik sinyal tespiti: Yeni mum kapandığında SuperTrend yön değişimi varsa
+filtrelerden geçirir ve işlem tetikler (TradingView'a gerek yok).
 """
 
 from __future__ import annotations
@@ -37,6 +40,9 @@ _TZ_ISTANBUL = timezone(timedelta(hours=3))
 # Aktif koleksiyon görevleri
 _tasks: dict[str, asyncio.Task] = {}
 _status: dict[str, dict] = {}
+
+# Son işlenen sinyal zamanı (duplicate önleme)
+_last_signal_time: dict[str, int] = {}
 
 
 def _format_ts(unix_sec: int) -> str:
@@ -147,6 +153,150 @@ def compute_signals(
     return rows
 
 
+# ── Auto-signal detection & trade dispatch ──
+
+
+async def _process_auto_signal(symbol: str, signal_row: dict, interval: str) -> None:
+    """Yeni SuperTrend sinyali tespit edildi — filtrele, logla, işlem tetikle.
+
+    Bu fonksiyon sayesinde TradingView webhook'a gerek kalmaz.
+    data_collector her mum kapanışında sinyali otomatik tespit eder.
+    """
+    from app.config import settings
+    from app.modules.st_filter_engine import run_filters
+    from app.modules.st_entry_optimizer import check_entry
+    from app.modules.st_signal_logger import log_st_signal
+    from app.modules.trade_executor import execute_trade
+
+    direction = signal_row["signal"]  # "BUY" or "SELL"
+    band = signal_row["cluster"]       # "HIGH", "MID", "LOW"
+    price = signal_row["close"]
+    open_time_ms = signal_row["open_time"]
+
+    iv_ms = INTERVAL_MS.get(interval, 300_000)
+    # Sinyal zamanı = mum kapanış zamanı
+    signal_ts = (open_time_ms + iv_ms) // 1000
+    signal_dt = datetime.fromtimestamp(signal_ts, tz=timezone.utc)
+    dt_str = signal_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    await log.ainfo(
+        "auto_signal_detected",
+        symbol=symbol,
+        direction=direction,
+        band=band,
+        price=price,
+        time=dt_str,
+    )
+
+    # ── 1. Filtreler (saat, band, hacim, funding, istatistik) ──
+    passed, filter_results, vol_ratio = await run_filters(
+        symbol=symbol,
+        direction=direction,
+        band=band,
+        price=price,
+        signal_time=signal_dt,
+    )
+
+    if not passed:
+        failed = next((f for f in filter_results if not f["pass"]), None)
+        skip_filter = failed["name"] if failed else "unknown"
+        skip_reason = failed["reason"] if failed else "unknown"
+
+        await log.ainfo(
+            "auto_signal_filtered",
+            symbol=symbol,
+            direction=direction,
+            filter=skip_filter,
+            reason=skip_reason,
+        )
+
+        await log_st_signal(
+            dt=dt_str,
+            symbol=symbol,
+            direction=direction,
+            band=band,
+            price=price,
+            vol_ratio=vol_ratio,
+            entered=False,
+            skip_filter=skip_filter,
+            skip_reason=skip_reason,
+        )
+        return
+
+    # ── 2. Entry optimization (momentum, body ratio) ──
+    entry_result = await check_entry(
+        symbol=symbol,
+        direction=direction,
+        price=price,
+        signal_time=signal_ts,
+    )
+
+    if not entry_result.passed:
+        await log.ainfo(
+            "auto_signal_entry_rejected",
+            symbol=symbol,
+            direction=direction,
+            reason=entry_result.reason,
+        )
+
+        await log_st_signal(
+            dt=dt_str,
+            symbol=symbol,
+            direction=direction,
+            band=band,
+            price=price,
+            vol_ratio=vol_ratio,
+            entered=False,
+            skip_filter="entry_optimizer",
+            skip_reason=entry_result.reason,
+        )
+        return
+
+    # ── 3. Sinyal geçti — logla ──
+    row_id = await log_st_signal(
+        dt=dt_str,
+        symbol=symbol,
+        direction=direction,
+        band=band,
+        price=price,
+        vol_ratio=vol_ratio,
+        entered=True,
+    )
+
+    await log.ainfo(
+        "auto_signal_accepted",
+        symbol=symbol,
+        direction=direction,
+        band=band,
+        price=price,
+        signal_id=row_id,
+        trading_enabled=settings.trading_enabled,
+    )
+
+    # ── 4. İşlem tetikle (trading_enabled ise) ──
+    if settings.trading_enabled:
+        event_id = f"auto-{row_id}-{signal_ts}"
+        tf = settings.trading_timeframes.split(",")[0].strip() or "5m"
+        asyncio.create_task(execute_trade(
+            symbol=symbol,
+            signal=direction,
+            price=price,
+            event_id=event_id,
+            tf=tf,
+        ))
+        await log.ainfo("auto_trade_dispatched", symbol=symbol, direction=direction, price=price)
+    else:
+        await log.ainfo("auto_trade_skipped_disabled", symbol=symbol, direction=direction)
+
+
+def _find_latest_signal(rows: list[dict]) -> dict | None:
+    """Hesaplanan satırlardan en son sinyali bul (sondan başa)."""
+    for row in reversed(rows):
+        if row.get("signal") in ("BUY", "SELL"):
+            return row
+    return None
+
+
 # ── Background collection task ──
 
 
@@ -232,6 +382,27 @@ async def _collection_loop(symbol: str, interval: str):
                         symbol=symbol,
                         total=stats["rows"],
                     )
+
+                    # ── Otomatik sinyal tespiti ──
+                    latest_signal = _find_latest_signal(rows)
+                    if latest_signal is not None:
+                        sig_time = latest_signal["open_time"]
+                        prev_time = _last_signal_time.get(key, 0)
+
+                        if sig_time > prev_time:
+                            _last_signal_time[key] = sig_time
+                            # Sadece son 2 interval içinde oluşan sinyalleri işle
+                            # (eski sinyalleri atla)
+                            age_ms = int(time.time() * 1000) - sig_time
+                            if age_ms < iv_ms * 2:
+                                try:
+                                    await _process_auto_signal(symbol, latest_signal, interval)
+                                except Exception as sig_err:
+                                    await log.aerror(
+                                        "auto_signal_processing_error",
+                                        symbol=symbol,
+                                        error=str(sig_err),
+                                    )
 
             except Exception as e:
                 _status[key]["error"] = str(e)
