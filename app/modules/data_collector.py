@@ -69,7 +69,11 @@ async def fetch_all_klines(
     all_klines: list[list[Any]] = []
     current_start = start_ms
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    # Proxy ayarını binance_client ile aynı şekilde al
+    from app.config import settings as _settings
+    proxy_url = _settings.binance_proxy_url or None
+
+    async with httpx.AsyncClient(timeout=15, proxy=proxy_url) as client:
         while current_start < end_ms:
             params = {
                 "symbol": symbol,
@@ -79,16 +83,17 @@ async def fetch_all_klines(
                 "limit": 1500,
             }
 
-            # Rate limit retry (429)
+            # Rate limit / IP ban retry (429, 418)
             for attempt in range(5):
                 resp = await client.get(
                     f"{BINANCE_FAPI_BASE}/fapi/v1/klines", params=params
                 )
-                if resp.status_code == 429:
+                if resp.status_code in (429, 418):
                     wait = min(2 ** attempt * 2, 30)  # 2, 4, 8, 16, 30s
                     await log.awarning(
                         "binance_rate_limit",
                         symbol=symbol,
+                        status=resp.status_code,
                         attempt=attempt + 1,
                         wait=wait,
                     )
@@ -98,7 +103,7 @@ async def fetch_all_klines(
                 break
             else:
                 raise httpx.HTTPStatusError(
-                    "Rate limit exceeded after 5 retries",
+                    f"Binance {resp.status_code} after 5 retries",
                     request=resp.request,
                     response=resp,
                 )
@@ -115,7 +120,7 @@ async def fetch_all_klines(
             if len(batch) < 1500:
                 break
 
-            await asyncio.sleep(0.3)  # Rate limit koruması (artırıldı)
+            await asyncio.sleep(0.3)  # Rate limit koruması
 
     # Duplicate temizle
     seen: set[int] = set()
