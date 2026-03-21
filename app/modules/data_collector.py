@@ -78,10 +78,31 @@ async def fetch_all_klines(
                 "endTime": end_ms,
                 "limit": 1500,
             }
-            resp = await client.get(
-                f"{BINANCE_FAPI_BASE}/fapi/v1/klines", params=params
-            )
-            resp.raise_for_status()
+
+            # Rate limit retry (429)
+            for attempt in range(5):
+                resp = await client.get(
+                    f"{BINANCE_FAPI_BASE}/fapi/v1/klines", params=params
+                )
+                if resp.status_code == 429:
+                    wait = min(2 ** attempt * 2, 30)  # 2, 4, 8, 16, 30s
+                    await log.awarning(
+                        "binance_rate_limit",
+                        symbol=symbol,
+                        attempt=attempt + 1,
+                        wait=wait,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                break
+            else:
+                raise httpx.HTTPStatusError(
+                    "Rate limit exceeded after 5 retries",
+                    request=resp.request,
+                    response=resp,
+                )
+
             batch = resp.json()
 
             if not batch:
@@ -94,7 +115,7 @@ async def fetch_all_klines(
             if len(batch) < 1500:
                 break
 
-            await asyncio.sleep(0.15)  # Rate limit koruması
+            await asyncio.sleep(0.3)  # Rate limit koruması (artırıldı)
 
     # Duplicate temizle
     seen: set[int] = set()
@@ -417,11 +438,17 @@ async def _collection_loop(symbol: str, interval: str):
         _status[key]["running"] = False
         await log.ainfo("data_collector_stopped", symbol=symbol, interval=interval)
     except Exception as e:
-        _status[key]["running"] = False
         _status[key]["error"] = str(e)
         await log.aerror(
             "data_collector_crashed", symbol=symbol, error=str(e)
         )
+        # Crash recovery: 60sn bekle ve yeniden başlat
+        await log.ainfo("data_collector_restarting", symbol=symbol, wait=60)
+        await asyncio.sleep(60)
+        _status[key]["running"] = True
+        _status[key]["error"] = None
+        # Yeniden başlat (recursive olmadan, yeni task olarak)
+        _tasks[key] = asyncio.create_task(_collection_loop(symbol, interval))
 
 
 def start_collection(symbol: str, interval: str) -> dict:
@@ -458,7 +485,10 @@ def get_all_status() -> dict:
 
 
 def start_default_collections() -> list[dict]:
-    """Config'deki varsayılan sembollerde veri toplamayı başlat."""
+    """Config'deki varsayılan sembollerde veri toplamayı başlat.
+
+    Semboller arası 10sn gecikme ile başlatır (rate limit koruması).
+    """
     from app.config import settings
 
     symbols_str = settings.collector_symbols.strip()
@@ -466,14 +496,19 @@ def start_default_collections() -> list[dict]:
         return []
 
     interval = settings.collector_interval.strip() or "5m"
-    results = []
-    for sym in symbols_str.split(","):
-        sym = sym.strip().upper()
-        if sym:
-            result = start_collection(sym, interval)
-            results.append(result)
-            log.info("auto_start_collection", symbol=sym, interval=interval, status=result["status"])
-    return results
+    symbols = [s.strip().upper() for s in symbols_str.split(",") if s.strip()]
+
+    # Aşamalı başlatma: her sembol 10sn arayla
+    async def _staggered_start():
+        for i, sym in enumerate(symbols):
+            if i > 0:
+                await asyncio.sleep(10)  # Semboller arası bekleme
+            start_collection(sym, interval)
+            await log.ainfo("auto_start_collection", symbol=sym, interval=interval, delay=i * 10)
+
+    asyncio.create_task(_staggered_start())
+
+    return [{"status": "scheduled", "key": f"{s}_{interval}"} for s in symbols]
 
 
 async def stop_all_collections():

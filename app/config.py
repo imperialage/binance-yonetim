@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     binance_api_key: str = ""
     binance_api_secret: str = ""
     binance_testnet: bool = True       # Safety: default to testnet
-    trading_enabled: bool = False      # Kill-switch: default off
+    trading_enabled: bool = True       # Auto-trade active
     stop_loss_pct: float = 0.015      # 1.5% stop-loss (grid search optimal)
     take_profit_pct: float = 0.005    # 0.5% take-profit (grid search optimal)
     binance_proxy_url: str = ""       # SOCKS5 proxy for static IP
