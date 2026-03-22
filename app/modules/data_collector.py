@@ -203,7 +203,8 @@ async def _process_auto_signal(symbol: str, signal_row: dict, interval: str) -> 
     # Sinyal zamanı = mum kapanış zamanı
     signal_ts = (open_time_ms + iv_ms) // 1000
     signal_dt = datetime.fromtimestamp(signal_ts, tz=timezone.utc)
-    dt_str = signal_dt.strftime("%Y-%m-%d %H:%M:%S")
+    # Log ve DB'ye UTC+3 (Istanbul) olarak kaydet — mum tarihleriyle tutarlı
+    dt_str = datetime.fromtimestamp(signal_ts, tz=_TZ_ISTANBUL).strftime("%Y-%m-%d %H:%M:%S")
 
     await log.ainfo(
         "auto_signal_detected",
