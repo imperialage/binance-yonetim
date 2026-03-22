@@ -26,7 +26,7 @@ FUNDING_THRESHOLD = 0.01
 STATS_MIN_RATE = 0.55
 STATS_MIN_SAMPLES = 30
 
-# Hours with worst hit rates from analysis (UTC)
+# Default bad hours (fallback — prefer per-symbol config)
 _BAD_HOURS = {7, 8, 10, 11, 12}
 
 
@@ -47,10 +47,11 @@ class FilterResult:
 # ── Individual filters ────────────────────────────────────
 
 
-def filter_hour(signal_time: datetime) -> FilterResult:
-    """UTC 07:00-08:59, 10:00-12:59 → reject."""
+def filter_hour(signal_time: datetime, bad_hours: set[int] | None = None) -> FilterResult:
+    """UTC bad hours → reject. Uses per-symbol bad_hours if provided."""
     hour = signal_time.hour
-    if hour in _BAD_HOURS:
+    hours = bad_hours if bad_hours is not None else _BAD_HOURS
+    if hour in hours:
         return FilterResult(
             False,
             f"Bad hour UTC {hour:02d}:00 (hit rate <25%)",
@@ -164,12 +165,22 @@ async def run_filters(
     """Run all filters in sequence. Returns (passed, filter_results, vol_ratio).
 
     Stops at the first rejection (short-circuit).
+    Uses per-symbol config for bad_hours and allowed_directions.
     """
+    from app.config import get_symbol_config
+
+    sym_cfg = get_symbol_config(symbol)
     results: list[dict] = []
     vol_ratio: float | None = None
 
-    # 1. Hour filter
-    r = filter_hour(signal_time)
+    # 0. Direction filter (per-symbol allowed_directions)
+    allowed = sym_cfg.get("allowed_directions", {"BUY", "SELL"})
+    if direction.upper() not in allowed:
+        results.append(FilterResult(False, f"{direction} not in allowed_directions {allowed}", "direction").to_dict())
+        return False, results, vol_ratio
+
+    # 1. Hour filter (per-symbol bad_hours)
+    r = filter_hour(signal_time, bad_hours=sym_cfg.get("bad_hours"))
     results.append(r.to_dict())
     if not r.passed:
         return False, results, vol_ratio

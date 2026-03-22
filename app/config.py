@@ -2,8 +2,72 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# ── Per-symbol trading config ──────────────────────────────
+# Filtre parametreleri + TP/SL + izin verilen yönler
+SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
+    "ETHUSDT": {
+        "bad_hours": {7, 8, 10, 11, 12},
+        "allowed_directions": {"SELL"},
+        "tp_pct": 0.005,   # %0.5
+        "sl_pct": 0.015,   # %1.5
+        "weight": 0.050,   # EV-based capital allocation
+    },
+    "BTCUSDT": {
+        "bad_hours": {7, 8, 9, 10, 11, 12},
+        "allowed_directions": {"SELL"},
+        "tp_pct": 0.007,   # %0.7
+        "sl_pct": 0.020,   # %2.0
+        "weight": 0.093,
+    },
+    "DOGEUSDT": {
+        "bad_hours": {2, 7, 10, 12, 14},
+        "allowed_directions": {"SELL"},
+        "tp_pct": 0.007,   # %0.7
+        "sl_pct": 0.025,   # %2.5
+        "weight": 0.205,
+    },
+    "SOLUSDT": {
+        "bad_hours": {0, 7, 8, 9, 13},
+        "allowed_directions": {"SELL"},
+        "tp_pct": 0.010,   # %1.0
+        "sl_pct": 0.025,   # %2.5
+        "weight": 0.223,
+    },
+    "XRPUSDT": {
+        "bad_hours": {5, 7, 8, 9, 13},
+        "allowed_directions": {"SELL"},
+        "tp_pct": 0.010,   # %1.0
+        "sl_pct": 0.025,   # %2.5
+        "weight": 0.213,
+    },
+    "BNBUSDT": {
+        "bad_hours": {0, 7, 10, 13, 23},
+        "allowed_directions": {"SELL"},
+        "tp_pct": 0.007,   # %0.7
+        "sl_pct": 0.025,   # %2.5
+        "weight": 0.216,
+    },
+}
+
+# Tanımsız semboller için fallback
+_DEFAULT_SYMBOL_CONFIG: dict[str, Any] = {
+    "bad_hours": {7, 8, 10, 11, 12},
+    "allowed_directions": {"BUY", "SELL"},
+    "tp_pct": 0.005,
+    "sl_pct": 0.015,
+    "weight": 0.10,
+}
+
+
+def get_symbol_config(symbol: str) -> dict[str, Any]:
+    """Return trading config for a symbol."""
+    return SYMBOL_CONFIGS.get(symbol.upper(), _DEFAULT_SYMBOL_CONFIG)
 
 
 class Settings(BaseSettings):
@@ -47,7 +111,7 @@ class Settings(BaseSettings):
     stop_loss_pct: float = 0.015      # 1.5% stop-loss (grid search optimal)
     take_profit_pct: float = 0.005    # 0.5% take-profit (grid search optimal)
     binance_proxy_url: str = ""       # SOCKS5 proxy for static IP
-    trading_symbols: str = ""         # Comma-separated whitelist e.g. "ETHUSDT,BTCUSDT"
+    trading_symbols: str = "ETHUSDT,BTCUSDT,DOGEUSDT,SOLUSDT,XRPUSDT,BNBUSDT"  # Comma-separated whitelist
 
     # Per-timeframe strategy overrides
     trading_timeframes: str = "5m"      # Active TFs: "5m" or "1m" or "1m,5m"

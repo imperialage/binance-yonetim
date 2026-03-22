@@ -155,22 +155,43 @@ async def debug_diagnosis() -> dict:
     except Exception as e:
         result["recent_trades_error"] = str(e)
 
-    # Current Binance position
+    # Current Binance positions — all trading symbols
     try:
+        from app.config import SYMBOL_CONFIGS, get_symbol_config
         from app.modules.binance_client import get_usdt_balance, get_position_risk
         balance = await get_usdt_balance()
         result["balance"] = balance
-        positions = await get_position_risk("ETHUSDT")
-        for p in positions:
-            if p.get("symbol") == "ETHUSDT":
-                result["position"] = {
-                    "positionAmt": p.get("positionAmt"),
-                    "entryPrice": p.get("entryPrice"),
-                    "unRealizedProfit": p.get("unRealizedProfit"),
-                    "markPrice": p.get("markPrice"),
-                    "updateTime": p.get("updateTime"),
-                }
-                break
+
+        # Fetch positions for all configured symbols in parallel
+        trading_syms = list(SYMBOL_CONFIGS.keys())
+        pos_results = await asyncio.gather(
+            *[get_position_risk(s) for s in trading_syms],
+            return_exceptions=True,
+        )
+
+        positions_map: dict = {}
+        for sym, pos_list in zip(trading_syms, pos_results):
+            if isinstance(pos_list, Exception):
+                continue
+            for p in pos_list:
+                if p.get("symbol") == sym:
+                    sym_cfg = get_symbol_config(sym)
+                    positions_map[sym] = {
+                        "positionAmt": p.get("positionAmt"),
+                        "entryPrice": p.get("entryPrice"),
+                        "unRealizedProfit": p.get("unRealizedProfit"),
+                        "markPrice": p.get("markPrice"),
+                        "updateTime": p.get("updateTime"),
+                        "tp_pct": sym_cfg.get("tp_pct", 0.005),
+                        "sl_pct": sym_cfg.get("sl_pct", 0.015),
+                        "weight": sym_cfg.get("weight", 0.10),
+                    }
+                    break
+
+        result["positions"] = positions_map
+        # Backward compat: keep single "position" for ETHUSDT
+        if "ETHUSDT" in positions_map:
+            result["position"] = positions_map["ETHUSDT"]
     except Exception as e:
         result["binance_error"] = str(e)
 
@@ -179,14 +200,21 @@ async def debug_diagnosis() -> dict:
 
 @router.get("/debug/income")
 async def debug_income() -> dict:
-    """Get realized PnL history with entry/exit prices (last 7 days)."""
+    """Get realized PnL history with entry/exit prices (last 7 days), all trading symbols."""
+    from app.config import SYMBOL_CONFIGS
     from app.modules.binance_client import get_income_history, get_user_trades
     from datetime import datetime, timezone, timedelta
     tz = timezone(timedelta(hours=3))
-    try:
+
+    all_symbols = list(SYMBOL_CONFIGS.keys()) or ["ETHUSDT"]
+    all_trades: list[dict] = []
+    grand_total_pnl = 0.0
+
+    for sym in all_symbols:
+      try:
         records, user_trades = await asyncio.gather(
-            get_income_history("ETHUSDT", "REALIZED_PNL", days=7),
-            get_user_trades("ETHUSDT", days=7),
+            get_income_history(sym, "REALIZED_PNL", days=7),
+            get_user_trades(sym, days=7),
         )
 
         # ── 1. Split each userTrade fill into OPEN or CLOSE portion ──
@@ -333,7 +361,7 @@ async def debug_income() -> dict:
                 "exit_price": exit_price,
                 "qty": qty,
                 "pnl": round(pnl, 6),
-                "symbol": "ETHUSDT",
+                "symbol": sym,
             })
 
         # ── 7. Fallback: income records with no matching userTrade ──
@@ -350,23 +378,37 @@ async def debug_income() -> dict:
                 "exit_price": 0.0,
                 "qty": 0.0,
                 "pnl": round(pnl, 6),
-                "symbol": "ETHUSDT",
+                "symbol": sym,
             })
 
-        # Sort newest first
-        trades.sort(key=lambda t: t["time"], reverse=True)
-        win = sum(1 for t in trades if t["pnl"] > 0)
-        lose = sum(1 for t in trades if t["pnl"] < 0)
-        return {
-            "total_pnl": round(total_pnl, 6),
-            "trade_count": len(trades),
-            "win": win,
-            "lose": lose,
-            "win_rate": f"{(win / len(trades) * 100):.0f}%" if trades else "0%",
-            "trades": trades,
-        }
+        all_trades.extend(trades)
+        grand_total_pnl += total_pnl
+      except Exception:
+        continue  # Skip symbol on error, continue with others
+
+    # Sort all trades newest first
+    all_trades.sort(key=lambda t: t["time"], reverse=True)
+    win = sum(1 for t in all_trades if t["pnl"] > 0)
+    lose = sum(1 for t in all_trades if t["pnl"] < 0)
+    return {
+        "total_pnl": round(grand_total_pnl, 6),
+        "trade_count": len(all_trades),
+        "win": win,
+        "lose": lose,
+        "win_rate": f"{(win / len(all_trades) * 100):.0f}%" if all_trades else "0%",
+        "trades": all_trades,
+    }
+
+
+@router.get("/api/st-signals")
+async def api_st_signals(limit: int = 50) -> dict:
+    """Get recent SuperTrend signals across all symbols."""
+    from app.modules.st_signal_logger import query_st_signals
+    try:
+        signals = await query_st_signals(limit=limit)
+        return {"signals": signals, "count": len(signals)}
     except Exception as e:
-        return {"error": str(e)}
+        return {"signals": [], "count": 0, "error": str(e)}
 
 
 @router.get("/debug/orders")

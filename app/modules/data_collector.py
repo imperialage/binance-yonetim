@@ -301,6 +301,9 @@ async def _process_auto_signal(symbol: str, signal_row: dict, interval: str) -> 
 
     # ── 4. İşlem tetikle (trading_enabled ise) ──
     if settings.trading_enabled:
+        from app.config import get_symbol_config
+        sym_cfg = get_symbol_config(symbol)
+
         event_id = f"auto-{row_id}-{signal_ts}"
         tf = settings.trading_timeframes.split(",")[0].strip() or "5m"
         asyncio.create_task(execute_trade(
@@ -309,6 +312,8 @@ async def _process_auto_signal(symbol: str, signal_row: dict, interval: str) -> 
             price=price,
             event_id=event_id,
             tf=tf,
+            tp_pct=sym_cfg.get("tp_pct"),
+            sl_pct=sym_cfg.get("sl_pct"),
         ))
         await log.ainfo("auto_trade_dispatched", symbol=symbol, direction=direction, price=price)
     else:

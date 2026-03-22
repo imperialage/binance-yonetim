@@ -41,8 +41,13 @@ async def execute_trade(
     price: float,
     event_id: str,
     tf: str = "5m",
+    tp_pct: float | None = None,
+    sl_pct: float | None = None,
 ) -> None:
-    """Execute a trade based on signal. Fire-and-forget from webhook."""
+    """Execute a trade based on signal. Fire-and-forget from webhook.
+
+    tp_pct/sl_pct: per-symbol overrides. If None, falls back to settings.get_strategy(tf).
+    """
     start_ms = time.monotonic_ns() // 1_000_000
     ts = int(time.time())
     side = "BUY" if signal == "BUY" else "SELL"
@@ -55,7 +60,7 @@ async def execute_trade(
     lock = _get_lock(symbol)
     async with lock:
         try:
-            await _execute_trade_inner(symbol, side, price, event_id, ts, start_ms, tf)
+            await _execute_trade_inner(symbol, side, price, event_id, ts, start_ms, tf, tp_pct=tp_pct, sl_pct=sl_pct)
         except Exception as e:
             duration = (time.monotonic_ns() // 1_000_000) - start_ms
             log.error(
@@ -85,6 +90,8 @@ async def _execute_trade_inner(
     ts: int,
     start_ms: int,
     tf: str = "5m",
+    tp_pct: float | None = None,
+    sl_pct: float | None = None,
 ) -> None:
     """Inner trade logic — called under per-symbol lock."""
 
@@ -178,8 +185,10 @@ async def _execute_trade_inner(
         )
         return
 
-    # Use 98% of balance to leave room for fees/commission
-    usable_balance = balance * 0.98
+    # EV-weighted capital allocation — her sembol kendi ağırlığı kadar bakiye kullanır
+    from app.config import get_symbol_config
+    sym_weight = get_symbol_config(symbol).get("weight", 1.0 / 6)
+    usable_balance = balance * sym_weight * 0.98
     raw_qty = usable_balance / price
     quantity = round_step_size(raw_qty, step_size)
 
@@ -278,7 +287,9 @@ async def _execute_trade_inner(
         )
 
     # ── 9. Place take-profit only (SL yok — ters sinyal ile kapanır) ──
-    _sl_pct, tp_pct = settings.get_strategy(tf)
+    _default_sl, _default_tp = settings.get_strategy(tf)
+    if tp_pct is None:
+        tp_pct = _default_tp
     if side == "BUY":
         raw_tp = entry_price * (1 + tp_pct)
         tp_side = "SELL"
