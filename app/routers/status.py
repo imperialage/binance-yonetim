@@ -162,12 +162,15 @@ async def debug_diagnosis() -> dict:
         balance = await get_usdt_balance()
         result["balance"] = balance
 
-        # Fetch positions for all configured symbols in parallel
+        # Fetch positions sequentially to avoid Binance rate limit
         trading_syms = list(SYMBOL_CONFIGS.keys())
-        pos_results = await asyncio.gather(
-            *[get_position_risk(s) for s in trading_syms],
-            return_exceptions=True,
-        )
+        pos_results = []
+        for s in trading_syms:
+            try:
+                r = await get_position_risk(s)
+                pos_results.append(r)
+            except Exception as e:
+                pos_results.append(e)
 
         positions_map: dict = {}
         for sym, pos_list in zip(trading_syms, pos_results):
@@ -401,14 +404,51 @@ async def debug_income() -> dict:
 
 
 @router.get("/api/st-signals")
-async def api_st_signals(limit: int = 50) -> dict:
-    """Get recent SuperTrend signals across all symbols."""
+async def api_st_signals(limit: int = 80) -> dict:
+    """Get recent SuperTrend signals across all symbols.
+
+    Combines candle_store (computed signals) with st_signal_logger (filter decisions).
+    """
+    from app.config import SYMBOL_CONFIGS
+    from app.modules.candle_store import query_candles
     from app.modules.st_signal_logger import query_st_signals
+
+    all_signals: list[dict] = []
+
+    # 1. Try st_signal_logger first (has entered/filtered details)
     try:
-        signals = await query_st_signals(limit=limit)
-        return {"signals": signals, "count": len(signals)}
-    except Exception as e:
-        return {"signals": [], "count": 0, "error": str(e)}
+        logged = await query_st_signals(limit=limit)
+        if logged:
+            all_signals = logged
+    except Exception:
+        pass
+
+    # 2. If empty, fall back to candle_store signals
+    if not all_signals:
+        try:
+            for sym in SYMBOL_CONFIGS:
+                candles = await query_candles(sym, "5m", limit=30, signals_only=True)
+                for c in candles:
+                    all_signals.append({
+                        "datetime": c.get("date", ""),
+                        "symbol": sym,
+                        "direction": c.get("signal", ""),
+                        "band": c.get("cluster", ""),
+                        "price": c.get("close", 0),
+                        "vol_ratio": None,
+                        "entered": None,  # unknown — not yet processed
+                        "skip_filter": None,
+                        "skip_reason": None,
+                        "source": "candle_store",
+                    })
+        except Exception:
+            pass
+
+    # Sort by datetime descending
+    all_signals.sort(key=lambda s: s.get("datetime", "") or "", reverse=True)
+    all_signals = all_signals[:limit]
+
+    return {"signals": all_signals, "count": len(all_signals)}
 
 
 @router.get("/debug/orders")
