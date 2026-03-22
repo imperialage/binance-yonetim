@@ -13,42 +13,42 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
     "ETHUSDT": {
         "bad_hours": {7, 8, 10, 11, 12},
-        "allowed_directions": {"SELL"},
+        "allowed_directions": {"SELL"},          # BUY zararda
         "tp_pct": 0.005,   # %0.5
         "sl_pct": 0.015,   # %1.5
         "weight": 0.050,   # EV-based capital allocation
     },
     "BTCUSDT": {
         "bad_hours": {7, 8, 9, 10, 11, 12},
-        "allowed_directions": {"SELL"},
+        "allowed_directions": {"SELL", "BUY"},
         "tp_pct": 0.007,   # %0.7
         "sl_pct": 0.020,   # %2.0
         "weight": 0.093,
     },
     "DOGEUSDT": {
         "bad_hours": {2, 7, 10, 12, 14},
-        "allowed_directions": {"SELL"},
+        "allowed_directions": {"SELL", "BUY"},
         "tp_pct": 0.007,   # %0.7
         "sl_pct": 0.025,   # %2.5
         "weight": 0.205,
     },
     "SOLUSDT": {
         "bad_hours": {0, 7, 8, 9, 13},
-        "allowed_directions": {"SELL"},
+        "allowed_directions": {"SELL", "BUY"},
         "tp_pct": 0.010,   # %1.0
         "sl_pct": 0.025,   # %2.5
         "weight": 0.223,
     },
     "XRPUSDT": {
         "bad_hours": {5, 7, 8, 9, 13},
-        "allowed_directions": {"SELL"},
+        "allowed_directions": {"SELL", "BUY"},
         "tp_pct": 0.010,   # %1.0
         "sl_pct": 0.025,   # %2.5
         "weight": 0.213,
     },
     "BNBUSDT": {
         "bad_hours": {0, 7, 10, 13, 23},
-        "allowed_directions": {"SELL"},
+        "allowed_directions": {"SELL", "BUY"},
         "tp_pct": 0.007,   # %0.7
         "sl_pct": 0.025,   # %2.5
         "weight": 0.216,

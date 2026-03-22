@@ -406,18 +406,19 @@ async def _collection_loop(symbol: str, interval: str):
                     # DB'den warmup mumlarını al + yeni mumları birleştir
                     from app.modules.candle_store import get_raw_klines
                     db_klines = await get_raw_klines(symbol, interval, limit=2100)
-                    # Merge: DB klines + new klines (dedupe by open_time)
-                    seen_times = set()
+
+                    # Merge: Binance'tan gelen TAZE veri öncelik alır
+                    # (DB'deki eski/tamamlanmamış mum verisi yerine)
+                    new_times = set()
                     merged = []
-                    for k in db_klines:
-                        t = int(k[0])
-                        if t not in seen_times:
-                            seen_times.add(t)
-                            merged.append(k)
                     for k in new_klines:
                         t = int(k[0])
-                        if t not in seen_times:
-                            seen_times.add(t)
+                        if t not in new_times:
+                            new_times.add(t)
+                            merged.append(k)
+                    for k in db_klines:
+                        t = int(k[0])
+                        if t not in new_times:
                             merged.append(k)
                     merged.sort(key=lambda k: int(k[0]))
 
@@ -435,17 +436,22 @@ async def _collection_loop(symbol: str, interval: str):
                     )
 
                     # ── Otomatik sinyal tespiti ──
-                    latest_signal = _find_latest_signal(rows)
+                    # Şu an oluşan (kapanmamış) mumu hariç tut —
+                    # sadece kapanmış mumlardan sinyal al
+                    now_ms = int(time.time() * 1000)
+                    current_candle_open = (now_ms // iv_ms) * iv_ms
+                    closed_rows = [r for r in rows if r["open_time"] < current_candle_open]
+
+                    latest_signal = _find_latest_signal(closed_rows)
                     if latest_signal is not None:
                         sig_time = latest_signal["open_time"]
                         prev_time = _last_signal_time.get(key, 0)
 
                         if sig_time > prev_time:
                             _last_signal_time[key] = sig_time
-                            # Sadece son 2 interval içinde oluşan sinyalleri işle
-                            # (eski sinyalleri atla)
-                            age_ms = int(time.time() * 1000) - sig_time
-                            if age_ms < iv_ms * 2:
+                            # Son 3 interval içinde oluşan sinyalleri işle
+                            age_ms = now_ms - sig_time
+                            if age_ms < iv_ms * 3:
                                 try:
                                     await _process_auto_signal(symbol, latest_signal, interval)
                                 except Exception as sig_err:
@@ -454,6 +460,25 @@ async def _collection_loop(symbol: str, interval: str):
                                         symbol=symbol,
                                         error=str(sig_err),
                                     )
+                            else:
+                                await log.ainfo(
+                                    "auto_signal_skipped_old",
+                                    symbol=symbol,
+                                    direction=latest_signal["signal"],
+                                    age_ms=age_ms,
+                                    limit_ms=iv_ms * 3,
+                                )
+                        else:
+                            # Zaten işlenmiş sinyal — debug log
+                            if sig_time == prev_time:
+                                pass  # Aynı sinyal, normal
+                            else:
+                                await log.awarning(
+                                    "auto_signal_time_mismatch",
+                                    symbol=symbol,
+                                    sig_time=sig_time,
+                                    prev_time=prev_time,
+                                )
 
             except Exception as e:
                 _status[key]["error"] = str(e)
