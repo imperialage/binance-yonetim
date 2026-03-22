@@ -44,6 +44,9 @@ _status: dict[str, dict] = {}
 # Son işlenen sinyal zamanı (duplicate önleme)
 _last_signal_time: dict[str, int] = {}
 
+# Initial fetch kilidi — bir seferde sadece 1 sembol initial fetch yapar
+_initial_fetch_lock = asyncio.Lock()
+
 
 def _format_ts(unix_sec: int) -> str:
     """Unix timestamp → Istanbul (UTC+3) string."""
@@ -329,6 +332,46 @@ def _find_latest_signal(rows: list[dict]) -> dict | None:
     return None
 
 
+# ── Initial fetch (sıralı — rate limit koruması) ──
+
+
+async def _do_initial_fetch(
+    symbol: str, interval: str, iv_ms: int, key: str
+) -> None:
+    """DB'deki en son mumdan itibaren veri çek. Lock altında çağrılır."""
+    last_ms = await get_last_open_time(symbol, interval)
+
+    if last_ms is None:
+        # DB boş → 2 yıl geriden başla
+        last_ms = int(time.time() * 1000) - (730 * 86400 * 1000)
+
+    # SuperTrend warmup için 2000 mum öncesinden çekmeliyiz
+    warmup_start = last_ms - (2000 * iv_ms)
+    now_ms = int(time.time() * 1000)
+
+    await log.ainfo(
+        "data_collector_fetching",
+        symbol=symbol,
+        interval=interval,
+        from_ms=warmup_start,
+    )
+
+    klines = await fetch_all_klines(symbol, interval, warmup_start, now_ms)
+
+    if klines:
+        rows = compute_signals(klines)
+        count = await upsert_candles(rows, symbol, interval)
+        stats = await get_candle_stats(symbol, interval)
+        _status[key]["total_rows"] = stats["rows"]
+        _status[key]["last_update"] = _format_ts(int(time.time()))
+
+    await log.ainfo(
+        "data_collector_initial_fetch",
+        symbol=symbol,
+        rows=_status[key]["total_rows"],
+    )
+
+
 # ── Background collection task ──
 
 
@@ -349,42 +392,13 @@ async def _collection_loop(symbol: str, interval: str):
     await log.ainfo("data_collector_started", symbol=symbol, interval=interval)
 
     try:
-        # DB'deki en son mum zamanını bul
-        last_ms = await get_last_open_time(symbol, interval)
-
-        if last_ms is None:
-            # DB boş → Binance'ın izin verdiği en eskiden başla
-            # Binance Futures genelde ~2 yıl veri tutar
-            # 5m için: 2 yıl ≈ 210.000 mum
-            last_ms = int(time.time() * 1000) - (730 * 86400 * 1000)  # 2 yıl geriden
-
-        # SuperTrend warmup için 2000 mum öncesinden çekmeliyiz
-        warmup_start = last_ms - (2000 * iv_ms)
-        now_ms = int(time.time() * 1000)
-
-        await log.ainfo(
-            "data_collector_fetching",
-            symbol=symbol,
-            interval=interval,
-            from_ms=warmup_start,
-        )
-
-        klines = await fetch_all_klines(symbol, interval, warmup_start, now_ms)
-
-        if klines:
-            rows = compute_signals(klines)
-            # Warmup mumlarını da dahil et (SuperTrend doğruluğu için)
-            # DB upsert kullanıyor, duplicate sorun olmaz
-            count = await upsert_candles(rows, symbol, interval)
-            stats = await get_candle_stats(symbol, interval)
-            _status[key]["total_rows"] = stats["rows"]
-            _status[key]["last_update"] = _format_ts(int(time.time()))
-
-        await log.ainfo(
-            "data_collector_initial_fetch",
-            symbol=symbol,
-            rows=_status[key]["total_rows"],
-        )
+        # Sıralı başlatma kilidi — aynı anda birden fazla sembol
+        # initial fetch yapmasın (rate limit koruması)
+        await _initial_fetch_lock.acquire()
+        try:
+            await _do_initial_fetch(symbol, interval, iv_ms, key)
+        finally:
+            _initial_fetch_lock.release()
 
         # Sürekli güncelleme döngüsü
         while True:
