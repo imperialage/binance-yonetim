@@ -166,6 +166,34 @@ async def query_candles(
     return [dict(r) for r in reversed(rows)]
 
 
+async def get_raw_klines(
+    symbol: str,
+    interval: str,
+    limit: int = 2100,
+) -> list[list]:
+    """DB'den Binance kline formatında ham veri döndür (SuperTrend warmup için)."""
+    db = await get_candle_db()
+    cursor = await db.execute(
+        "SELECT open_time, open, high, low, close, volume FROM candles "
+        "WHERE symbol = ? AND interval = ? ORDER BY open_time DESC LIMIT ?",
+        [symbol, interval, limit],
+    )
+    rows = await cursor.fetchall()
+    # Binance kline format: [open_time, open, high, low, close, volume, ...]
+    result = []
+    for r in reversed(rows):
+        result.append([
+            r[0],       # open_time (ms)
+            str(r[1]),  # open
+            str(r[2]),  # high
+            str(r[3]),  # low
+            str(r[4]),  # close
+            str(r[5]),  # volume
+            0, "0", "0", "0", "0", 0,  # padding to match Binance format
+        ])
+    return result
+
+
 async def get_candle_stats(symbol: str, interval: str) -> dict[str, Any]:
     """Mum verisi istatistikleri."""
     db = await get_candle_db()

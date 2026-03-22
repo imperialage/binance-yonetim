@@ -392,17 +392,36 @@ async def _collection_loop(symbol: str, interval: str):
             now_ms = int(time.time() * 1000)
             current_candle_start = (now_ms // iv_ms) * iv_ms
             next_candle_close = current_candle_start + iv_ms
-            wait_sec = max(5, (next_candle_close - now_ms) / 1000 + 3)  # +3sn buffer
+            wait_sec = max(5, (next_candle_close - now_ms) / 1000 + 2)  # +2sn buffer
 
             await asyncio.sleep(wait_sec)
 
             try:
-                # Son 2100 mumu çek (warmup + yeni veriler)
-                fetch_start = int(time.time() * 1000) - (2100 * iv_ms)
-                klines = await fetch_all_klines(symbol, interval, fetch_start)
+                # Hızlı güncelleme: Binance'tan son 10 mumu çek
+                # SuperTrend hesabı için DB'deki warmup verisini kullan
+                fetch_start = int(time.time() * 1000) - (10 * iv_ms)
+                new_klines = await fetch_all_klines(symbol, interval, fetch_start)
 
-                if klines:
-                    rows = compute_signals(klines)
+                if new_klines:
+                    # DB'den warmup mumlarını al + yeni mumları birleştir
+                    from app.modules.candle_store import get_raw_klines
+                    db_klines = await get_raw_klines(symbol, interval, limit=2100)
+                    # Merge: DB klines + new klines (dedupe by open_time)
+                    seen_times = set()
+                    merged = []
+                    for k in db_klines:
+                        t = int(k[0])
+                        if t not in seen_times:
+                            seen_times.add(t)
+                            merged.append(k)
+                    for k in new_klines:
+                        t = int(k[0])
+                        if t not in seen_times:
+                            seen_times.add(t)
+                            merged.append(k)
+                    merged.sort(key=lambda k: int(k[0]))
+
+                    rows = compute_signals(merged)
                     added = await upsert_candles(rows, symbol, interval)
                     stats = await get_candle_stats(symbol, interval)
                     _status[key]["total_rows"] = stats["rows"]
