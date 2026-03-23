@@ -332,6 +332,34 @@ def _find_latest_signal(rows: list[dict]) -> dict | None:
     return None
 
 
+def _is_signal_confirmed(rows: list[dict], signal_idx: int) -> bool:
+    """Sinyalin gerçek olduğunu doğrula — sahte sinyal koruması.
+
+    Kontroller:
+    1. Sinyal mumu ile önceki mumun yönleri farklı olmalı
+       (gerçek bir yön değişimi olduğunu teyit eder)
+    2. Önceki yönde en az 2 mum olmalı
+       (tek mumluk gürültüden kaynaklanan sahte sinyalleri filtreler)
+    """
+    if signal_idx < 2 or signal_idx >= len(rows):
+        return False
+
+    signal_row = rows[signal_idx]
+    prev_row = rows[signal_idx - 1]
+    prev2_row = rows[signal_idx - 2]
+
+    # Yön değişimi gerçekten var mı?
+    if signal_row.get("direction") == prev_row.get("direction"):
+        return False  # Yön aynı — hesaplama hatası
+
+    # Önceki yön en az 2 mum boyunca tutarlı mıydı?
+    # (prev ve prev2 aynı yönde olmalı — kısa gürültü değil gerçek trend)
+    if prev_row.get("direction") != prev2_row.get("direction"):
+        return False  # Önceki yön zaten kararsızdı — güvenilmez sinyal
+
+    return True
+
+
 # ── Initial fetch (sıralı — rate limit koruması) ──
 
 
@@ -342,11 +370,11 @@ async def _do_initial_fetch(
     last_ms = await get_last_open_time(symbol, interval)
 
     if last_ms is None:
-        # DB boş → 2 yıl geriden başla
-        last_ms = int(time.time() * 1000) - (730 * 86400 * 1000)
+        # DB boş → 1 hafta geriden başla (5m = ~2016 mum, warmup için yeterli)
+        last_ms = int(time.time() * 1000) - (7 * 86400 * 1000)
 
-    # SuperTrend warmup için 2000 mum öncesinden çekmeliyiz
-    warmup_start = last_ms - (2000 * iv_ms)
+    # SuperTrend warmup: en az 200 mum öncesinden başla (ATR + K-Means için)
+    warmup_start = last_ms - (200 * iv_ms)
     now_ms = int(time.time() * 1000)
 
     await log.ainfo(
@@ -450,48 +478,58 @@ async def _collection_loop(symbol: str, interval: str):
                     )
 
                     # ── Otomatik sinyal tespiti ──
-                    # Şu an oluşan (kapanmamış) mumu hariç tut —
-                    # sadece kapanmış mumlardan sinyal al
+                    # Sadece kapanmış mumlardan sinyal al
                     now_ms = int(time.time() * 1000)
                     current_candle_open = (now_ms // iv_ms) * iv_ms
-                    closed_rows = [r for r in rows if r["open_time"] < current_candle_open]
 
-                    latest_signal = _find_latest_signal(closed_rows)
-                    if latest_signal is not None:
-                        sig_time = latest_signal["open_time"]
+                    # Son kapanan mumda yön değişimi var mı kontrol et
+                    # (tüm geçmişte sinyal aramak yerine sadece son muma bak)
+                    last_closed_idx = None
+                    for i in range(len(rows) - 1, -1, -1):
+                        if rows[i]["open_time"] < current_candle_open:
+                            last_closed_idx = i
+                            break
+
+                    if (
+                        last_closed_idx is not None
+                        and rows[last_closed_idx].get("signal") in ("BUY", "SELL")
+                    ):
+                        signal_row = rows[last_closed_idx]
+                        sig_time = signal_row["open_time"]
                         prev_time = _last_signal_time.get(key, 0)
 
                         if sig_time > prev_time:
-                            _last_signal_time[key] = sig_time
-                            # Son 3 interval içinde oluşan sinyalleri işle
-                            age_ms = now_ms - sig_time
-                            if age_ms < iv_ms * 3:
-                                try:
-                                    await _process_auto_signal(symbol, latest_signal, interval)
-                                except Exception as sig_err:
-                                    await log.aerror(
-                                        "auto_signal_processing_error",
+                            # Sahte sinyal kontrolü — yön değişimi teyit
+                            confirmed = _is_signal_confirmed(rows, last_closed_idx)
+
+                            if confirmed:
+                                _last_signal_time[key] = sig_time
+                                age_ms = now_ms - sig_time
+                                if age_ms < iv_ms * 3:
+                                    try:
+                                        await _process_auto_signal(symbol, signal_row, interval)
+                                    except Exception as sig_err:
+                                        await log.aerror(
+                                            "auto_signal_processing_error",
+                                            symbol=symbol,
+                                            error=str(sig_err),
+                                        )
+                                else:
+                                    await log.ainfo(
+                                        "auto_signal_skipped_old",
                                         symbol=symbol,
-                                        error=str(sig_err),
+                                        direction=signal_row["signal"],
+                                        age_ms=age_ms,
+                                        limit_ms=iv_ms * 3,
                                     )
                             else:
                                 await log.ainfo(
-                                    "auto_signal_skipped_old",
+                                    "auto_signal_unconfirmed",
                                     symbol=symbol,
-                                    direction=latest_signal["signal"],
-                                    age_ms=age_ms,
-                                    limit_ms=iv_ms * 3,
-                                )
-                        else:
-                            # Zaten işlenmiş sinyal — debug log
-                            if sig_time == prev_time:
-                                pass  # Aynı sinyal, normal
-                            else:
-                                await log.awarning(
-                                    "auto_signal_time_mismatch",
-                                    symbol=symbol,
-                                    sig_time=sig_time,
-                                    prev_time=prev_time,
+                                    direction=signal_row["signal"],
+                                    price=signal_row["close"],
+                                    band=signal_row["cluster"],
+                                    reason="direction not confirmed by next candle",
                                 )
 
             except Exception as e:
