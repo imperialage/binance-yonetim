@@ -11,47 +11,52 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # ── Per-symbol trading config ──────────────────────────────
 # Filtre parametreleri + TP/SL + izin verilen yönler
 SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
-    "ETHUSDT": {
-        "bad_hours": {7, 8, 10, 11, 12},
-        "allowed_directions": {"SELL"},          # BUY zararda
-        "tp_pct": 0.005,   # %0.5
-        "sl_pct": 0.015,   # %1.5
-        "weight": 0.050,   # EV-based capital allocation
-    },
     "BTCUSDT": {
-        "bad_hours": {7, 8, 9, 10, 11, 12},
+        "bad_hours": {4, 19, 20},
         "allowed_directions": {"SELL", "BUY"},
-        "tp_pct": 0.007,   # %0.7
-        "sl_pct": 0.020,   # %2.0
-        "weight": 0.093,
-    },
-    "DOGEUSDT": {
-        "bad_hours": {2, 7, 10, 12, 14},
-        "allowed_directions": {"SELL", "BUY"},
-        "tp_pct": 0.007,   # %0.7
-        "sl_pct": 0.025,   # %2.5
-        "weight": 0.205,
-    },
-    "SOLUSDT": {
-        "bad_hours": {0, 7, 8, 9, 13},
-        "allowed_directions": {"SELL", "BUY"},
-        "tp_pct": 0.010,   # %1.0
-        "sl_pct": 0.025,   # %2.5
-        "weight": 0.223,
+        "band_filter": "LOW_ONLY",
+        "tp_pct": 0.023,   # %2.3
+        "sl_pct": 0.022,   # %2.2
+        "weight": 0.27,    # $370 → ~$100
     },
     "XRPUSDT": {
-        "bad_hours": {5, 7, 8, 9, 13},
-        "allowed_directions": {"SELL", "BUY"},
-        "tp_pct": 0.010,   # %1.0
-        "sl_pct": 0.025,   # %2.5
-        "weight": 0.213,
+        "bad_hours": set(),
+        "allowed_directions": {"SELL"},
+        "vol_min": 2.0,
+        "tp_pct": 0.022,   # %2.2
+        "sl_pct": 0.013,   # %1.3
+        "weight": 0.18,    # $370 → ~$67
     },
-    "BNBUSDT": {
-        "bad_hours": {0, 7, 10, 13, 23},
-        "allowed_directions": {"SELL", "BUY"},
-        "tp_pct": 0.007,   # %0.7
+    "AVAXUSDT": {
+        "bad_hours": set(),
+        "allowed_directions": {"SELL"},
+        "vol_min": 1.5,
+        "tp_pct": 0.016,   # %1.6
         "sl_pct": 0.025,   # %2.5
-        "weight": 0.216,
+        "weight": 0.16,    # $370 → ~$59
+    },
+    "DOGEUSDT": {
+        "bad_hours": {1, 3, 7, 10, 17},
+        "allowed_directions": {"SELL"},
+        "tp_pct": 0.024,   # %2.4
+        "sl_pct": 0.015,   # %1.5
+        "weight": 0.16,    # $370 → ~$59
+    },
+    "ETHUSDT": {
+        "bad_hours": {3, 4, 17, 21, 23},
+        "allowed_directions": {"SELL"},
+        "band_filter": "MID_ONLY",
+        "tp_pct": 0.015,   # %1.5
+        "sl_pct": 0.024,   # %2.4
+        "weight": 0.13,    # $370 → ~$48
+    },
+    "SOLUSDT": {
+        "bad_hours": {0, 3, 5, 13, 21},
+        "allowed_directions": {"SELL", "BUY"},
+        "band_filter": "HIGH_MID",
+        "tp_pct": 0.018,   # %1.8
+        "sl_pct": 0.013,   # %1.3
+        "weight": 0.10,    # $370 → ~$37
     },
 }
 
@@ -59,6 +64,8 @@ SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
 _DEFAULT_SYMBOL_CONFIG: dict[str, Any] = {
     "bad_hours": {7, 8, 10, 11, 12},
     "allowed_directions": {"BUY", "SELL"},
+    "vol_min": None,
+    "band_filter": None,
     "tp_pct": 0.005,
     "sl_pct": 0.015,
     "weight": 0.10,
@@ -100,7 +107,7 @@ class Settings(BaseSettings):
     rate_limit_max_events: int = 30
 
     # ── Data Collector ─────────────────────────────
-    collector_symbols: str = "ETHUSDT,BTCUSDT,SOLUSDT,BNBUSDT,XRPUSDT,DOGEUSDT"
+    collector_symbols: str = "XRPUSDT,BTCUSDT,AVAXUSDT,DOGEUSDT,ETHUSDT,SOLUSDT"
     collector_interval: str = "5m"
 
     # ── Binance Futures Trading ─────────────────────
@@ -111,7 +118,7 @@ class Settings(BaseSettings):
     stop_loss_pct: float = 0.015      # 1.5% stop-loss (grid search optimal)
     take_profit_pct: float = 0.005    # 0.5% take-profit (grid search optimal)
     binance_proxy_url: str = ""       # SOCKS5 proxy for static IP
-    trading_symbols: str = "ETHUSDT,BTCUSDT,DOGEUSDT,SOLUSDT,XRPUSDT,BNBUSDT"  # Comma-separated whitelist
+    trading_symbols: str = "XRPUSDT,BTCUSDT,AVAXUSDT,DOGEUSDT,ETHUSDT,SOLUSDT"  # Comma-separated whitelist
 
     # Per-timeframe strategy overrides
     trading_timeframes: str = "5m"      # Active TFs: "5m" or "1m" or "1m,5m"

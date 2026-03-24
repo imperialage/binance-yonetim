@@ -1,9 +1,10 @@
 """Data-driven SuperTrend signal filter engine.
 
-Filters based on analysis of 212K candles / 5249 signals:
-- LOW band signals: 26.3% hit rate (worst) → reject
-- UTC 07-08, 10-12 hours: worst performing → reject
-- vol_ratio < 0.5 (20-candle window): 27.5% hit rate → reject
+Per-symbol filters:
+- Direction: allowed_directions whitelist
+- Hour: bad_hours set → reject
+- Band: band_filter per-symbol (LOW_ONLY, MID_ONLY, HIGH_MID) → reject
+- Volume: vol_min per-symbol (fallback VOL_RATIO_MIN=0.5) → reject
 - Funding rate extremes: contrarian crowd risk → reject
 - Historical stats: direction+band+hour success_rate < 0.55 → reject
 """
@@ -60,11 +61,27 @@ def filter_hour(signal_time: datetime, bad_hours: set[int] | None = None) -> Fil
     return FilterResult(True, "Hour OK", "hour")
 
 
-def filter_band(band: str) -> FilterResult:
-    """band == LOW → reject (26.3% hit rate vs HIGH 43.5%)."""
-    if band.upper() == "LOW":
-        return FilterResult(False, "LOW band — 26.3% hit rate", "band")
-    return FilterResult(True, f"Band {band} OK", "band")
+def filter_band(band: str, band_filter: str | None = None) -> FilterResult:
+    """Per-symbol band filter.
+
+    band_filter values:
+    - None: all bands pass
+    - 'LOW_ONLY': only LOW passes
+    - 'MID_ONLY': only MID passes
+    - 'HIGH_MID': only HIGH and MID pass (LOW rejected)
+    """
+    if band_filter is None:
+        return FilterResult(True, f"Band {band} OK (no filter)", "band")
+
+    b = band.upper()
+    if band_filter == "LOW_ONLY" and b != "LOW":
+        return FilterResult(False, f"Band {b} rejected — only LOW allowed", "band")
+    if band_filter == "MID_ONLY" and b != "MID":
+        return FilterResult(False, f"Band {b} rejected — only MID allowed", "band")
+    if band_filter == "HIGH_MID" and b not in ("HIGH", "MID"):
+        return FilterResult(False, f"Band {b} rejected — only HIGH/MID allowed", "band")
+
+    return FilterResult(True, f"Band {b} OK ({band_filter})", "band")
 
 
 async def filter_volume(symbol: str, interval: str = "5m") -> FilterResult:
@@ -185,13 +202,13 @@ async def run_filters(
     if not r.passed:
         return False, results, vol_ratio
 
-    # 2. Band filter
-    r = filter_band(band)
+    # 2. Band filter (per-symbol band_filter config)
+    r = filter_band(band, band_filter=sym_cfg.get("band_filter"))
     results.append(r.to_dict())
     if not r.passed:
         return False, results, vol_ratio
 
-    # 3. Volume filter (also captures vol_ratio for logging)
+    # 3. Volume filter (captures vol_ratio + per-symbol vol_min check)
     candles = await query_candles(symbol, "5m", limit=VOL_MA_WINDOW + 1)
     if len(candles) >= VOL_MA_WINDOW + 1:
         current_vol = candles[-1]["volume"]
@@ -200,10 +217,20 @@ async def run_filters(
         if vol_ma > 0:
             vol_ratio = round(current_vol / vol_ma, 4)
 
-    r = await filter_volume(symbol)
-    results.append(r.to_dict())
-    if not r.passed:
-        return False, results, vol_ratio
+    # Per-symbol vol_min overrides global VOL_RATIO_MIN
+    vol_min = sym_cfg.get("vol_min")
+    if vol_min is not None and vol_ratio is not None:
+        if vol_ratio < vol_min:
+            r = FilterResult(False, f"Low volume: vol_ratio={vol_ratio:.2f} < vol_min={vol_min}", "volume")
+            results.append(r.to_dict())
+            return False, results, vol_ratio
+        r = FilterResult(True, f"Volume OK: vol_ratio={vol_ratio:.2f} >= vol_min={vol_min}", "volume")
+        results.append(r.to_dict())
+    else:
+        r = await filter_volume(symbol)
+        results.append(r.to_dict())
+        if not r.passed:
+            return False, results, vol_ratio
 
     # 4. Funding rate filter
     r = await filter_funding(symbol, direction)
