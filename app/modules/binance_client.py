@@ -146,34 +146,32 @@ async def get_usdt_balance() -> float:
 
 
 async def cancel_all_open_orders(symbol: str) -> dict:
-    """Cancel all open orders (regular + algo/conditional) for a symbol.
+    """Cancel all open orders for a symbol (STOP_MARKET, TAKE_PROFIT_MARKET dahil).
 
-    3 asamali silme:
-    1. DELETE /fapi/v1/allOpenOrders — tum regular emirleri toplu sil
-    2. GET /fapi/v1/openOrders → tek tek sil (1. adim kacirdiysa)
-    3. GET /fapi/v1/algoOrder/openOrders → conditional (TP/SL) emirleri sil
+    2 asamali:
+    1. DELETE /fapi/v1/allOpenOrders — toplu silme
+    2. GET /fapi/v1/openOrders → kalan varsa tek tek sil
     """
     client = await get_client()
-    cancelled_regular = 0
+    cancelled_bulk = 0
     cancelled_individual = 0
-    cancelled_algo = 0
 
-    # ── 1. Toplu regular emir silme ──
+    # ── 1. Toplu silme ──
     try:
         params = _sign({"symbol": symbol})
         resp = await client.delete("/fapi/v1/allOpenOrders", params=params)
         _raise_for_binance(resp)
-        cancelled_regular = 1
+        cancelled_bulk = 1
     except Exception as e:
         log.warning("bulk_cancel_failed", symbol=symbol, error=str(e))
 
-    # ── 2. Kalan regular emirleri tek tek sil (STOP_MARKET, TAKE_PROFIT_MARKET dahil) ──
+    # ── 2. Kalan emirleri tek tek sil (guvenlik) ──
     try:
         params = _sign({"symbol": symbol})
         resp = await client.get("/fapi/v1/openOrders", params=params)
         _raise_for_binance(resp)
-        open_orders = resp.json()
-        for order in open_orders:
+        remaining = resp.json()
+        for order in remaining:
             oid = order.get("orderId")
             if oid:
                 try:
@@ -181,47 +179,15 @@ async def cancel_all_open_orders(symbol: str) -> dict:
                     del_resp = await client.delete("/fapi/v1/order", params=del_params)
                     del_resp.raise_for_status()
                     cancelled_individual += 1
-                    log.info("individual_order_cancelled", symbol=symbol, order_id=oid, type=order.get("type"))
+                    log.info("order_cancelled", symbol=symbol, order_id=oid, type=order.get("type"))
                 except Exception as e:
-                    log.warning("individual_order_cancel_failed", symbol=symbol, order_id=oid, error=str(e))
+                    log.warning("order_cancel_failed", symbol=symbol, order_id=oid, error=str(e))
     except Exception as e:
-        log.warning("open_orders_list_failed", symbol=symbol, error=str(e))
+        log.warning("open_orders_check_failed", symbol=symbol, error=str(e))
 
-    # ── 3. Algo (conditional) emirleri sil — TP/SL ──
-    try:
-        algo_params = _sign({})
-        algo_resp = await client.get("/fapi/v1/algoOrder/openOrders", params=algo_params)
-        algo_resp.raise_for_status()
-        algo_data = algo_resp.json()
-        orders_list = algo_data.get("orders", []) if isinstance(algo_data, dict) else []
-
-        for order in orders_list:
-            order_symbol = order.get("symbol", "")
-            if order_symbol != symbol:
-                continue
-            algo_id = order.get("algoId")
-            if algo_id:
-                try:
-                    del_params = _sign({"algoId": int(algo_id)})
-                    del_resp = await client.delete("/fapi/v1/algoOrder", params=del_params)
-                    del_resp.raise_for_status()
-                    cancelled_algo += 1
-                    log.info("algo_order_cancelled", symbol=symbol, algo_id=algo_id, type=order.get("type"))
-                except Exception as e:
-                    log.warning("algo_order_cancel_failed", symbol=symbol, algo_id=algo_id, error=str(e))
-    except Exception as e:
-        log.warning("algo_orders_list_failed", symbol=symbol, error=str(e))
-
-    total = cancelled_regular + cancelled_individual + cancelled_algo
-    log.info(
-        "all_orders_cancelled",
-        symbol=symbol,
-        regular=cancelled_regular,
-        individual=cancelled_individual,
-        algo=cancelled_algo,
-        total=total,
-    )
-    return {"regular": cancelled_regular, "individual": cancelled_individual, "algo": cancelled_algo, "total": total}
+    total = cancelled_bulk + cancelled_individual
+    log.info("all_orders_cancelled", symbol=symbol, bulk=cancelled_bulk, individual=cancelled_individual, total=total)
+    return {"bulk": cancelled_bulk, "individual": cancelled_individual, "total": total}
 
 
 async def place_limit_order(
@@ -291,18 +257,20 @@ async def place_stop_market_order(
     quantity: float,
     stop_price: float,
 ) -> dict:
-    """Place a stop-market order (for stop-loss) via Algo Order API."""
+    """Place a STOP_MARKET order (for stop-loss) via regular order API.
+
+    Regular /fapi/v1/order kullanir — openOrders'da gorunur ve silinebilir.
+    """
     client = await get_client()
     params = _sign({
         "symbol": symbol,
         "side": side,
         "type": "STOP_MARKET",
-        "algoType": "CONDITIONAL",
-        "quantity": quantity,
-        "triggerPrice": stop_price,
-        "reduceOnly": "true",
+        "stopPrice": stop_price,
+        "closePosition": "true",
+        "workingType": "MARK_PRICE",
     })
-    resp = await client.post("/fapi/v1/algoOrder", params=params)
+    resp = await client.post("/fapi/v1/order", params=params)
     _raise_for_binance(resp)
     return resp.json()
 
@@ -313,18 +281,20 @@ async def place_take_profit_market_order(
     quantity: float,
     trigger_price: float,
 ) -> dict:
-    """Place a take-profit-market order via Algo Order API."""
+    """Place a TAKE_PROFIT_MARKET order via regular order API.
+
+    Regular /fapi/v1/order kullanir — openOrders'da gorunur ve silinebilir.
+    """
     client = await get_client()
     params = _sign({
         "symbol": symbol,
         "side": side,
         "type": "TAKE_PROFIT_MARKET",
-        "algoType": "CONDITIONAL",
-        "quantity": quantity,
-        "triggerPrice": trigger_price,
-        "reduceOnly": "true",
+        "stopPrice": trigger_price,
+        "closePosition": "true",
+        "workingType": "MARK_PRICE",
     })
-    resp = await client.post("/fapi/v1/algoOrder", params=params)
+    resp = await client.post("/fapi/v1/order", params=params)
     _raise_for_binance(resp)
     return resp.json()
 
