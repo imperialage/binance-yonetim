@@ -300,6 +300,13 @@ async def _execute_trade_inner(
 
     # SL sadece sl_enabled ise konur (reverse_signal acikken sl_enabled=False)
     sl_order_id = None
+    log.info(
+        "sl_decision",
+        symbol=symbol,
+        sl_enabled=sl_enabled,
+        reverse_signal=reverse_signal,
+        will_place_sl=sl_enabled,
+    )
     if sl_enabled:
         try:
             sl_result = await place_stop_market_order(symbol, exit_side, quantity, sl_price)

@@ -451,6 +451,11 @@ async def _update_binance_orders(symbol: str, cfg: dict) -> dict:
     tp_price = round_price(raw_tp, tick_size)
     sl_price = round_price(raw_sl, tick_size)
 
+    sl_enabled = cfg.get("sl_enabled", True)
+    reverse_signal = cfg.get("reverse_signal", False)
+    if reverse_signal:
+        sl_enabled = False
+
     # 1. Mevcut tüm emirleri iptal et
     await cancel_all_open_orders(symbol)
 
@@ -462,19 +467,24 @@ async def _update_binance_orders(symbol: str, cfg: dict) -> dict:
     except Exception as e:
         log.error("tp_order_update_failed", symbol=symbol, error=str(e))
 
-    # 3. Yeni SL emri
+    # 3. Yeni SL emri — sadece sl_enabled ise
     sl_result = None
-    try:
-        sl_result = await place_stop_market_order(symbol, exit_side, quantity, sl_price)
-        log.info("sl_order_updated", symbol=symbol, sl_price=sl_price)
-    except Exception as e:
-        log.error("sl_order_update_failed", symbol=symbol, error=str(e))
+    if not sl_enabled:
+        log.info("sl_order_skipped", symbol=symbol, sl_enabled=False, reverse_signal=reverse_signal)
+        sl_price = 0.0
+    else:
+        try:
+            sl_result = await place_stop_market_order(symbol, exit_side, quantity, sl_price)
+            log.info("sl_order_updated", symbol=symbol, sl_price=sl_price)
+        except Exception as e:
+            log.error("sl_order_update_failed", symbol=symbol, error=str(e))
 
     return {
         "status": "updated",
         "entry_price": entry_price,
         "tp_price": tp_price,
         "sl_price": sl_price,
+        "sl_enabled": sl_enabled,
         "tp_ok": tp_result is not None,
-        "sl_ok": sl_result is not None,
+        "sl_ok": sl_result is not None if sl_enabled else None,
     }
