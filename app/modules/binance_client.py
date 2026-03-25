@@ -145,49 +145,59 @@ async def get_usdt_balance() -> float:
     return 0.0
 
 
-async def cancel_all_open_orders(symbol: str) -> dict:
-    """Cancel all open orders for a symbol (STOP_MARKET, TAKE_PROFIT_MARKET dahil).
+# ── Algo order ID tracking (per symbol) ──
+# algoOrder/openOrders endpoint 404 verdigi icin, koyduklarimizi takip ediyoruz
+_active_algo_ids: dict[str, list[int]] = {}
 
-    2 asamali:
-    1. DELETE /fapi/v1/allOpenOrders — toplu silme
-    2. GET /fapi/v1/openOrders → kalan varsa tek tek sil
+
+def _track_algo_id(symbol: str, algo_id: int | str | None) -> None:
+    """Track an algo order ID for later cancellation."""
+    if algo_id is None:
+        return
+    aid = int(algo_id)
+    if symbol not in _active_algo_ids:
+        _active_algo_ids[symbol] = []
+    if aid not in _active_algo_ids[symbol]:
+        _active_algo_ids[symbol].append(aid)
+
+
+async def cancel_all_open_orders(symbol: str) -> dict:
+    """Cancel all open orders for a symbol.
+
+    3 asamali:
+    1. DELETE /fapi/v1/allOpenOrders — regular emirler
+    2. Tracked algo ID'leri tek tek DELETE /fapi/v1/algoOrder ile sil
+    3. Track listesini temizle
     """
     client = await get_client()
-    cancelled_bulk = 0
-    cancelled_individual = 0
+    cancelled_regular = 0
+    cancelled_algo = 0
 
-    # ── 1. Toplu silme ──
+    # ── 1. Regular orders toplu sil ──
     try:
         params = _sign({"symbol": symbol})
         resp = await client.delete("/fapi/v1/allOpenOrders", params=params)
         _raise_for_binance(resp)
-        cancelled_bulk = 1
+        cancelled_regular = 1
     except Exception as e:
         log.warning("bulk_cancel_failed", symbol=symbol, error=str(e))
 
-    # ── 2. Kalan emirleri tek tek sil (guvenlik) ──
-    try:
-        params = _sign({"symbol": symbol})
-        resp = await client.get("/fapi/v1/openOrders", params=params)
-        _raise_for_binance(resp)
-        remaining = resp.json()
-        for order in remaining:
-            oid = order.get("orderId")
-            if oid:
-                try:
-                    del_params = _sign({"symbol": symbol, "orderId": int(oid)})
-                    del_resp = await client.delete("/fapi/v1/order", params=del_params)
-                    del_resp.raise_for_status()
-                    cancelled_individual += 1
-                    log.info("order_cancelled", symbol=symbol, order_id=oid, type=order.get("type"))
-                except Exception as e:
-                    log.warning("order_cancel_failed", symbol=symbol, order_id=oid, error=str(e))
-    except Exception as e:
-        log.warning("open_orders_check_failed", symbol=symbol, error=str(e))
+    # ── 2. Tracked algo emirlerini sil ──
+    algo_ids = _active_algo_ids.pop(symbol, [])
+    for aid in algo_ids:
+        try:
+            del_params = _sign({"algoId": aid})
+            del_resp = await client.delete("/fapi/v1/algoOrder", params=del_params)
+            del_resp.raise_for_status()
+            cancelled_algo += 1
+            log.info("algo_order_cancelled", symbol=symbol, algo_id=aid)
+        except Exception as e:
+            # Zaten tetiklenmis veya iptal edilmis olabilir — sorun degil
+            log.info("algo_cancel_skip", symbol=symbol, algo_id=aid, error=str(e))
 
-    total = cancelled_bulk + cancelled_individual
-    log.info("all_orders_cancelled", symbol=symbol, bulk=cancelled_bulk, individual=cancelled_individual, total=total)
-    return {"bulk": cancelled_bulk, "individual": cancelled_individual, "total": total}
+    total = cancelled_regular + cancelled_algo
+    log.info("all_orders_cancelled", symbol=symbol, regular=cancelled_regular, algo=cancelled_algo, total=total)
+    return {"regular": cancelled_regular, "algo": cancelled_algo, "total": total}
 
 
 async def place_limit_order(
@@ -257,22 +267,23 @@ async def place_stop_market_order(
     quantity: float,
     stop_price: float,
 ) -> dict:
-    """Place a STOP_MARKET order (for stop-loss) via regular order API.
-
-    Regular /fapi/v1/order kullanir — openOrders'da gorunur ve silinebilir.
-    """
+    """Place a STOP_MARKET order (for stop-loss) via Algo Order API."""
     client = await get_client()
     params = _sign({
         "symbol": symbol,
         "side": side,
         "type": "STOP_MARKET",
-        "stopPrice": stop_price,
-        "closePosition": "true",
-        "workingType": "MARK_PRICE",
+        "algoType": "CONDITIONAL",
+        "quantity": quantity,
+        "triggerPrice": stop_price,
+        "reduceOnly": "true",
     })
-    resp = await client.post("/fapi/v1/order", params=params)
+    resp = await client.post("/fapi/v1/algoOrder", params=params)
     _raise_for_binance(resp)
-    return resp.json()
+    result = resp.json()
+    _track_algo_id(symbol, result.get("algoId"))
+    log.info("sl_order_placed", symbol=symbol, side=side, trigger=stop_price, algo_id=result.get("algoId"))
+    return result
 
 
 async def place_take_profit_market_order(
@@ -281,22 +292,23 @@ async def place_take_profit_market_order(
     quantity: float,
     trigger_price: float,
 ) -> dict:
-    """Place a TAKE_PROFIT_MARKET order via regular order API.
-
-    Regular /fapi/v1/order kullanir — openOrders'da gorunur ve silinebilir.
-    """
+    """Place a TAKE_PROFIT_MARKET order via Algo Order API."""
     client = await get_client()
     params = _sign({
         "symbol": symbol,
         "side": side,
         "type": "TAKE_PROFIT_MARKET",
-        "stopPrice": trigger_price,
-        "closePosition": "true",
-        "workingType": "MARK_PRICE",
+        "algoType": "CONDITIONAL",
+        "quantity": quantity,
+        "triggerPrice": trigger_price,
+        "reduceOnly": "true",
     })
-    resp = await client.post("/fapi/v1/order", params=params)
+    resp = await client.post("/fapi/v1/algoOrder", params=params)
     _raise_for_binance(resp)
-    return resp.json()
+    result = resp.json()
+    _track_algo_id(symbol, result.get("algoId"))
+    log.info("tp_order_placed", symbol=symbol, side=side, trigger=trigger_price, algo_id=result.get("algoId"))
+    return result
 
 
 async def get_income_history(

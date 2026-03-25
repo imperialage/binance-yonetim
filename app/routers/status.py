@@ -583,7 +583,7 @@ async def debug_fix_tpsl(symbol: str) -> dict:
         cancel_result = await cancel_all_open_orders(sym)
         result["cancelled"] = cancel_result
 
-        # Place TP
+        # Place TP (algoOrder API)
         try:
             tp_resp = await place_take_profit_market_order(sym, exit_side, qty, tp_price)
             result["tp_order"] = tp_resp
@@ -591,8 +591,10 @@ async def debug_fix_tpsl(symbol: str) -> dict:
         except Exception as e:
             result["tp_error"] = str(e)
             result["tp_ok"] = False
+            import traceback
+            result["tp_traceback"] = traceback.format_exc()
 
-        # Place SL
+        # Place SL (algoOrder API)
         try:
             sl_resp = await place_stop_market_order(sym, exit_side, qty, sl_price)
             result["sl_order"] = sl_resp
@@ -600,6 +602,8 @@ async def debug_fix_tpsl(symbol: str) -> dict:
         except Exception as e:
             result["sl_error"] = str(e)
             result["sl_ok"] = False
+            import traceback
+            result["sl_traceback"] = traceback.format_exc()
 
         result["status"] = "done"
     except Exception as e:
