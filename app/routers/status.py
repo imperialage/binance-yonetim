@@ -524,3 +524,45 @@ async def debug_reset_directions() -> dict:
         await r.delete(key)
         deleted += 1
     return {"deleted_keys": deleted, "message": "Direction filters reset. Next signal will pass through."}
+
+
+@router.get("/debug/raw-open-orders/{symbol}")
+async def debug_raw_open_orders(symbol: str) -> dict:
+    """Raw Binance open orders debug — her turlu emri goster."""
+    from app.modules.binance_client import get_client, _sign, _raise_for_binance
+    client = await get_client()
+    sym = symbol.upper()
+    result: dict = {"symbol": sym}
+
+    # 1. Regular open orders (symbol specific)
+    try:
+        params = _sign({"symbol": sym})
+        resp = await client.get("/fapi/v1/openOrders", params=params)
+        _raise_for_binance(resp)
+        result["regular_orders"] = resp.json()
+    except Exception as e:
+        result["regular_error"] = str(e)
+
+    # 2. Algo open orders (all symbols — API might not support symbol filter)
+    try:
+        params = _sign({})
+        resp = await client.get("/fapi/v1/algoOrder/openOrders", params=params)
+        resp.raise_for_status()
+        raw = resp.json()
+        result["algo_raw_response"] = raw
+        orders = raw.get("orders", []) if isinstance(raw, dict) else raw
+        result["algo_all"] = orders
+        result["algo_for_symbol"] = [o for o in orders if o.get("symbol") == sym]
+    except Exception as e:
+        result["algo_error"] = str(e)
+
+    # 3. Algo with symbol param (test if it works)
+    try:
+        params = _sign({"symbol": sym})
+        resp = await client.get("/fapi/v1/algoOrder/openOrders", params=params)
+        resp.raise_for_status()
+        result["algo_with_symbol"] = resp.json()
+    except Exception as e:
+        result["algo_with_symbol_error"] = str(e)
+
+    return result
