@@ -199,13 +199,23 @@ async def manual_open_position(
                 detail=f"Yetersiz bakiye: {target_usdt:.2f} > {available_balance:.2f} USDT",
             )
 
-        # Get current price from position risk or mark price
+        # Get current price — try position risk first, then premiumIndex fallback
         mark_price = 0.0
         fresh_positions = await get_position_risk(symbol)
         for p in fresh_positions:
             if p.get("symbol") == symbol:
                 mark_price = float(p.get("markPrice", 0))
                 break
+        if mark_price <= 0:
+            # Fallback: premiumIndex (public endpoint, her zaman calisir)
+            try:
+                from app.modules.binance_client import get_client as _gc
+                _c = await _gc()
+                _resp = await _c.get("/fapi/v1/premiumIndex", params={"symbol": symbol})
+                _resp.raise_for_status()
+                mark_price = float(_resp.json().get("markPrice", 0))
+            except Exception:
+                pass
         if mark_price <= 0:
             raise HTTPException(status_code=400, detail="Cannot determine current price")
 
