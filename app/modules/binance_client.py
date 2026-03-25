@@ -146,22 +146,37 @@ async def get_usdt_balance() -> float:
 
 
 async def cancel_all_open_orders(symbol: str) -> dict:
-    """Cancel all open orders (regular + algo) for a symbol."""
+    """Cancel all open orders (regular + algo/conditional) for a symbol."""
     client = await get_client()
-    # Cancel regular orders
-    params = _sign({"symbol": symbol})
-    resp = await client.delete("/fapi/v1/allOpenOrders", params=params)
-    _raise_for_binance(resp)
-    result = resp.json()
-    # Cancel algo (conditional) orders — SL/TP
+    cancelled_regular = 0
+    cancelled_algo = 0
+
+    # 1. Cancel regular orders
     try:
-        algo_params = _sign({"symbol": symbol})
+        params = _sign({"symbol": symbol})
+        resp = await client.delete("/fapi/v1/allOpenOrders", params=params)
+        _raise_for_binance(resp)
+        result = resp.json()
+        cancelled_regular = 1
+    except Exception as e:
+        log.warning("regular_orders_cancel_failed", symbol=symbol, error=str(e))
+        result = {}
+
+    # 2. Cancel algo (conditional) orders — TP/SL
+    # algoOrder/openOrders sembol filtresi desteklemiyor,
+    # tum acik algo emirleri cekip symbol'e gore filtrele
+    try:
+        algo_params = _sign({})
         algo_resp = await client.get("/fapi/v1/algoOrder/openOrders", params=algo_params)
         algo_resp.raise_for_status()
         algo_data = algo_resp.json()
         orders_list = algo_data.get("orders", []) if isinstance(algo_data, dict) else []
-        cancelled_algo = 0
+
         for order in orders_list:
+            # Sadece bu sembole ait emirleri sil
+            order_symbol = order.get("symbol", "")
+            if order_symbol != symbol:
+                continue
             algo_id = order.get("algoId")
             if algo_id:
                 try:
@@ -170,12 +185,17 @@ async def cancel_all_open_orders(symbol: str) -> dict:
                     del_resp.raise_for_status()
                     cancelled_algo += 1
                 except Exception as e:
-                    log.warning("algo_order_cancel_failed", algo_id=algo_id, error=str(e))
-        if cancelled_algo > 0:
-            log.info("algo_orders_cancelled", symbol=symbol, count=cancelled_algo)
+                    log.warning("algo_order_cancel_failed", symbol=symbol, algo_id=algo_id, error=str(e))
     except Exception as e:
         log.warning("algo_orders_list_failed", symbol=symbol, error=str(e))
-    return result
+
+    log.info(
+        "all_orders_cancelled",
+        symbol=symbol,
+        regular=cancelled_regular,
+        algo=cancelled_algo,
+    )
+    return {"regular": cancelled_regular, "algo": cancelled_algo}
 
 
 async def place_limit_order(

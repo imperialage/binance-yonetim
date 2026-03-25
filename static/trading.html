@@ -507,10 +507,13 @@ tr.clickable:hover{background:#1c212888}
 
   // ── Manual close ──
   window.closePosition=function(sym){
-    if(!confirm(sym+' pozisyonunu kapatmak istediginize emin misiniz?')) return;
+    if(!confirm(sym+' pozisyonunu kapatmak istediginize emin misiniz?\nTP/SL emirleri de iptal edilecek.')) return;
     adminFetch('/manual/close',{method:'POST',body:JSON.stringify({symbol:sym})})
     .then(function(data){
-      showToast(sym+' pozisyon kapatildi: '+data.side+' '+data.qty);
+      var co=data.cancelled_orders||{};
+      var msg=sym+' pozisyon kapatildi ('+data.side+' '+data.qty+')';
+      if(co.algo>0) msg+=' — '+co.algo+' conditional emir iptal edildi';
+      showToast(msg);
       setTimeout(fetchAll,1500);
     }).catch(function(e){if(e.message!=='401')showToast('Hata: '+e.message,'error');});
   };

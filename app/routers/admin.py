@@ -112,8 +112,8 @@ async def manual_close_position(
     if pos_amt == 0:
         raise HTTPException(status_code=400, detail="No open position")
 
-    # Cancel all open SL/TP orders
-    await cancel_all_open_orders(symbol)
+    # Cancel all open SL/TP orders (regular + conditional/algo)
+    cancel_result = await cancel_all_open_orders(symbol)
 
     # Close position with market order
     close_side = "SELL" if pos_amt > 0 else "BUY"
@@ -121,13 +121,21 @@ async def manual_close_position(
     result = await place_market_order(symbol, close_side, close_qty, reduce_only=True)
 
     entry_price = float(result.get("avgPrice", 0))
-    log.info("manual_close", symbol=symbol, side=close_side, qty=close_qty, price=entry_price)
+    log.info(
+        "manual_close",
+        symbol=symbol,
+        side=close_side,
+        qty=close_qty,
+        price=entry_price,
+        cancelled_algo=cancel_result.get("algo", 0),
+    )
 
     return {
         "ok": True,
         "side": close_side,
         "qty": close_qty,
         "price": entry_price,
+        "cancelled_orders": cancel_result,
     }
 
 
