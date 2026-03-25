@@ -146,25 +146,48 @@ async def get_usdt_balance() -> float:
 
 
 async def cancel_all_open_orders(symbol: str) -> dict:
-    """Cancel all open orders (regular + algo/conditional) for a symbol."""
+    """Cancel all open orders (regular + algo/conditional) for a symbol.
+
+    3 asamali silme:
+    1. DELETE /fapi/v1/allOpenOrders — tum regular emirleri toplu sil
+    2. GET /fapi/v1/openOrders → tek tek sil (1. adim kacirdiysa)
+    3. GET /fapi/v1/algoOrder/openOrders → conditional (TP/SL) emirleri sil
+    """
     client = await get_client()
     cancelled_regular = 0
+    cancelled_individual = 0
     cancelled_algo = 0
 
-    # 1. Cancel regular orders
+    # ── 1. Toplu regular emir silme ──
     try:
         params = _sign({"symbol": symbol})
         resp = await client.delete("/fapi/v1/allOpenOrders", params=params)
         _raise_for_binance(resp)
-        result = resp.json()
         cancelled_regular = 1
     except Exception as e:
-        log.warning("regular_orders_cancel_failed", symbol=symbol, error=str(e))
-        result = {}
+        log.warning("bulk_cancel_failed", symbol=symbol, error=str(e))
 
-    # 2. Cancel algo (conditional) orders — TP/SL
-    # algoOrder/openOrders sembol filtresi desteklemiyor,
-    # tum acik algo emirleri cekip symbol'e gore filtrele
+    # ── 2. Kalan regular emirleri tek tek sil (STOP_MARKET, TAKE_PROFIT_MARKET dahil) ──
+    try:
+        params = _sign({"symbol": symbol})
+        resp = await client.get("/fapi/v1/openOrders", params=params)
+        _raise_for_binance(resp)
+        open_orders = resp.json()
+        for order in open_orders:
+            oid = order.get("orderId")
+            if oid:
+                try:
+                    del_params = _sign({"symbol": symbol, "orderId": int(oid)})
+                    del_resp = await client.delete("/fapi/v1/order", params=del_params)
+                    del_resp.raise_for_status()
+                    cancelled_individual += 1
+                    log.info("individual_order_cancelled", symbol=symbol, order_id=oid, type=order.get("type"))
+                except Exception as e:
+                    log.warning("individual_order_cancel_failed", symbol=symbol, order_id=oid, error=str(e))
+    except Exception as e:
+        log.warning("open_orders_list_failed", symbol=symbol, error=str(e))
+
+    # ── 3. Algo (conditional) emirleri sil — TP/SL ──
     try:
         algo_params = _sign({})
         algo_resp = await client.get("/fapi/v1/algoOrder/openOrders", params=algo_params)
@@ -173,7 +196,6 @@ async def cancel_all_open_orders(symbol: str) -> dict:
         orders_list = algo_data.get("orders", []) if isinstance(algo_data, dict) else []
 
         for order in orders_list:
-            # Sadece bu sembole ait emirleri sil
             order_symbol = order.get("symbol", "")
             if order_symbol != symbol:
                 continue
@@ -184,18 +206,22 @@ async def cancel_all_open_orders(symbol: str) -> dict:
                     del_resp = await client.delete("/fapi/v1/algoOrder", params=del_params)
                     del_resp.raise_for_status()
                     cancelled_algo += 1
+                    log.info("algo_order_cancelled", symbol=symbol, algo_id=algo_id, type=order.get("type"))
                 except Exception as e:
                     log.warning("algo_order_cancel_failed", symbol=symbol, algo_id=algo_id, error=str(e))
     except Exception as e:
         log.warning("algo_orders_list_failed", symbol=symbol, error=str(e))
 
+    total = cancelled_regular + cancelled_individual + cancelled_algo
     log.info(
         "all_orders_cancelled",
         symbol=symbol,
         regular=cancelled_regular,
+        individual=cancelled_individual,
         algo=cancelled_algo,
+        total=total,
     )
-    return {"regular": cancelled_regular, "algo": cancelled_algo}
+    return {"regular": cancelled_regular, "individual": cancelled_individual, "algo": cancelled_algo, "total": total}
 
 
 async def place_limit_order(
