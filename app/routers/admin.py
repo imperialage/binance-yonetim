@@ -278,10 +278,14 @@ async def manual_open_position(
             sl_tp_error = str(e)
             log.warning("manual_open_tp_failed", symbol=symbol, error=sl_tp_error)
 
-        # SL emri yerleştir (opsiyonel)
+        # SL emri yerleştir (opsiyonel — sl_enabled ve reverse_signal kontrol)
         sl_price_final = 0.0
         sl_error = None
-        if body.sl_price is not None and body.sl_price > 0:
+        sym_cfg = get_symbol_config(symbol)
+        sl_allowed = sym_cfg.get("sl_enabled", True) and not sym_cfg.get("reverse_signal", False)
+        if not sl_allowed:
+            log.info("manual_open_sl_skipped", symbol=symbol, sl_enabled=sym_cfg.get("sl_enabled"), reverse_signal=sym_cfg.get("reverse_signal"))
+        elif body.sl_price is not None and body.sl_price > 0:
             raw_sl = body.sl_price
             sl_price_final = round_price(raw_sl, tick_size)
             # SL yön doğrulaması
