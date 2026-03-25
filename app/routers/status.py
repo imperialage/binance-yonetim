@@ -556,7 +556,7 @@ async def debug_raw_open_orders(symbol: str) -> dict:
     except Exception as e:
         result["algo_error"] = str(e)
 
-    # 3. Algo with symbol param (test if it works)
+    # 3. Algo with symbol param
     try:
         params = _sign({"symbol": sym})
         resp = await client.get("/fapi/v1/algoOrder/openOrders", params=params)
@@ -564,5 +564,40 @@ async def debug_raw_open_orders(symbol: str) -> dict:
         result["algo_with_symbol"] = resp.json()
     except Exception as e:
         result["algo_with_symbol_error"] = str(e)
+
+    # 4. All open orders (no symbol filter) — catch everything
+    try:
+        params = _sign({})
+        resp = await client.get("/fapi/v1/openOrders", params=params)
+        _raise_for_binance(resp)
+        all_orders = resp.json()
+        result["all_open_orders_count"] = len(all_orders)
+        result["all_open_orders"] = all_orders
+    except Exception as e:
+        result["all_open_orders_error"] = str(e)
+
+    # 5. allOrders son 1 gun — status=NEW olan conditional emirler
+    try:
+        import time
+        start_time = int((time.time() - 86400) * 1000)
+        params = _sign({"symbol": sym, "startTime": start_time, "limit": 50})
+        resp = await client.get("/fapi/v1/allOrders", params=params)
+        _raise_for_binance(resp)
+        all_hist = resp.json()
+        active = [o for o in all_hist if o.get("status") == "NEW"]
+        result["allOrders_NEW"] = active
+        result["allOrders_total"] = len(all_hist)
+    except Exception as e:
+        result["allOrders_error"] = str(e)
+
+    # 6. openOrder conditional (fapi v2 — bazi Binance versiyonlari)
+    for endpoint in ["/fapi/v1/openOrder", "/fapi/v2/openOrders"]:
+        try:
+            params = _sign({"symbol": sym})
+            resp = await client.get(endpoint, params=params)
+            if resp.is_success:
+                result[f"test_{endpoint}"] = resp.json()
+        except Exception:
+            pass
 
     return result
