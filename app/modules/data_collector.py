@@ -47,6 +47,9 @@ _last_signal_time: dict[str, int] = {}
 # Initial fetch kilidi — bir seferde sadece 1 sembol initial fetch yapar
 _initial_fetch_lock = asyncio.Lock()
 
+# Graceful shutdown flag — True olunca döngüler sleep'ten sonra çıkar
+_shutdown_requested = False
+
 
 def _format_ts(unix_sec: int) -> str:
     """Unix timestamp → Istanbul (UTC+3) string."""
@@ -203,11 +206,12 @@ async def _process_auto_signal(symbol: str, signal_row: dict, interval: str) -> 
     open_time_ms = signal_row["open_time"]
 
     iv_ms = INTERVAL_MS.get(interval, 300_000)
-    # Sinyal zamanı = mum kapanış zamanı
-    signal_ts = (open_time_ms + iv_ms) // 1000
-    signal_dt = datetime.fromtimestamp(signal_ts, tz=timezone.utc)
-    # Log ve DB'ye UTC+3 (Istanbul) olarak kaydet — mum tarihleriyle tutarlı
-    dt_str = datetime.fromtimestamp(signal_ts, tz=_TZ_ISTANBUL).strftime("%Y-%m-%d %H:%M:%S")
+    # Mum kapanış zamanı — yaş kontrolü ve filtreler için
+    candle_close_ts = (open_time_ms + iv_ms) // 1000
+    signal_dt = datetime.fromtimestamp(candle_close_ts, tz=timezone.utc)
+    # Mum açılış zamanı — DB kaydı için (candle_store ile tutarlı, duplike önler)
+    candle_open_ts = open_time_ms // 1000
+    dt_str = datetime.fromtimestamp(candle_open_ts, tz=_TZ_ISTANBUL).strftime("%Y-%m-%d %H:%M:%S")
 
     await log.ainfo(
         "auto_signal_detected",
@@ -258,7 +262,7 @@ async def _process_auto_signal(symbol: str, signal_row: dict, interval: str) -> 
         symbol=symbol,
         direction=direction,
         price=price,
-        signal_time=signal_ts,
+        signal_time=candle_close_ts,
     )
 
     if not entry_result.passed:
@@ -308,7 +312,7 @@ async def _process_auto_signal(symbol: str, signal_row: dict, interval: str) -> 
         from app.config import get_symbol_config
         sym_cfg = get_symbol_config(symbol)
 
-        event_id = f"auto-{row_id}-{signal_ts}"
+        event_id = f"auto-{row_id}-{candle_close_ts}"
         tf = settings.trading_timeframes.split(",")[0].strip() or "5m"
         asyncio.create_task(execute_trade(
             symbol=symbol,
@@ -370,8 +374,8 @@ async def _do_initial_fetch(
     last_ms = await get_last_open_time(symbol, interval)
 
     if last_ms is None:
-        # DB boş → 1 hafta geriden başla (5m = ~2016 mum, warmup için yeterli)
-        last_ms = int(time.time() * 1000) - (7 * 86400 * 1000)
+        # DB boş → 700 gün geriden başla (filtre istatistikleri için yeterli veri)
+        last_ms = int(time.time() * 1000) - (700 * 86400 * 1000)
 
     # SuperTrend warmup: en az 200 mum öncesinden başla (ATR + K-Means için)
     warmup_start = last_ms - (200 * iv_ms)
@@ -429,14 +433,21 @@ async def _collection_loop(symbol: str, interval: str):
             _initial_fetch_lock.release()
 
         # Sürekli güncelleme döngüsü
-        while True:
+        while not _shutdown_requested:
             # Bir sonraki mum kapanışını bekle
             now_ms = int(time.time() * 1000)
             current_candle_start = (now_ms // iv_ms) * iv_ms
             next_candle_close = current_candle_start + iv_ms
             wait_sec = max(5, (next_candle_close - now_ms) / 1000 + 2)  # +2sn buffer
 
-            await asyncio.sleep(wait_sec)
+            # Shutdown sırasında uzun sleep yerine kısa aralıklarla kontrol et
+            remaining = wait_sec
+            while remaining > 0 and not _shutdown_requested:
+                await asyncio.sleep(min(remaining, 2.0))
+                remaining -= 2.0
+
+            if _shutdown_requested:
+                break
 
             try:
                 # Hızlı güncelleme: Binance'tan son 10 mumu çek
@@ -477,60 +488,9 @@ async def _collection_loop(symbol: str, interval: str):
                         total=stats["rows"],
                     )
 
-                    # ── Otomatik sinyal tespiti ──
-                    # Sadece kapanmış mumlardan sinyal al
-                    now_ms = int(time.time() * 1000)
-                    current_candle_open = (now_ms // iv_ms) * iv_ms
-
-                    # Son kapanan mumda yön değişimi var mı kontrol et
-                    # (tüm geçmişte sinyal aramak yerine sadece son muma bak)
-                    last_closed_idx = None
-                    for i in range(len(rows) - 1, -1, -1):
-                        if rows[i]["open_time"] < current_candle_open:
-                            last_closed_idx = i
-                            break
-
-                    if (
-                        last_closed_idx is not None
-                        and rows[last_closed_idx].get("signal") in ("BUY", "SELL")
-                    ):
-                        signal_row = rows[last_closed_idx]
-                        sig_time = signal_row["open_time"]
-                        prev_time = _last_signal_time.get(key, 0)
-
-                        if sig_time > prev_time:
-                            # Sahte sinyal kontrolü — yön değişimi teyit
-                            confirmed = _is_signal_confirmed(rows, last_closed_idx)
-
-                            if confirmed:
-                                _last_signal_time[key] = sig_time
-                                age_ms = now_ms - sig_time
-                                if age_ms < iv_ms * 3:
-                                    try:
-                                        await _process_auto_signal(symbol, signal_row, interval)
-                                    except Exception as sig_err:
-                                        await log.aerror(
-                                            "auto_signal_processing_error",
-                                            symbol=symbol,
-                                            error=str(sig_err),
-                                        )
-                                else:
-                                    await log.ainfo(
-                                        "auto_signal_skipped_old",
-                                        symbol=symbol,
-                                        direction=signal_row["signal"],
-                                        age_ms=age_ms,
-                                        limit_ms=iv_ms * 3,
-                                    )
-                            else:
-                                await log.ainfo(
-                                    "auto_signal_unconfirmed",
-                                    symbol=symbol,
-                                    direction=signal_row["signal"],
-                                    price=signal_row["close"],
-                                    band=signal_row["cluster"],
-                                    reason="direction not confirmed by next candle",
-                                )
+                    # ── Otomatik sinyal tespiti DEVRE DISI ──
+                    # Sinyaller artik sadece TradingView webhook uzerinden gelir.
+                    # data_collector sadece mum verisi toplar (candle_store).
 
             except Exception as e:
                 _status[key]["error"] = str(e)
@@ -543,12 +503,15 @@ async def _collection_loop(symbol: str, interval: str):
 
     except asyncio.CancelledError:
         _status[key]["running"] = False
-        await log.ainfo("data_collector_stopped", symbol=symbol, interval=interval)
+        await log.ainfo("data_collector_stopped", symbol=symbol, interval=interval, graceful=_shutdown_requested)
+        return  # Graceful veya cancel — her iki durumda da temiz çık
     except Exception as e:
         _status[key]["error"] = str(e)
         await log.aerror(
             "data_collector_crashed", symbol=symbol, error=str(e)
         )
+        if _shutdown_requested:
+            return  # Shutdown sırasında crash recovery yapma
         # Crash recovery: 60sn bekle ve yeniden başlat
         await log.ainfo("data_collector_restarting", symbol=symbol, wait=60)
         await asyncio.sleep(60)
@@ -619,12 +582,33 @@ def start_default_collections() -> list[dict]:
 
 
 async def stop_all_collections():
-    """Tüm koleksiyonları durdur (shutdown için)."""
-    for key, task in list(_tasks.items()):
-        task.cancel()
-    for key, task in list(_tasks.items()):
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):
-            pass
+    """Tüm koleksiyonları graceful durdur (shutdown için).
+
+    Önce _shutdown_requested flag'ini set eder → döngüler aktif işlemi
+    bitirir ve temiz çıkar. 15sn içinde çıkmazlarsa cancel eder.
+    """
+    global _shutdown_requested
+    _shutdown_requested = True
+    await log.ainfo("data_collector_shutdown_requested", active_tasks=len(_tasks))
+
+    if not _tasks:
+        return
+
+    # Graceful: task'ların kendi döngülerini bitirmesini bekle (max 15sn)
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*_tasks.values(), return_exceptions=True),
+            timeout=15.0,
+        )
+        await log.ainfo("data_collector_graceful_shutdown_ok")
+    except asyncio.TimeoutError:
+        # Süre doldu — zorla cancel et
+        await log.ainfo("data_collector_graceful_timeout", msg="force cancelling")
+        for task in _tasks.values():
+            task.cancel()
+        for task in _tasks.values():
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
     _tasks.clear()

@@ -98,28 +98,9 @@ async def tv_webhook(request: Request) -> WebhookResponse | JSONResponse:
     if await check_rate_limit(r, event.symbol):
         return WebhookResponse(status="rate_limited", event_id=event.event_id, message="rate limit exceeded")
 
-    # ── Trade execution (fire-and-forget) ────────────
-    # IMPORTANT: Trade decision is based on actual Binance position state,
-    # NOT on the direction filter. This runs BEFORE direction filter so
-    # SL/TP-closed positions can be re-opened by same-direction signals.
+    # ── Trade execution DEVRE DISI ────────────────────
+    # Islemler artik sadece /st-webhook uzerinden tetiklenir.
     trade_dispatched = False
-    if event.signal in (SignalType.BUY, SignalType.SELL):
-        # Symbol whitelist check
-        allowed = settings.trading_symbols
-        whitelist = {s.strip().upper() for s in allowed.split(",") if s.strip()} if allowed else set()
-        if whitelist and event.symbol not in whitelist:
-            log.info("trade_symbol_blocked", symbol=event.symbol, whitelist=list(whitelist))
-        elif not settings.is_tf_enabled(event.tf):
-            log.info("trade_tf_blocked", tf=event.tf, symbol=event.symbol)
-        else:
-            asyncio.create_task(execute_trade(
-                symbol=event.symbol,
-                signal=event.signal.value,
-                price=event.price,
-                event_id=event.event_id,
-                tf=event.tf,
-            ))
-            trade_dispatched = True
 
     # ── Direction change filter ───────────────────────
     if await is_same_direction(r, event.symbol, event.indicator, event.tf, event.signal):

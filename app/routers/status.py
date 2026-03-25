@@ -405,50 +405,16 @@ async def debug_income() -> dict:
 
 @router.get("/api/st-signals")
 async def api_st_signals(limit: int = 80) -> dict:
-    """Get recent SuperTrend signals across all symbols.
-
-    Combines candle_store (computed signals) with st_signal_logger (filter decisions).
-    """
-    from app.config import SYMBOL_CONFIGS
-    from app.modules.candle_store import query_candles
+    """Get recent SuperTrend signals — only TradingView webhook signals (entered=1)."""
     from app.modules.st_signal_logger import query_st_signals
 
-    all_signals: list[dict] = []
-
-    # 1. Try st_signal_logger first (has entered/filtered details)
+    signals: list[dict] = []
     try:
-        logged = await query_st_signals(limit=limit)
-        if logged:
-            all_signals = logged
+        signals = await query_st_signals(entered=True, limit=limit)
     except Exception:
         pass
 
-    # 2. If empty, fall back to candle_store signals
-    if not all_signals:
-        try:
-            for sym in SYMBOL_CONFIGS:
-                candles = await query_candles(sym, "5m", limit=30, signals_only=True)
-                for c in candles:
-                    all_signals.append({
-                        "datetime": c.get("date", ""),
-                        "symbol": sym,
-                        "direction": c.get("signal", ""),
-                        "band": c.get("cluster", ""),
-                        "price": c.get("close", 0),
-                        "vol_ratio": None,
-                        "entered": None,  # unknown — not yet processed
-                        "skip_filter": None,
-                        "skip_reason": None,
-                        "source": "candle_store",
-                    })
-        except Exception:
-            pass
-
-    # Sort by datetime descending
-    all_signals.sort(key=lambda s: s.get("datetime", "") or "", reverse=True)
-    all_signals = all_signals[:limit]
-
-    return {"signals": all_signals, "count": len(all_signals)}
+    return {"signals": signals, "count": len(signals)}
 
 
 @router.get("/debug/orders")
@@ -498,6 +464,54 @@ async def debug_orders() -> dict:
         return {"orders": orders, "count": len(orders)}
     except Exception as e:
         return {"error": str(e)}
+
+
+@router.get("/debug/all-open-orders")
+async def debug_all_open_orders() -> dict:
+    """Get ALL open orders (regular + algo) across all trading symbols."""
+    from app.modules.binance_client import get_client, _sign, _raise_for_binance
+    from app.config import SYMBOL_CONFIGS
+
+    client = await get_client()
+    result: dict = {"regular": [], "algo": [], "positions": []}
+
+    try:
+        # 1. All regular open orders (no symbol filter)
+        params = _sign({})
+        resp = await client.get("/fapi/v1/openOrders", params=params)
+        _raise_for_binance(resp)
+        result["regular"] = resp.json()
+    except Exception as e:
+        result["regular_error"] = str(e)
+
+    # 2. Algo orders per symbol
+    for sym in SYMBOL_CONFIGS:
+        try:
+            params = _sign({"symbol": sym})
+            resp = await client.get("/fapi/v1/algoOrder/openOrders", params=params)
+            data = resp.json()
+            orders = data.get("orders", []) if isinstance(data, dict) else []
+            for o in orders:
+                o["_symbol"] = sym
+                result["algo"].append(o)
+        except Exception:
+            pass
+
+    # 3. Non-zero positions
+    for sym in SYMBOL_CONFIGS:
+        try:
+            params = _sign({"symbol": sym})
+            resp = await client.get("/fapi/v2/positionRisk", params=params)
+            for p in resp.json():
+                if float(p.get("positionAmt", 0)) != 0:
+                    result["positions"].append(p)
+        except Exception:
+            pass
+
+    result["total_regular"] = len(result["regular"])
+    result["total_algo"] = len(result["algo"])
+    result["total_positions"] = len(result["positions"])
+    return result
 
 
 @router.get("/debug/reset-directions")
