@@ -145,29 +145,54 @@ async def get_usdt_balance() -> float:
     return 0.0
 
 
-# ── Algo order ID tracking (per symbol) ──
+# ── Algo order ID tracking — persistent JSON file ──
 # algoOrder/openOrders endpoint 404 verdigi icin, koyduklarimizi takip ediyoruz
-_active_algo_ids: dict[str, list[int]] = {}
+# Dosyada sakliyoruz ki deploy/restart sonrasi kaybolmasin.
+import json as _json
+import os as _os
+from pathlib import Path as _Path
+
+_ALGO_IDS_PATH = _Path(_os.getenv("DATA_DIR", "data")) / "algo_ids.json"
+
+
+def _load_algo_ids() -> dict[str, list[int]]:
+    """Load tracked algo IDs from disk."""
+    try:
+        if _ALGO_IDS_PATH.exists():
+            return _json.loads(_ALGO_IDS_PATH.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def _save_algo_ids(data: dict[str, list[int]]) -> None:
+    """Save tracked algo IDs to disk."""
+    try:
+        _ALGO_IDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _ALGO_IDS_PATH.write_text(_json.dumps(data))
+    except Exception as e:
+        log.warning("algo_ids_save_failed", error=str(e))
 
 
 def _track_algo_id(symbol: str, algo_id: int | str | None) -> None:
-    """Track an algo order ID for later cancellation."""
+    """Track an algo order ID for later cancellation (persistent)."""
     if algo_id is None:
         return
     aid = int(algo_id)
-    if symbol not in _active_algo_ids:
-        _active_algo_ids[symbol] = []
-    if aid not in _active_algo_ids[symbol]:
-        _active_algo_ids[symbol].append(aid)
+    data = _load_algo_ids()
+    if symbol not in data:
+        data[symbol] = []
+    if aid not in data[symbol]:
+        data[symbol].append(aid)
+    _save_algo_ids(data)
 
 
 async def cancel_all_open_orders(symbol: str) -> dict:
     """Cancel all open orders for a symbol.
 
-    3 asamali:
     1. DELETE /fapi/v1/allOpenOrders — regular emirler
     2. Tracked algo ID'leri tek tek DELETE /fapi/v1/algoOrder ile sil
-    3. Track listesini temizle
+    3. Track listesini temizle ve dosyaya kaydet
     """
     client = await get_client()
     cancelled_regular = 0
@@ -182,8 +207,9 @@ async def cancel_all_open_orders(symbol: str) -> dict:
     except Exception as e:
         log.warning("bulk_cancel_failed", symbol=symbol, error=str(e))
 
-    # ── 2. Tracked algo emirlerini sil ──
-    algo_ids = _active_algo_ids.pop(symbol, [])
+    # ── 2. Tracked algo emirlerini sil (persistent file) ──
+    data = _load_algo_ids()
+    algo_ids = data.pop(symbol, [])
     for aid in algo_ids:
         try:
             del_params = _sign({"algoId": aid})
@@ -192,8 +218,10 @@ async def cancel_all_open_orders(symbol: str) -> dict:
             cancelled_algo += 1
             log.info("algo_order_cancelled", symbol=symbol, algo_id=aid)
         except Exception as e:
-            # Zaten tetiklenmis veya iptal edilmis olabilir — sorun degil
             log.info("algo_cancel_skip", symbol=symbol, algo_id=aid, error=str(e))
+
+    # Dosyayi guncelle (bu symbol'un ID'leri silindi)
+    _save_algo_ids(data)
 
     total = cancelled_regular + cancelled_algo
     log.info("all_orders_cancelled", symbol=symbol, regular=cancelled_regular, algo=cancelled_algo, total=total)
