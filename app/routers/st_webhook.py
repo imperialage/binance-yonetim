@@ -192,7 +192,20 @@ async def st_webhook(request: Request) -> JSONResponse:
             "message": "Same signal received within 5 minutes",
         })
 
-    # ── 4. Log signal ──────────────────────────────────
+    # ── 4. Config kontrolleri ─────────────────────────
+    sym_cfg = get_symbol_config(symbol)
+
+    # Listening kapali → sinyal loglanir ama isleme alinmaz
+    if not sym_cfg.get("listening", True):
+        log.info("st_webhook_listening_off", symbol=symbol, direction=direction)
+        return JSONResponse(content={
+            "status": "listening_off",
+            "symbol": symbol,
+            "direction": direction,
+            "message": f"Signal listening disabled for {symbol}",
+        })
+
+    # ── 5. Log signal ──────────────────────────────────
     row_id = await log_st_signal(
         dt=dt_str,
         symbol=symbol,
@@ -202,10 +215,18 @@ async def st_webhook(request: Request) -> JSONResponse:
         entered=True,
     )
 
-    # ── 5. Execute trade ───────────────────────────────
+    # ── 6. Execute trade ───────────────────────────────
     trade_dispatched = False
-    if settings.trading_enabled:
-        sym_cfg = get_symbol_config(symbol)
+    skip_reason = None
+
+    if not settings.trading_enabled:
+        skip_reason = "trading_disabled"
+    elif not sym_cfg.get("enabled", True):
+        skip_reason = "symbol_disabled"
+
+    if skip_reason:
+        log.info("st_trade_skipped", symbol=symbol, direction=direction, reason=skip_reason)
+    else:
         event_id = f"st-{row_id}-{signal_ts}"
 
         asyncio.create_task(execute_trade(
@@ -228,8 +249,6 @@ async def st_webhook(request: Request) -> JSONResponse:
             tp_pct=sym_cfg.get("tp_pct"),
             sl_pct=sym_cfg.get("sl_pct"),
         )
-    else:
-        log.info("st_trade_skipped_disabled", symbol=symbol, direction=direction)
 
     return JSONResponse(content={
         "status": "accepted",
@@ -241,4 +260,5 @@ async def st_webhook(request: Request) -> JSONResponse:
         "indicator": indicator,
         "trade_dispatched": trade_dispatched,
         "trading_enabled": settings.trading_enabled,
+        "skip_reason": skip_reason,
     })

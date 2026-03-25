@@ -9,7 +9,7 @@ import math
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel
 
-from app.config import settings
+from app.config import settings, get_all_symbol_configs, get_symbol_config, update_symbol_config, SYMBOL_CONFIGS
 from app.modules.binance_client import (
     BinanceAPIError,
     cancel_all_open_orders,
@@ -312,3 +312,71 @@ async def manual_open_position(
     except Exception as e:
         log.error("manual_open_error", symbol=symbol, side=side, error=str(e), error_type=type(e).__name__)
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+
+# ── Per-Symbol Config API ──────────────────────────────────
+
+
+class SymbolConfigUpdate(BaseModel):
+    tp_pct: float | None = None
+    sl_pct: float | None = None
+    weight: float | None = None
+    allowed_directions: list[str] | None = None
+    enabled: bool | None = None
+    listening: bool | None = None
+
+
+@router.get("/api/symbol-config")
+async def get_all_configs() -> dict:
+    """Return all symbol configs (with runtime overrides)."""
+    configs = get_all_symbol_configs()
+    # Serialize sets to lists for JSON
+    result = {}
+    for sym, cfg in configs.items():
+        c = dict(cfg)
+        if isinstance(c.get("allowed_directions"), set):
+            c["allowed_directions"] = sorted(c["allowed_directions"])
+        if isinstance(c.get("bad_hours"), set):
+            c["bad_hours"] = sorted(c["bad_hours"])
+        result[sym] = c
+    return result
+
+
+@router.put("/api/symbol-config/{symbol}")
+async def update_config_for_symbol(
+    symbol: str,
+    body: SymbolConfigUpdate,
+    x_admin_token: str = Header(...),
+) -> dict:
+    """Update runtime config for a symbol."""
+    if x_admin_token != settings.admin_token:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+
+    sym = symbol.upper()
+    if sym not in SYMBOL_CONFIGS:
+        raise HTTPException(status_code=404, detail=f"Unknown symbol: {sym}")
+
+    updates: dict = {}
+    if body.tp_pct is not None:
+        updates["tp_pct"] = body.tp_pct
+    if body.sl_pct is not None:
+        updates["sl_pct"] = body.sl_pct
+    if body.weight is not None:
+        updates["weight"] = body.weight
+    if body.allowed_directions is not None:
+        updates["allowed_directions"] = set(d.upper() for d in body.allowed_directions)
+    if body.enabled is not None:
+        updates["enabled"] = body.enabled
+    if body.listening is not None:
+        updates["listening"] = body.listening
+
+    cfg = update_symbol_config(sym, updates)
+    log.info("symbol_config_updated", symbol=sym, updates=str(updates))
+
+    # Serialize for JSON response
+    c = dict(cfg)
+    if isinstance(c.get("allowed_directions"), set):
+        c["allowed_directions"] = sorted(c["allowed_directions"])
+    if isinstance(c.get("bad_hours"), set):
+        c["bad_hours"] = sorted(c["bad_hours"])
+    return {"symbol": sym, "config": c}

@@ -72,9 +72,38 @@ _DEFAULT_SYMBOL_CONFIG: dict[str, Any] = {
 }
 
 
+# ── Runtime overrides (in-memory, updated via API) ─────────
+# Keys: symbol → {tp_pct, sl_pct, weight, allowed_directions, enabled, listening}
+_runtime_overrides: dict[str, dict[str, Any]] = {}
+
+
 def get_symbol_config(symbol: str) -> dict[str, Any]:
-    """Return trading config for a symbol."""
-    return SYMBOL_CONFIGS.get(symbol.upper(), _DEFAULT_SYMBOL_CONFIG)
+    """Return trading config for a symbol (with runtime overrides merged)."""
+    base = dict(SYMBOL_CONFIGS.get(symbol.upper(), _DEFAULT_SYMBOL_CONFIG))
+    # Defaults for new fields
+    base.setdefault("enabled", True)
+    base.setdefault("listening", True)
+    overrides = _runtime_overrides.get(symbol.upper())
+    if overrides:
+        base.update(overrides)
+    return base
+
+
+def update_symbol_config(symbol: str, updates: dict[str, Any]) -> dict[str, Any]:
+    """Apply runtime overrides to a symbol config. Returns merged config."""
+    sym = symbol.upper()
+    if sym not in _runtime_overrides:
+        _runtime_overrides[sym] = {}
+    _runtime_overrides[sym].update(updates)
+    return get_symbol_config(sym)
+
+
+def get_all_symbol_configs() -> dict[str, dict[str, Any]]:
+    """Return all symbol configs with overrides merged."""
+    result = {}
+    for sym in SYMBOL_CONFIGS:
+        result[sym] = get_symbol_config(sym)
+    return result
 
 
 class Settings(BaseSettings):

@@ -140,6 +140,36 @@ tr:hover{background:#0d111788}
 tr.clickable{cursor:pointer;transition:background .15s}
 tr.clickable:hover{background:#1c212888}
 
+/* Toggle switch */
+.toggle-wrap{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.toggle-label{font-size:10px;color:#6e7681;font-weight:600}
+.mini-toggle{width:32px;height:18px;border-radius:9px;background:#21262d;position:relative;transition:background .2s}
+.mini-toggle.on{background:#3fb950}
+.mini-toggle.off{background:#484f58}
+.mini-toggle-dot{width:14px;height:14px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:transform .2s}
+.mini-toggle.on .mini-toggle-dot{transform:translateX(14px)}
+
+/* Clickable tags */
+.clickable-tag{cursor:pointer;transition:border-color .2s,background .2s}
+.clickable-tag:hover{border-color:#58a6ff!important;background:#58a6ff15!important}
+.sym-tag.buy-only{color:#3fb950;background:#3fb95010;border-color:#3fb95030}
+.sym-tag.both-dir{color:#58a6ff;background:#58a6ff10;border-color:#58a6ff30}
+
+/* Card buttons */
+.card-btn{flex:1;padding:8px 12px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid #21262d;font-family:inherit;transition:all .2s}
+.card-btn.btn-open{background:#3fb95015;color:#3fb950;border-color:#3fb95030}
+.card-btn.btn-open:hover{background:#3fb95025}
+.card-btn.btn-close{background:#f8514912;color:#f85149;border-color:#f8514925}
+.card-btn.btn-close:hover{background:#f8514920}
+
+/* Disabled card */
+.sym-card.disabled-card{opacity:0.5}
+
+/* Modal input styles */
+.mod-label{display:block;font-size:10px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:4px}
+.mod-input{width:100%;background:#0d1117;border:1px solid #21262d;color:#e6edf3;padding:10px 12px;border-radius:8px;font-size:14px;font-family:inherit;font-variant-numeric:tabular-nums;transition:border-color .2s}
+.mod-input:focus{outline:none;border-color:#388bfd}
+
 /* Responsive */
 @media(max-width:1100px){
   .sym-grid{grid-template-columns:repeat(2,1fr)}
@@ -254,13 +284,14 @@ tr.clickable:hover{background:#1c212888}
 <script>
 (function(){
   var SYMBOLS = ['BTCUSDT','XRPUSDT','AVAXUSDT','DOGEUSDT','ETHUSDT','SOLUSDT'];
+  var ADMIN_TOKEN = localStorage.getItem('admin_token')||'';
   var diagData = null;
   var incomeData = null;
   var signalsData = null;
+  var symConfigs = {};
   var allPrices = {};
   var ws = null;
   var reconnectTimer = null;
-  // signalFilter kaldirildi — artik tum sinyaller TradingView webhook
   var tradeFilter = 'all';
 
   function $(id){ return document.getElementById(id); }
@@ -322,11 +353,20 @@ tr.clickable:hover{background:#1c212888}
     }).catch(function(){});
   }
 
+  function fetchSymConfigs(){
+    fetch('/api/symbol-config').then(function(r){return r.json();})
+    .then(function(data){
+      symConfigs=data;
+      if(diagData) renderSymbolGrid();
+    }).catch(function(){});
+  }
+
   function fetchAll(){
     $('lastUpdate').textContent='Guncelleniyor...';
     fetchDiagnosis();
     fetchIncome();
     fetchSignals();
+    fetchSymConfigs();
   }
 
   // ── Summary Cards ──
@@ -378,26 +418,216 @@ tr.clickable:hover{background:#1c212888}
     }
   }
 
+  // ── Admin API helper ──
+  function ensureToken(){
+    if(!ADMIN_TOKEN){
+      ADMIN_TOKEN=prompt('Admin Token girin:')||'';
+      if(ADMIN_TOKEN) localStorage.setItem('admin_token',ADMIN_TOKEN);
+    }
+    return ADMIN_TOKEN;
+  }
+  function adminFetch(url,opts){
+    var token=ensureToken();
+    if(!token) return Promise.reject(new Error('Token yok'));
+    opts=opts||{};
+    opts.headers=Object.assign({'X-Admin-Token':token,'Content-Type':'application/json'},opts.headers||{});
+    return fetch(url,opts).then(function(r){
+      if(r.status===401){ADMIN_TOKEN='';localStorage.removeItem('admin_token');showToast('Gecersiz token','error');return Promise.reject(new Error('401'));}
+      if(!r.ok) return r.json().then(function(d){throw new Error(d.detail||r.statusText);});
+      return r.json();
+    });
+  }
+  function showToast(msg,type){
+    var el=document.createElement('div');
+    el.className='toast '+(type||'success');
+    el.textContent=msg;
+    $('toastContainer').appendChild(el);
+    setTimeout(function(){el.remove();},3000);
+  }
+
+  // ── Update symbol config ──
+  window.updateSymConfig=function(sym,field,value){
+    var body={};
+    body[field]=value;
+    adminFetch('/api/symbol-config/'+sym,{method:'PUT',body:JSON.stringify(body)})
+    .then(function(data){
+      symConfigs[sym]=data.config;
+      renderSymbolGrid();
+      showToast(sym+' '+field+' guncellendi');
+    }).catch(function(e){if(e.message!=='401')showToast('Hata: '+e.message,'error');});
+  };
+
+  // ── Toggle helpers ──
+  window.toggleEnabled=function(sym){
+    var cfg=symConfigs[sym]||{};
+    var newVal=!(cfg.enabled!==false);
+    updateSymConfig(sym,'enabled',newVal);
+  };
+  window.toggleListening=function(sym){
+    var cfg=symConfigs[sym]||{};
+    var newVal=!(cfg.listening!==false);
+    updateSymConfig(sym,'listening',newVal);
+  };
+
+  // ── Inline edit ──
+  window.editField=function(sym,field,currentVal,label){
+    var input=prompt(label+' ('+sym+'):',currentVal);
+    if(input===null) return;
+    var val=parseFloat(input);
+    if(isNaN(val)||val<=0){showToast('Gecersiz deger','error');return;}
+    if(field==='tp_pct'||field==='sl_pct') val=val/100; // kullanici % girer, biz ondalik saklariz
+    updateSymConfig(sym,field,val);
+  };
+
+  // ── Direction edit ──
+  window.editDirections=function(sym){
+    var cfg=symConfigs[sym]||{};
+    var dirs=cfg.allowed_directions||['BUY','SELL'];
+    var current=dirs.join('+');
+    var choice=prompt('Yon secin (1=BUY+SELL, 2=BUY Only, 3=SELL Only):\nMevcut: '+current,'1');
+    if(choice===null) return;
+    var map={'1':['BUY','SELL'],'2':['BUY'],'3':['SELL']};
+    var newDirs=map[choice];
+    if(!newDirs){showToast('Gecersiz secim','error');return;}
+    updateSymConfig(sym,'allowed_directions',newDirs);
+  };
+
+  // ── Manual close ──
+  window.closePosition=function(sym){
+    if(!confirm(sym+' pozisyonunu kapatmak istediginize emin misiniz?')) return;
+    adminFetch('/manual/close',{method:'POST',body:JSON.stringify({symbol:sym})})
+    .then(function(data){
+      showToast(sym+' pozisyon kapatildi: '+data.side+' '+data.qty);
+      setTimeout(fetchAll,1500);
+    }).catch(function(e){if(e.message!=='401')showToast('Hata: '+e.message,'error');});
+  };
+
+  // ── Manual open modal ──
+  window.openTradeModal=function(sym){
+    var cfg=symConfigs[sym]||{};
+    var price=allPrices[sym]?parseFloat(allPrices[sym]):0;
+    var decimals=price>=100?2:price>=1?4:6;
+
+    var html='<div class="detail-grid">';
+    html+='<div class="detail-item detail-full"><div class="dl">Sembol</div><div class="dv">'+sym+'</div></div>';
+    html+='</div>';
+
+    html+='<div style="display:flex;gap:6px;margin-bottom:14px">';
+    html+='<button id="modSideBuy" onclick="setModSide(\'BUY\')" class="mod-side-btn active-buy" style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;border:1px solid #3fb95040;background:#3fb95015;color:#3fb950">BUY / LONG</button>';
+    html+='<button id="modSideSell" onclick="setModSide(\'SELL\')" class="mod-side-btn" style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;border:1px solid #21262d;background:#141922;color:#6e7681">SELL / SHORT</button>';
+    html+='</div>';
+
+    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">';
+    html+='<div><label class="mod-label">Giris Fiyati <span style="color:#484f58">(bos=market)</span></label><input id="modEntry" type="number" step="any" placeholder="'+fmt(price,decimals)+'" class="mod-input"></div>';
+    html+='<div><label class="mod-label">Miktar (USDT)</label><input id="modAmount" type="number" step="1" value="21" class="mod-input"></div>';
+    html+='</div>';
+
+    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">';
+    html+='<div><label class="mod-label">Kar Orani %</label><input id="modTpPct" type="number" step="0.1" value="'+((cfg.tp_pct||0.005)*100).toFixed(1)+'" oninput="calcTP(\''+sym+'\')" class="mod-input"></div>';
+    html+='<div><label class="mod-label">TP Fiyat <span style="color:#484f58">(oto/manuel)</span></label><input id="modTpPrice" type="number" step="any" class="mod-input" style="color:#3fb950"></div>';
+    html+='</div>';
+
+    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">';
+    html+='<div><label class="mod-label">Zarar Orani %</label><input id="modSlPct" type="number" step="0.1" value="'+((cfg.sl_pct||0.015)*100).toFixed(1)+'" oninput="calcSL(\''+sym+'\')" class="mod-input"></div>';
+    html+='<div><label class="mod-label">SL Fiyat <span style="color:#484f58">(oto/manuel)</span></label><input id="modSlPrice" type="number" step="any" class="mod-input" style="color:#f85149"></div>';
+    html+='</div>';
+
+    html+='<button onclick="submitTrade(\''+sym+'\')" style="width:100%;padding:12px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;border:none;background:#3fb950;color:#fff;transition:opacity .2s" onmouseover="this.style.opacity=0.85" onmouseout="this.style.opacity=1">Islem Ac</button>';
+
+    $('modalTitle').textContent=sym.replace('USDT','')+' / USDT — Yeni Islem';
+    $('modalTitle').style.color='#e6edf3';
+    $('modalSub').textContent='Mevcut fiyat: '+fmt(price,decimals);
+    $('modalBody').innerHTML=html;
+    $('signalModal').classList.add('active');
+    $('signalModal').dataset.sym=sym;
+    $('signalModal').dataset.side='BUY';
+
+    // Auto calc
+    calcTP(sym);calcSL(sym);
+  };
+
+  window.setModSide=function(side){
+    $('signalModal').dataset.side=side;
+    var buyBtn=$('modSideBuy'),sellBtn=$('modSideSell');
+    if(side==='BUY'){
+      buyBtn.style.background='#3fb95015';buyBtn.style.color='#3fb950';buyBtn.style.borderColor='#3fb95040';
+      sellBtn.style.background='#141922';sellBtn.style.color='#6e7681';sellBtn.style.borderColor='#21262d';
+    }else{
+      sellBtn.style.background='#f8514915';sellBtn.style.color='#f85149';sellBtn.style.borderColor='#f8514940';
+      buyBtn.style.background='#141922';buyBtn.style.color='#6e7681';buyBtn.style.borderColor='#21262d';
+    }
+    var sym=$('signalModal').dataset.sym;
+    calcTP(sym);calcSL(sym);
+  };
+
+  window.calcTP=function(sym){
+    var price=parseFloat($('modEntry').value)||allPrices[sym]||0;
+    var pct=parseFloat($('modTpPct').value)||0;
+    if(!price||!pct)return;
+    var side=$('signalModal').dataset.side;
+    var tp=side==='BUY'?price*(1+pct/100):price*(1-pct/100);
+    $('modTpPrice').value=tp.toFixed(price>=100?2:price>=1?4:6);
+  };
+  window.calcSL=function(sym){
+    var price=parseFloat($('modEntry').value)||allPrices[sym]||0;
+    var pct=parseFloat($('modSlPct').value)||0;
+    if(!price||!pct)return;
+    var side=$('signalModal').dataset.side;
+    var sl=side==='BUY'?price*(1-pct/100):price*(1+pct/100);
+    $('modSlPrice').value=sl.toFixed(price>=100?2:price>=1?price>=1?4:6:6);
+  };
+
+  window.submitTrade=function(sym){
+    var side=$('signalModal').dataset.side;
+    var entry=$('modEntry').value?parseFloat($('modEntry').value):null;
+    var amount=parseFloat($('modAmount').value)||21;
+    var tp=$('modTpPrice').value?parseFloat($('modTpPrice').value):null;
+    var sl=$('modSlPrice').value?parseFloat($('modSlPrice').value):null;
+
+    var body={symbol:sym,side:side,amount_usdt:amount};
+    if(entry) body.entry_price=entry;
+    if(tp) body.tp_price=tp;
+    if(sl) body.sl_price=sl;
+
+    adminFetch('/manual/open',{method:'POST',body:JSON.stringify(body)})
+    .then(function(data){
+      $('signalModal').classList.remove('active');
+      var msg=sym+' '+side+' acildi @ '+fmt(data.entry_price,4);
+      if(data.warning) msg+=' (!)';
+      showToast(msg);
+      setTimeout(fetchAll,1500);
+    }).catch(function(e){if(e.message!=='401')showToast('Hata: '+e.message,'error');});
+  };
+
   // ── Symbol Grid ──
   function renderSymbolGrid(){
     if(!diagData) return;
     var positions=diagData.positions||{};
-    var config=diagData.config||{};
 
     var html='';
     SYMBOLS.forEach(function(sym){
       var p=positions[sym];
+      var cfg=symConfigs[sym]||{};
+      var isEnabled=cfg.enabled!==false;
+      var isListening=cfg.listening!==false;
       var hasPos=p&&parseFloat(p.positionAmt)!==0;
       var amt=hasPos?parseFloat(p.positionAmt):0;
       var isLong=amt>0;
       var price=allPrices[sym]?parseFloat(allPrices[sym]):0;
 
+      var tpPct=(cfg.tp_pct||0.005);
+      var slPct=(cfg.sl_pct||0.015);
+      var weight=(cfg.weight||0.10);
+      var dirs=cfg.allowed_directions||['BUY','SELL'];
+      var dirsStr=Array.isArray(dirs)?dirs.join('+'):String(dirs);
+
       var cardClass='sym-card';
+      if(!isEnabled) cardClass+=' disabled-card';
       if(hasPos) cardClass+=' has-position '+(isLong?'long-pos':'short-pos');
 
       html+='<div class="'+cardClass+'" id="card-'+sym+'">';
 
-      // Header
+      // Header row: name + price + toggles
       var shortName=sym.replace('USDT','');
       var priceStr=price>0?fmt(price,price>=100?2:price>=1?4:6):'--';
       html+='<div class="sym-header">';
@@ -405,15 +635,27 @@ tr.clickable:hover{background:#1c212888}
       html+='<span class="sym-price" id="price-'+sym+'">'+priceStr+'</span>';
       html+='</div>';
 
-      // Config tags
-      if(p){
-        html+='<div class="sym-config">';
-        html+='<span class="sym-tag sell-only">SELL Only</span>';
-        html+='<span class="sym-tag tp">TP '+(p.tp_pct*100).toFixed(1)+'%</span>';
-        html+='<span class="sym-tag sl">SL '+(p.sl_pct*100).toFixed(1)+'%</span>';
-        html+='<span class="sym-tag weight">'+((p.weight||0)*100).toFixed(1)+'%</span>';
-        html+='</div>';
-      }
+      // Toggle row
+      html+='<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap">';
+      // Trading on/off
+      html+='<div class="toggle-wrap" onclick="toggleEnabled(\''+sym+'\')" title="Islem Acma">';
+      html+='<div class="mini-toggle '+(isEnabled?'on':'off')+'"><div class="mini-toggle-dot"></div></div>';
+      html+='<span class="toggle-label">'+(isEnabled?'Islem Aktif':'Islem Kapali')+'</span></div>';
+      // Listening on/off
+      html+='<div class="toggle-wrap" onclick="toggleListening(\''+sym+'\')" title="Sinyal Dinleme">';
+      html+='<div class="mini-toggle '+(isListening?'on':'off')+'" style="'+(isListening?'background:#58a6ff':'')+'"><div class="mini-toggle-dot"></div></div>';
+      html+='<span class="toggle-label">'+(isListening?'Sinyal Dinliyor':'Sinyal Kapali')+'</span></div>';
+      html+='</div>';
+
+      // Config tags — clickable
+      html+='<div class="sym-config">';
+      // Direction tag
+      var dirColor=dirsStr==='SELL'?'sell-only':dirsStr==='BUY'?'buy-only':'both-dir';
+      html+='<span class="sym-tag '+dirColor+' clickable-tag" onclick="editDirections(\''+sym+'\')">'+dirsStr+'</span>';
+      html+='<span class="sym-tag tp clickable-tag" onclick="editField(\''+sym+'\',\'tp_pct\','+(tpPct*100).toFixed(1)+',\'TP %\')">TP '+(tpPct*100).toFixed(1)+'%</span>';
+      html+='<span class="sym-tag sl clickable-tag" onclick="editField(\''+sym+'\',\'sl_pct\','+(slPct*100).toFixed(1)+',\'SL %\')">SL '+(slPct*100).toFixed(1)+'%</span>';
+      html+='<span class="sym-tag weight clickable-tag" onclick="editField(\''+sym+'\',\'weight\','+(weight*100).toFixed(1)+',\'Bakiye Agirligi %\')">'+((weight)*100).toFixed(0)+'%</span>';
+      html+='</div>';
 
       // Position info
       if(hasPos){
@@ -427,9 +669,8 @@ tr.clickable:hover{background:#1c212888}
         html+='<div class="pos-row"><span class="k">Giris</span><span class="v">'+fmt(entry,entry>=100?2:4)+'</span></div>';
         html+='<div class="pos-row"><span class="k">PnL</span><span class="v '+(upnl>=0?'pnl-positive':'pnl-negative')+'">'+fmtUSD(upnl)+' ('+(pnlPct>=0?'+':'')+fmt(pnlPct,2)+'%)</span></div>';
 
-        // Mini progress to TP
-        var tpPct=p.tp_pct||0.005;
         var tpPrice=isLong?entry*(1+tpPct):entry*(1-tpPct);
+        var slPrice=isLong?entry*(1-slPct):entry*(1+slPct);
         var currentPrice=price||parseFloat(p.markPrice||0);
         var progressPct=0;
         if(currentPrice&&entry){
@@ -438,12 +679,21 @@ tr.clickable:hover{background:#1c212888}
         }
         progressPct=Math.max(-100,Math.min(100,progressPct));
         var fillClass=progressPct>=0?'profit':'loss';
-        var fillWidth=Math.abs(progressPct);
-        html+='<div class="pos-row"><span class="k">TP Hedef</span><span class="v" style="color:#3fb950">'+fmt(tpPrice,entry>=100?2:4)+'</span></div>';
-        html+='<div class="mini-progress"><div class="mini-progress-fill '+fillClass+'" style="width:'+Math.min(fillWidth,100)+'%"></div></div>';
+        html+='<div class="pos-row"><span class="k">TP</span><span class="v" style="color:#3fb950">'+fmt(tpPrice,entry>=100?2:4)+'</span></div>';
+        html+='<div class="pos-row"><span class="k">SL</span><span class="v" style="color:#f85149">'+fmt(slPrice,entry>=100?2:4)+'</span></div>';
+        html+='<div class="mini-progress"><div class="mini-progress-fill '+fillClass+'" style="width:'+Math.min(Math.abs(progressPct),100)+'%"></div></div>';
+        html+='</div>';
+
+        // Action buttons
+        html+='<div style="display:flex;gap:8px;margin-top:10px">';
+        html+='<button class="card-btn btn-open" onclick="openTradeModal(\''+sym+'\')">Yeni Islem</button>';
+        html+='<button class="card-btn btn-close" onclick="closePosition(\''+sym+'\')">Pozisyonu Kapat</button>';
         html+='</div>';
       }else{
         html+='<div class="no-pos">Pozisyon yok</div>';
+        html+='<div style="margin-top:8px">';
+        html+='<button class="card-btn btn-open" onclick="openTradeModal(\''+sym+'\')">Yeni Islem</button>';
+        html+='</div>';
       }
 
       html+='</div>';
@@ -591,6 +841,7 @@ tr.clickable:hover{background:#1c212888}
   setInterval(fetchDiagnosis, 60000);
   setInterval(fetchIncome, 300000);
   setInterval(fetchSignals, 15000);
+  setInterval(fetchSymConfigs, 60000);
 
 })();
 </script>
