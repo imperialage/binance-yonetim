@@ -92,6 +92,8 @@ def get_symbol_config(symbol: str) -> dict[str, Any]:
     # Defaults for new fields
     base.setdefault("enabled", True)
     base.setdefault("listening", True)
+    base.setdefault("sl_enabled", True)
+    base.setdefault("reverse_signal", False)
     overrides = _runtime_overrides.get(symbol.upper())
     if overrides:
         base.update(overrides)
