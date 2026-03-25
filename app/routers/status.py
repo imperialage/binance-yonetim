@@ -526,6 +526,89 @@ async def debug_reset_directions() -> dict:
     return {"deleted_keys": deleted, "message": "Direction filters reset. Next signal will pass through."}
 
 
+@router.get("/debug/fix-tpsl/{symbol}")
+async def debug_fix_tpsl(symbol: str) -> dict:
+    """Test: cancel old orders + place new TP/SL for open position."""
+    from app.modules.binance_client import (
+        cancel_all_open_orders, get_exchange_info, get_position_risk,
+        place_stop_market_order, place_take_profit_market_order, round_price,
+    )
+    from app.config import get_symbol_config
+    sym = symbol.upper()
+    result: dict = {"symbol": sym}
+
+    try:
+        # Get position
+        positions = await get_position_risk(sym)
+        pos_amt = 0.0
+        entry_price = 0.0
+        for p in positions:
+            if p.get("symbol") == sym:
+                pos_amt = float(p.get("positionAmt", 0))
+                entry_price = float(p.get("entryPrice", 0))
+                break
+        result["pos_amt"] = pos_amt
+        result["entry_price"] = entry_price
+
+        if pos_amt == 0:
+            return {**result, "status": "no_position"}
+
+        is_long = pos_amt > 0
+        exit_side = "SELL" if is_long else "BUY"
+        qty = abs(pos_amt)
+        cfg = get_symbol_config(sym)
+        tp_pct = cfg.get("tp_pct", 0.005)
+        sl_pct = cfg.get("sl_pct", 0.015)
+
+        if is_long:
+            raw_tp = entry_price * (1 + tp_pct)
+            raw_sl = entry_price * (1 - sl_pct)
+        else:
+            raw_tp = entry_price * (1 - tp_pct)
+            raw_sl = entry_price * (1 + sl_pct)
+
+        info = await get_exchange_info(sym)
+        tick_size = info["priceFilter"]["tickSize"]
+        tp_price = round_price(raw_tp, tick_size)
+        sl_price = round_price(raw_sl, tick_size)
+
+        result["tp_pct"] = tp_pct
+        result["sl_pct"] = sl_pct
+        result["tp_price"] = tp_price
+        result["sl_price"] = sl_price
+        result["exit_side"] = exit_side
+        result["qty"] = qty
+
+        # Cancel existing
+        cancel_result = await cancel_all_open_orders(sym)
+        result["cancelled"] = cancel_result
+
+        # Place TP
+        try:
+            tp_resp = await place_take_profit_market_order(sym, exit_side, qty, tp_price)
+            result["tp_order"] = tp_resp
+            result["tp_ok"] = True
+        except Exception as e:
+            result["tp_error"] = str(e)
+            result["tp_ok"] = False
+
+        # Place SL
+        try:
+            sl_resp = await place_stop_market_order(sym, exit_side, qty, sl_price)
+            result["sl_order"] = sl_resp
+            result["sl_ok"] = True
+        except Exception as e:
+            result["sl_error"] = str(e)
+            result["sl_ok"] = False
+
+        result["status"] = "done"
+    except Exception as e:
+        result["error"] = str(e)
+        import traceback
+        result["traceback"] = traceback.format_exc()
+    return result
+
+
 @router.get("/debug/raw-open-orders/{symbol}")
 async def debug_raw_open_orders(symbol: str) -> dict:
     """Raw Binance open orders debug — her turlu emri goster."""
