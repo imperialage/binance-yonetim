@@ -373,10 +373,84 @@ async def update_config_for_symbol(
     cfg = update_symbol_config(sym, updates)
     log.info("symbol_config_updated", symbol=sym, updates=str(updates))
 
+    # ── TP/SL değiştiyse ve açık pozisyon varsa Binance emirlerini güncelle ──
+    orders_updated = None
+    if body.tp_pct is not None or body.sl_pct is not None:
+        try:
+            orders_updated = await _update_binance_orders(sym, cfg)
+        except Exception as e:
+            log.error("binance_orders_update_failed", symbol=sym, error=str(e))
+            orders_updated = {"error": str(e)}
+
     # Serialize for JSON response
     c = dict(cfg)
     if isinstance(c.get("allowed_directions"), set):
         c["allowed_directions"] = sorted(c["allowed_directions"])
     if isinstance(c.get("bad_hours"), set):
         c["bad_hours"] = sorted(c["bad_hours"])
-    return {"symbol": sym, "config": c}
+    result = {"symbol": sym, "config": c}
+    if orders_updated is not None:
+        result["orders_updated"] = orders_updated
+    return result
+
+
+async def _update_binance_orders(symbol: str, cfg: dict) -> dict:
+    """Açık pozisyon varsa mevcut TP/SL emirlerini iptal edip yenilerini koy."""
+    positions = await get_position_risk(symbol)
+    pos_amt = 0.0
+    entry_price = 0.0
+    for p in positions:
+        if p.get("symbol") == symbol:
+            pos_amt = float(p.get("positionAmt", 0))
+            entry_price = float(p.get("entryPrice", 0))
+            break
+
+    if pos_amt == 0 or entry_price <= 0:
+        return {"status": "no_position"}
+
+    is_long = pos_amt > 0
+    quantity = abs(pos_amt)
+    exit_side = "SELL" if is_long else "BUY"
+
+    tp_pct = cfg.get("tp_pct", 0.005)
+    sl_pct = cfg.get("sl_pct", 0.015)
+
+    if is_long:
+        raw_tp = entry_price * (1 + tp_pct)
+        raw_sl = entry_price * (1 - sl_pct)
+    else:
+        raw_tp = entry_price * (1 - tp_pct)
+        raw_sl = entry_price * (1 + sl_pct)
+
+    info = await get_exchange_info(symbol)
+    tick_size = info["priceFilter"]["tickSize"]
+    tp_price = round_price(raw_tp, tick_size)
+    sl_price = round_price(raw_sl, tick_size)
+
+    # 1. Mevcut tüm emirleri iptal et
+    await cancel_all_open_orders(symbol)
+
+    # 2. Yeni TP emri
+    tp_result = None
+    try:
+        tp_result = await place_take_profit_market_order(symbol, exit_side, quantity, tp_price)
+        log.info("tp_order_updated", symbol=symbol, tp_price=tp_price)
+    except Exception as e:
+        log.error("tp_order_update_failed", symbol=symbol, error=str(e))
+
+    # 3. Yeni SL emri
+    sl_result = None
+    try:
+        sl_result = await place_stop_market_order(symbol, exit_side, quantity, sl_price)
+        log.info("sl_order_updated", symbol=symbol, sl_price=sl_price)
+    except Exception as e:
+        log.error("sl_order_update_failed", symbol=symbol, error=str(e))
+
+    return {
+        "status": "updated",
+        "entry_price": entry_price,
+        "tp_price": tp_price,
+        "sl_price": sl_price,
+        "tp_ok": tp_result is not None,
+        "sl_ok": sl_result is not None,
+    }

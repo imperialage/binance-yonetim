@@ -453,7 +453,20 @@ tr.clickable:hover{background:#1c212888}
     .then(function(data){
       symConfigs[sym]=data.config;
       renderSymbolGrid();
-      showToast(sym+' '+field+' guncellendi');
+      // TP/SL degistiyse Binance emir durumunu goster
+      if(data.orders_updated){
+        var ou=data.orders_updated;
+        if(ou.status==='updated'){
+          var msg=sym+' Binance emirleri guncellendi — TP:'+ou.tp_price+' SL:'+ou.sl_price;
+          showToast(msg);
+        }else if(ou.status==='no_position'){
+          showToast(sym+' '+field+' guncellendi (acik pozisyon yok)');
+        }else if(ou.error){
+          showToast(sym+' config OK ama Binance hata: '+ou.error,'error');
+        }
+      }else{
+        showToast(sym+' '+field+' guncellendi');
+      }
     }).catch(function(e){if(e.message!=='401')showToast('Hata: '+e.message,'error');});
   };
 
@@ -475,7 +488,7 @@ tr.clickable:hover{background:#1c212888}
     if(input===null) return;
     var val=parseFloat(input);
     if(isNaN(val)||val<=0){showToast('Gecersiz deger','error');return;}
-    if(field==='tp_pct'||field==='sl_pct') val=val/100; // kullanici % girer, biz ondalik saklariz
+    if(field==='tp_pct'||field==='sl_pct'||field==='weight') val=val/100; // kullanici % girer, biz ondalik saklariz
     updateSymConfig(sym,field,val);
   };
 
