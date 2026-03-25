@@ -58,6 +58,13 @@ SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
         "sl_pct": 0.013,   # %1.3
         "weight": 0.10,    # $370 → ~$37
     },
+    "XAGUSDT": {
+        "bad_hours": set(),
+        "allowed_directions": {"BUY", "SELL"},
+        "tp_pct": 0.015,   # %1.5
+        "sl_pct": 0.010,   # %1.0
+        "weight": 0.10,    # ~$35
+    },
 }
 
 # Tanımsız semboller için fallback
