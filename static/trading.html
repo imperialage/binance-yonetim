@@ -561,12 +561,14 @@ tr.clickable:hover{background:#1c212888}
     html+='<div><label class="mod-label">TP Fiyat <span style="color:#484f58">(oto/manuel)</span></label><input id="modTpPrice" type="number" step="any" class="mod-input" style="color:#3fb950"></div>';
     html+='</div>';
 
-    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">';
-    html+='<div><label class="mod-label">Zarar Orani %</label><input id="modSlPct" type="number" step="0.1" value="'+((cfg.sl_pct||0.015)*100).toFixed(1)+'" oninput="calcSL(\''+sym+'\')" class="mod-input"></div>';
-    html+='<div><label class="mod-label">SL Fiyat <span style="color:#484f58">(oto/manuel)</span></label><input id="modSlPrice" type="number" step="any" class="mod-input" style="color:#f85149"></div>';
+    var modalSlOn=cfg.sl_enabled!==false && cfg.reverse_signal!==true;
+    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;'+(modalSlOn?'':'opacity:0.35;pointer-events:none')+'">';
+    html+='<div><label class="mod-label">Zarar Orani % '+(modalSlOn?'':'<span style="color:#f85149">(SL KAPALI)</span>')+'</label><input id="modSlPct" type="number" step="0.1" value="'+(modalSlOn?((cfg.sl_pct||0.015)*100).toFixed(1):'0')+'" oninput="calcSL(\''+sym+'\')" class="mod-input"></div>';
+    html+='<div><label class="mod-label">SL Fiyat</label><input id="modSlPrice" type="number" step="any" class="mod-input" style="color:#f85149"></div>';
     html+='</div>';
 
     html+='<button onclick="submitTrade(\''+sym+'\')" style="width:100%;padding:12px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;border:none;background:#3fb950;color:#fff;transition:opacity .2s" onmouseover="this.style.opacity=0.85" onmouseout="this.style.opacity=1">Islem Ac</button>';
+    if(!modalSlOn) html+='<div style="text-align:center;margin-top:8px;font-size:10px;color:#a371f7">Ters sinyal modu — SL konmayacak, sadece TP</div>';
 
     $('modalTitle').textContent=sym.replace('USDT','')+' / USDT — Yeni Islem';
     $('modalTitle').style.color='#e6edf3';
@@ -616,7 +618,9 @@ tr.clickable:hover{background:#1c212888}
     var entry=$('modEntry').value?parseFloat($('modEntry').value):null;
     var amount=parseFloat($('modAmount').value)||21;
     var tp=$('modTpPrice').value?parseFloat($('modTpPrice').value):null;
-    var sl=$('modSlPrice').value?parseFloat($('modSlPrice').value):null;
+    var cfg=symConfigs[sym]||{};
+    var slActive=cfg.sl_enabled!==false && cfg.reverse_signal!==true;
+    var sl=slActive&&$('modSlPrice').value?parseFloat($('modSlPrice').value):null;
 
     var body={symbol:sym,side:side,amount_usdt:amount};
     if(entry) body.entry_price=entry;
