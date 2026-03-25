@@ -404,15 +404,31 @@ async def debug_income() -> dict:
 
 
 @router.get("/api/st-signals")
-async def api_st_signals(limit: int = 80) -> dict:
-    """Get recent SuperTrend signals — only TradingView webhook signals (entered=1)."""
-    from app.modules.st_signal_logger import query_st_signals
+async def api_st_signals(limit: int = 80, symbols: str | None = None) -> dict:
+    """Get recent SuperTrend signals — only TradingView webhook signals (entered=1).
 
-    signals: list[dict] = []
+    Optional: symbols=BTCUSDT,ETHUSDT to filter by specific symbols.
+    """
+    from app.modules.st_signal_logger import get_db
+
+    db = await get_db()
     try:
-        signals = await query_st_signals(entered=True, limit=limit)
+        if symbols:
+            sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+            placeholders = ",".join("?" for _ in sym_list)
+            cursor = await db.execute(
+                f"SELECT * FROM signal_log WHERE entered = 1 AND symbol IN ({placeholders}) ORDER BY id DESC LIMIT ?",  # noqa: S608
+                [*sym_list, limit],
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT * FROM signal_log WHERE entered = 1 ORDER BY id DESC LIMIT ?",
+                [limit],
+            )
+        rows = await cursor.fetchall()
+        signals = [dict(r) for r in rows]
     except Exception:
-        pass
+        signals = []
 
     return {"signals": signals, "count": len(signals)}
 

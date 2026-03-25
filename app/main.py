@@ -33,7 +33,10 @@ log = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    log.info("startup", env=settings.app_env)
+    import os
+    data_dir = os.getenv("DATA_DIR", "data")
+    os.makedirs(data_dir, exist_ok=True)
+    log.info("startup", env=settings.app_env, data_dir=os.path.abspath(data_dir))
     await init_db()
     await init_trade_db()
     await init_candle_db()

@@ -322,6 +322,7 @@ tr.clickable:hover{background:#1c212888}
       btn.classList.toggle('active',btn.dataset.filter===f);
     });
     renderSymbolGrid();
+    fetchSignals();
   };
 
   function $(id){ return document.getElementById(id); }
@@ -375,8 +376,26 @@ tr.clickable:hover{background:#1c212888}
     }).catch(function(){});
   }
 
+  function getFilteredSymbols(){
+    // symFilter'a gore gorunur sembolleri dondur
+    if(symFilter==='all') return SYMBOLS;
+    var positions=(diagData||{}).positions||{};
+    return SYMBOLS.filter(function(sym){
+      var cfg=symConfigs[sym]||{};
+      if(symFilter==='enabled') return cfg.enabled!==false;
+      if(symFilter==='haspos'){var p=positions[sym]; return p&&parseFloat(p.positionAmt)!==0;}
+      if(symFilter==='listening') return cfg.listening!==false;
+      return true;
+    });
+  }
+
   function fetchSignals(){
-    fetch('/api/st-signals?limit=80').then(function(r){return r.json();})
+    var syms=getFilteredSymbols();
+    var url='/api/st-signals?limit=80';
+    if(symFilter!=='all'&&syms.length>0&&syms.length<SYMBOLS.length){
+      url+='&symbols='+syms.join(',');
+    }
+    fetch(url).then(function(r){return r.json();})
     .then(function(data){
       signalsData=data;
       renderSignals();
