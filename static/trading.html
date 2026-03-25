@@ -141,13 +141,21 @@ tr.clickable{cursor:pointer;transition:background .15s}
 tr.clickable:hover{background:#1c212888}
 
 /* Toggle switch */
-.toggle-wrap{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
-.toggle-label{font-size:10px;color:#6e7681;font-weight:600}
+.toggle-row{display:flex;gap:10px;margin-bottom:8px;align-items:center;flex-wrap:wrap}
+.toggle-wrap{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;padding:3px 0}
+.toggle-label{font-size:10px;color:#6e7681;font-weight:600;transition:color .2s}
+.toggle-wrap:hover .toggle-label{color:#c9d1d9}
 .mini-toggle{width:32px;height:18px;border-radius:9px;background:#21262d;position:relative;transition:background .2s}
 .mini-toggle.on{background:#3fb950}
 .mini-toggle.off{background:#484f58}
-.mini-toggle-dot{width:14px;height:14px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:transform .2s}
+.mini-toggle.listen.on{background:#58a6ff}
+.mini-toggle.sl-toggle.on{background:#f0883e}
+.mini-toggle.reverse-toggle.on{background:#a371f7}
+.mini-toggle-dot{width:14px;height:14px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,0.3)}
 .mini-toggle.on .mini-toggle-dot{transform:translateX(14px)}
+
+/* SL off tag */
+.sym-tag.sl-off{color:#484f58;background:#1c2128;border-color:#21262d;text-decoration:line-through;cursor:default;opacity:0.5}
 
 /* Clickable tags */
 .clickable-tag{cursor:pointer;transition:border-color .2s,background .2s}
@@ -481,6 +489,16 @@ tr.clickable:hover{background:#1c212888}
     var newVal=!(cfg.listening!==false);
     updateSymConfig(sym,'listening',newVal);
   };
+  window.toggleSlEnabled=function(sym){
+    var cfg=symConfigs[sym]||{};
+    var newVal=!(cfg.sl_enabled!==false);
+    updateSymConfig(sym,'sl_enabled',newVal);
+  };
+  window.toggleReverseSignal=function(sym){
+    var cfg=symConfigs[sym]||{};
+    var newVal=!(cfg.reverse_signal===true);
+    updateSymConfig(sym,'reverse_signal',newVal);
+  };
 
   // ── Inline edit ──
   window.editField=function(sym,field,currentVal,label){
@@ -651,25 +669,36 @@ tr.clickable:hover{background:#1c212888}
       html+='<span class="sym-price" id="price-'+sym+'">'+priceStr+'</span>';
       html+='</div>';
 
-      // Toggle row
-      html+='<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap">';
-      // Trading on/off
-      html+='<div class="toggle-wrap" onclick="toggleEnabled(\''+sym+'\')" title="Islem Acma">';
+      var slOn=cfg.sl_enabled!==false;
+      var revOn=cfg.reverse_signal===true;
+
+      // Toggle row 1: Trading + Listening
+      html+='<div class="toggle-row">';
+      html+='<div class="toggle-wrap" onclick="toggleEnabled(\''+sym+'\')" title="Islem Acma/Kapatma">';
       html+='<div class="mini-toggle '+(isEnabled?'on':'off')+'"><div class="mini-toggle-dot"></div></div>';
       html+='<span class="toggle-label">'+(isEnabled?'Islem Aktif':'Islem Kapali')+'</span></div>';
-      // Listening on/off
       html+='<div class="toggle-wrap" onclick="toggleListening(\''+sym+'\')" title="Sinyal Dinleme">';
-      html+='<div class="mini-toggle '+(isListening?'on':'off')+'" style="'+(isListening?'background:#58a6ff':'')+'"><div class="mini-toggle-dot"></div></div>';
+      html+='<div class="mini-toggle listen '+(isListening?'on':'off')+'"><div class="mini-toggle-dot"></div></div>';
       html+='<span class="toggle-label">'+(isListening?'Sinyal Dinliyor':'Sinyal Kapali')+'</span></div>';
+      html+='</div>';
+
+      // Toggle row 2: SL + Reverse Signal
+      html+='<div class="toggle-row">';
+      html+='<div class="toggle-wrap" onclick="toggleSlEnabled(\''+sym+'\')" title="Stop Loss Acma/Kapatma">';
+      html+='<div class="mini-toggle sl-toggle '+(slOn?'on':'off')+'"><div class="mini-toggle-dot"></div></div>';
+      html+='<span class="toggle-label">'+(slOn?'SL Aktif':'SL Kapali')+'</span></div>';
+      html+='<div class="toggle-wrap" onclick="toggleReverseSignal(\''+sym+'\')" title="Ters sinyal geldiginde pozisyonu kapat ve yeni ac">';
+      html+='<div class="mini-toggle reverse-toggle '+(revOn?'on':'off')+'"><div class="mini-toggle-dot"></div></div>';
+      html+='<span class="toggle-label">'+(revOn?'Ters Sinyal':'Ters Sinyal Kapali')+'</span></div>';
       html+='</div>';
 
       // Config tags — clickable
       html+='<div class="sym-config">';
-      // Direction tag
       var dirColor=dirsStr==='SELL'?'sell-only':dirsStr==='BUY'?'buy-only':'both-dir';
       html+='<span class="sym-tag '+dirColor+' clickable-tag" onclick="editDirections(\''+sym+'\')">'+dirsStr+'</span>';
       html+='<span class="sym-tag tp clickable-tag" onclick="editField(\''+sym+'\',\'tp_pct\','+(tpPct*100).toFixed(1)+',\'TP %\')">TP '+(tpPct*100).toFixed(1)+'%</span>';
-      html+='<span class="sym-tag sl clickable-tag" onclick="editField(\''+sym+'\',\'sl_pct\','+(slPct*100).toFixed(1)+',\'SL %\')">SL '+(slPct*100).toFixed(1)+'%</span>';
+      var slTagClass=slOn?'sl clickable-tag':'sl-off';
+      html+='<span class="sym-tag '+slTagClass+'"'+(slOn?' onclick="editField(\''+sym+'\',\'sl_pct\','+(slPct*100).toFixed(1)+',\'SL %\')"':'')+'>SL '+(slOn?(slPct*100).toFixed(1)+'%':'OFF')+'</span>';
       html+='<span class="sym-tag weight clickable-tag" onclick="editField(\''+sym+'\',\'weight\','+(weight*100).toFixed(1)+',\'Bakiye Agirligi %\')">'+((weight)*100).toFixed(0)+'%</span>';
       html+='</div>';
 

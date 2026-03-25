@@ -332,6 +332,8 @@ class SymbolConfigUpdate(BaseModel):
     allowed_directions: list[str] | None = None
     enabled: bool | None = None
     listening: bool | None = None
+    sl_enabled: bool | None = None
+    reverse_signal: bool | None = None
 
 
 @router.get("/api/symbol-config")
@@ -377,6 +379,10 @@ async def update_config_for_symbol(
         updates["enabled"] = body.enabled
     if body.listening is not None:
         updates["listening"] = body.listening
+    if body.sl_enabled is not None:
+        updates["sl_enabled"] = body.sl_enabled
+    if body.reverse_signal is not None:
+        updates["reverse_signal"] = body.reverse_signal
 
     cfg = update_symbol_config(sym, updates)
     log.info("symbol_config_updated", symbol=sym, updates=str(updates))

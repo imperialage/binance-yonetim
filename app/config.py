@@ -76,6 +76,8 @@ _DEFAULT_SYMBOL_CONFIG: dict[str, Any] = {
     "tp_pct": 0.005,
     "sl_pct": 0.015,
     "weight": 0.10,
+    "sl_enabled": True,
+    "reverse_signal": False,
 }
 
 
