@@ -61,9 +61,13 @@ SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
     "XAGUSDT": {
         "bad_hours": set(),
         "allowed_directions": {"BUY", "SELL"},
-        "tp_pct": 0.015,   # %1.5
-        "sl_pct": 0.010,   # %1.0
-        "weight": 0.10,    # ~$35
+        "tp_pct": 0.025,   # %2.5 (RSI momentum icin optimize)
+        "sl_pct": None,     # SL yok — ters sinyal ile kapanir
+        "weight": 0.10,
+        "signal_source": "rsi_momentum",  # SuperTrend yerine RSI
+        "rsi_length": 10,
+        "rsi_momentum_threshold": 20,
+        "interval": "15m",
     },
 }
 
@@ -147,7 +151,7 @@ class Settings(BaseSettings):
     rate_limit_max_events: int = 30
 
     # ── Data Collector ─────────────────────────────
-    collector_symbols: str = "XRPUSDT,BTCUSDT,AVAXUSDT,DOGEUSDT,ETHUSDT,SOLUSDT"
+    collector_symbols: str = "XRPUSDT,BTCUSDT,AVAXUSDT,DOGEUSDT,ETHUSDT,SOLUSDT,XAGUSDT"
     collector_interval: str = "5m"
 
     # ── Binance Futures Trading ─────────────────────

@@ -20,11 +20,15 @@ from app.modules.candle_store import (
     get_last_open_time,
     upsert_candles,
     get_candle_stats,
+    compute_and_store_rsi,
 )
 from app.modules.supertrend import calculate_adaptive_supertrend
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
+
+# Son islenen RSI sinyal zamani (duplicate onleme)
+_last_rsi_signal_time: dict[str, int] = {}
 
 BINANCE_FAPI_BASE = "https://fapi.binance.com"
 
@@ -488,9 +492,10 @@ async def _collection_loop(symbol: str, interval: str):
                         total=stats["rows"],
                     )
 
-                    # ── Otomatik sinyal tespiti DEVRE DISI ──
-                    # Sinyaller artik sadece TradingView webhook uzerinden gelir.
-                    # data_collector sadece mum verisi toplar (candle_store).
+                    # ── RSI Momentum sinyal tespiti (XAGUSDT vb.) ──
+                    # signal_source = "rsi_momentum" olan semboller icin
+                    # her mum kapanisinda RSI hesapla ve sinyal kontrol et
+                    await _check_rsi_signal(symbol, interval, rows)
 
             except Exception as e:
                 _status[key]["error"] = str(e)
@@ -558,27 +563,145 @@ def start_default_collections() -> list[dict]:
     """Config'deki varsayılan sembollerde veri toplamayı başlat.
 
     Semboller arası 10sn gecikme ile başlatır (rate limit koruması).
+    Ayrica SYMBOL_CONFIGS'te signal_source + interval tanimli semboller icin
+    ozel interval ile collector baslatir (orn: XAGUSDT 15m).
     """
-    from app.config import settings
+    from app.config import settings, SYMBOL_CONFIGS
 
     symbols_str = settings.collector_symbols.strip()
     if not symbols_str:
         return []
 
-    interval = settings.collector_interval.strip() or "5m"
-    symbols = [s.strip().upper() for s in symbols_str.split(",") if s.strip()]
+    default_interval = settings.collector_interval.strip() or "5m"
+    default_symbols = [s.strip().upper() for s in symbols_str.split(",") if s.strip()]
+
+    # Ozel interval gerektiren semboller (signal_source tanimli)
+    extra_collections: list[tuple[str, str]] = []
+    for sym, cfg in SYMBOL_CONFIGS.items():
+        custom_interval = cfg.get("interval")
+        if custom_interval and custom_interval != default_interval:
+            extra_collections.append((sym, custom_interval))
+            # Default listeden cikar (cifte collection onleme)
+            if sym in default_symbols:
+                default_symbols.remove(sym)
 
     # Aşamalı başlatma: her sembol 10sn arayla
     async def _staggered_start():
-        for i, sym in enumerate(symbols):
-            if i > 0:
-                await asyncio.sleep(10)  # Semboller arası bekleme
-            start_collection(sym, interval)
-            await log.ainfo("auto_start_collection", symbol=sym, interval=interval, delay=i * 10)
+        idx = 0
+        for sym in default_symbols:
+            if idx > 0:
+                await asyncio.sleep(10)
+            start_collection(sym, default_interval)
+            await log.ainfo("auto_start_collection", symbol=sym, interval=default_interval, delay=idx * 10)
+            idx += 1
+
+        # Ozel interval collector'lari
+        for sym, iv in extra_collections:
+            if idx > 0:
+                await asyncio.sleep(10)
+            start_collection(sym, iv)
+            await log.ainfo("auto_start_collection", symbol=sym, interval=iv, source="custom", delay=idx * 10)
+            idx += 1
 
     asyncio.create_task(_staggered_start())
 
-    return [{"status": "scheduled", "key": f"{s}_{interval}"} for s in symbols]
+    results = [{"status": "scheduled", "key": f"{s}_{default_interval}"} for s in default_symbols]
+    results.extend([{"status": "scheduled", "key": f"{s}_{iv}"} for s, iv in extra_collections])
+    return results
+
+
+async def _check_rsi_signal(symbol: str, interval: str, rows: list[dict]) -> None:
+    """RSI momentum sinyal kontrol — signal_source=rsi_momentum olan semboller icin."""
+    from app.config import get_symbol_config
+
+    cfg = get_symbol_config(symbol)
+    if cfg.get("signal_source") != "rsi_momentum":
+        return  # Bu sembol RSI momentum kullanmiyor
+
+    rsi_length = cfg.get("rsi_length", 10)
+    threshold = cfg.get("rsi_momentum_threshold", 20)
+
+    try:
+        # RSI hesapla ve DB'ye yaz
+        updated = await compute_and_store_rsi(symbol, interval, rsi_length)
+        if updated == 0:
+            return
+
+        # RSI momentum sinyali kontrol et
+        from app.modules.rsi_signal_engine import check_rsi_momentum
+        signal = await check_rsi_momentum(symbol, interval, threshold)
+        if signal is None:
+            return
+
+        # Duplicate kontrolü — ayni mum icin birden fazla sinyal tetikleme
+        key = f"{symbol}_{interval}_rsi"
+        now_ms = int(time.time() * 1000)
+        iv_ms = INTERVAL_MS.get(interval, 900_000)
+        current_candle_open = (now_ms // iv_ms) * iv_ms
+        if _last_rsi_signal_time.get(key, 0) >= current_candle_open:
+            return  # Bu mum icin zaten sinyal islendi
+
+        _last_rsi_signal_time[key] = current_candle_open
+
+        direction = signal["direction"]
+        price = signal["close"]
+        dt_str = signal["date"]
+
+        await log.ainfo(
+            "rsi_momentum_trade_signal",
+            symbol=symbol,
+            direction=direction,
+            price=price,
+            rsi_now=signal["rsi_now"],
+            rsi_change=signal["rsi_change"],
+        )
+
+        # Config kontrolleri
+        from app.config import settings
+        if not settings.trading_enabled:
+            await log.ainfo("rsi_trade_skipped_disabled", symbol=symbol)
+            return
+        if not cfg.get("enabled", True):
+            await log.ainfo("rsi_trade_skipped_symbol_disabled", symbol=symbol)
+            return
+        if not cfg.get("listening", True):
+            await log.ainfo("rsi_trade_skipped_not_listening", symbol=symbol)
+            return
+
+        # Sinyal logla
+        from app.modules.st_signal_logger import log_st_signal
+        row_id = await log_st_signal(
+            dt=dt_str,
+            symbol=symbol,
+            direction=direction,
+            band=f"RSI:{signal['rsi_now']:.1f}",
+            price=price,
+            entered=True,
+        )
+
+        # Trade ac — reverse_signal mantigi trade_executor'da zaten var
+        from app.modules.trade_executor import execute_trade
+        event_id = f"rsi-{row_id}-{int(time.time())}"
+        asyncio.create_task(execute_trade(
+            symbol=symbol,
+            signal=direction,
+            price=price,
+            event_id=event_id,
+            tf=interval,
+            tp_pct=cfg.get("tp_pct"),
+            sl_pct=cfg.get("sl_pct"),
+        ))
+
+        await log.ainfo(
+            "rsi_trade_dispatched",
+            symbol=symbol,
+            direction=direction,
+            price=price,
+            signal_id=row_id,
+        )
+
+    except Exception as e:
+        await log.aerror("rsi_signal_check_error", symbol=symbol, error=str(e))
 
 
 async def stop_all_collections():

@@ -117,8 +117,10 @@ async def _execute_trade_inner(
     sym_cfg = _get_sym_cfg(symbol)
     reverse_signal = sym_cfg.get("reverse_signal", False)
     sl_enabled = sym_cfg.get("sl_enabled", True)
-    # reverse_signal acikken SL konmaz
+    # reverse_signal acikken veya sl_pct=None ise SL konmaz
     if reverse_signal:
+        sl_enabled = False
+    if sym_cfg.get("sl_pct") is None:
         sl_enabled = False
 
     # ── 2c. Clean orphan orders if no position ──────
@@ -274,8 +276,11 @@ async def _execute_trade_inner(
     _default_sl, _default_tp = settings.get_strategy(tf)
     if tp_pct is None:
         tp_pct = _default_tp
-    if sl_pct is None:
+    # sl_pct None ise: config'den None gelmis olabilir (SL yok) veya default kullan
+    if sl_pct is None and sl_enabled:
         sl_pct = _default_sl
+    elif sl_pct is None:
+        sl_pct = 0.0  # SL devre disi, hesaplama icin 0
 
     if side == "BUY":
         raw_tp = entry_price * (1 + tp_pct)

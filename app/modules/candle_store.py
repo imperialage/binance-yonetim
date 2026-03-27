@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,8 @@ from app.utils.logging import get_logger
 log = get_logger(__name__)
 
 _db: aiosqlite.Connection | None = None
-DB_PATH = Path("data/candles.db")
+_DATA_DIR = os.getenv("DATA_DIR", "data")
+DB_PATH = Path(f"{_DATA_DIR}/candles.db")
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS candles (
@@ -55,6 +57,11 @@ async def init_candle_db() -> None:
     await db.execute(_CREATE_TABLE)
     for idx_sql in _CREATE_INDEXES:
         await db.execute(idx_sql)
+    # rsi_10 kolonu yoksa ekle (migration)
+    try:
+        await db.execute("ALTER TABLE candles ADD COLUMN rsi_10 REAL")
+    except Exception:
+        pass  # Kolon zaten var
     await db.commit()
     await log.ainfo("candle_store_ready", path=str(DB_PATH))
 
@@ -228,3 +235,94 @@ async def get_candle_stats(symbol: str, interval: str) -> dict[str, Any]:
         "buy_signals": row["buy_signals"],
         "sell_signals": row["sell_signals"],
     }
+
+
+# ── RSI(10) Wilder's RMA hesaplama ──────────────────────
+
+
+def calculate_rsi(closes: list[float], length: int = 10) -> list[float | None]:
+    """Wilder's RMA ile RSI hesapla. TradingView ile birebir uyumlu.
+
+    Returns: closes ile aynı uzunlukta liste, ilk `length` eleman None.
+    """
+    n = len(closes)
+    rsi_values: list[float | None] = [None] * n
+
+    if n < length + 1:
+        return rsi_values
+
+    gains = [0.0] * n
+    losses = [0.0] * n
+    for i in range(1, n):
+        delta = closes[i] - closes[i - 1]
+        gains[i] = max(delta, 0.0)
+        losses[i] = max(-delta, 0.0)
+
+    # İlk avg: SMA
+    avg_gain = sum(gains[1 : length + 1]) / length
+    avg_loss = sum(losses[1 : length + 1]) / length
+
+    if avg_loss == 0:
+        rsi_values[length] = 100.0
+    else:
+        rs = avg_gain / avg_loss
+        rsi_values[length] = 100.0 - (100.0 / (1.0 + rs))
+
+    # Sonraki değerler: RMA (Wilder's smoothing)
+    for i in range(length + 1, n):
+        avg_gain = (avg_gain * (length - 1) + gains[i]) / length
+        avg_loss = (avg_loss * (length - 1) + losses[i]) / length
+
+        if avg_loss == 0:
+            rsi_values[i] = 100.0
+        else:
+            rs = avg_gain / avg_loss
+            rsi_values[i] = round(100.0 - (100.0 / (1.0 + rs)), 4)
+
+    return rsi_values
+
+
+async def compute_and_store_rsi(
+    symbol: str, interval: str, length: int = 10
+) -> int:
+    """DB'deki mumlardan RSI hesaplayıp rsi_10 kolonuna yaz. Return: güncellenen satır sayısı."""
+    db = await get_candle_db()
+
+    cursor = await db.execute(
+        "SELECT open_time, close FROM candles WHERE symbol = ? AND interval = ? ORDER BY open_time ASC",
+        (symbol, interval),
+    )
+    rows = await cursor.fetchall()
+
+    if len(rows) < length + 1:
+        return 0
+
+    closes = [float(r["close"]) for r in rows]
+    open_times = [int(r["open_time"]) for r in rows]
+
+    rsi_values = calculate_rsi(closes, length)
+
+    updated = 0
+    for i in range(len(rows)):
+        if rsi_values[i] is not None:
+            await db.execute(
+                "UPDATE candles SET rsi_10 = ? WHERE symbol = ? AND interval = ? AND open_time = ?",
+                (rsi_values[i], symbol, interval, open_times[i]),
+            )
+            updated += 1
+
+    await db.commit()
+    return updated
+
+
+async def get_recent_rsi(symbol: str, interval: str, count: int = 3) -> list[dict]:
+    """Son N mumun RSI değerlerini döndür (en eskiden en yeniye)."""
+    db = await get_candle_db()
+    cursor = await db.execute(
+        "SELECT open_time, date, close, rsi_10 FROM candles "
+        "WHERE symbol = ? AND interval = ? AND rsi_10 IS NOT NULL "
+        "ORDER BY open_time DESC LIMIT ?",
+        (symbol, interval, count),
+    )
+    rows = await cursor.fetchall()
+    return [dict(r) for r in reversed(rows)]
