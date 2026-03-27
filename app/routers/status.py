@@ -530,6 +530,27 @@ async def debug_all_open_orders() -> dict:
     return result
 
 
+@router.get("/debug/db-paths")
+async def debug_db_paths() -> dict:
+    """Show all DB file paths and sizes."""
+    import os
+    from pathlib import Path
+    data_dir = os.getenv("DATA_DIR", "data")
+    result = {"DATA_DIR_env": data_dir, "DATA_DIR_abs": os.path.abspath(data_dir), "files": {}}
+    # Check known DB files
+    for name in ["candles.db", "st_signals.db", "trades.db", "signals.db", "algo_ids.json"]:
+        p = Path(data_dir) / name
+        if p.exists():
+            result["files"][name] = {"path": str(p.resolve()), "size_kb": round(p.stat().st_size / 1024, 1)}
+        else:
+            result["files"][name] = {"path": str(p.resolve()), "exists": False}
+    # Also check /data directly
+    data_path = Path("/data")
+    if data_path.exists():
+        result["/data_contents"] = [f.name for f in data_path.iterdir()][:20]
+    return result
+
+
 @router.get("/debug/reset-directions")
 async def debug_reset_directions() -> dict:
     """Reset all direction filter keys so next signal of any direction passes through."""
