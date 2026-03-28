@@ -23,6 +23,7 @@ from app.modules.scheduler import start_scheduler, stop_scheduler
 from app.modules.data_collector import start_default_collections, stop_all_collections
 from app.modules.st_signal_logger import init_st_signal_db, close_st_signal_db
 from app.modules.st_stats_updater import start_st_stats_updater, stop_st_stats_updater
+from app.modules.order_stream import start_order_stream, stop_order_stream
 from app.routers import admin, backtest, chart, data_collector, events, latest, status, webhook, ws
 from app.routers import st_webhook
 from app.utils.logging import get_logger, setup_logging
@@ -44,8 +45,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     start_scheduler()
     start_st_stats_updater()
     start_price_stream()
+    start_order_stream()
     start_default_collections()
     yield
+    await stop_order_stream()
     await stop_price_stream()
     await stop_all_collections()
     await stop_st_stats_updater()

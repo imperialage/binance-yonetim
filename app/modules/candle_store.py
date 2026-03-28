@@ -240,46 +240,7 @@ async def get_candle_stats(symbol: str, interval: str) -> dict[str, Any]:
 # ── RSI(10) Wilder's RMA hesaplama ──────────────────────
 
 
-def calculate_rsi(closes: list[float], length: int = 10) -> list[float | None]:
-    """Wilder's RMA ile RSI hesapla. TradingView ile birebir uyumlu.
-
-    Returns: closes ile aynı uzunlukta liste, ilk `length` eleman None.
-    """
-    n = len(closes)
-    rsi_values: list[float | None] = [None] * n
-
-    if n < length + 1:
-        return rsi_values
-
-    gains = [0.0] * n
-    losses = [0.0] * n
-    for i in range(1, n):
-        delta = closes[i] - closes[i - 1]
-        gains[i] = max(delta, 0.0)
-        losses[i] = max(-delta, 0.0)
-
-    # İlk avg: SMA
-    avg_gain = sum(gains[1 : length + 1]) / length
-    avg_loss = sum(losses[1 : length + 1]) / length
-
-    if avg_loss == 0:
-        rsi_values[length] = 100.0
-    else:
-        rs = avg_gain / avg_loss
-        rsi_values[length] = 100.0 - (100.0 / (1.0 + rs))
-
-    # Sonraki değerler: RMA (Wilder's smoothing)
-    for i in range(length + 1, n):
-        avg_gain = (avg_gain * (length - 1) + gains[i]) / length
-        avg_loss = (avg_loss * (length - 1) + losses[i]) / length
-
-        if avg_loss == 0:
-            rsi_values[i] = 100.0
-        else:
-            rs = avg_gain / avg_loss
-            rsi_values[i] = round(100.0 - (100.0 / (1.0 + rs)), 4)
-
-    return rsi_values
+from app.modules.rsi_calculator import calculate_rsi  # noqa: E402
 
 
 async def compute_and_store_rsi(

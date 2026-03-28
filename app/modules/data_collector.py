@@ -611,97 +611,106 @@ def start_default_collections() -> list[dict]:
 
 
 async def _check_rsi_signal(symbol: str, interval: str, rows: list[dict]) -> None:
-    """RSI momentum sinyal kontrol — signal_source=rsi_momentum olan semboller icin."""
-    from app.config import get_symbol_config
+    """Signal source routing — sembol config'ine gore sinyal kontrol.
+
+    hidden_divergence: RSI divergence sinyal tespiti + limit order
+    Diger: pas gec (SuperTrend webhook ile calisir)
+    """
+    from app.config import get_symbol_config, settings
 
     cfg = get_symbol_config(symbol)
-    if cfg.get("signal_source") != "rsi_momentum":
-        return  # Bu sembol RSI momentum kullanmiyor
+    source = cfg.get("signal_source")
+
+    if source == "hidden_divergence":
+        await _check_divergence_signal(symbol, interval, cfg)
+    # Diger semboller: SuperTrend webhook uzerinden calisir, burada bir sey yapma
+
+
+async def _check_divergence_signal(symbol: str, interval: str, cfg: dict) -> None:
+    """Hidden RSI Divergence sinyal kontrol + limit order ile giris."""
+    from app.config import settings
 
     rsi_length = cfg.get("rsi_length", 10)
-    threshold = cfg.get("rsi_momentum_threshold", 20)
 
     try:
-        # RSI hesapla ve DB'ye yaz
+        # 1. RSI hesapla ve DB'ye yaz
         updated = await compute_and_store_rsi(symbol, interval, rsi_length)
         if updated == 0:
             return
 
-        # RSI momentum sinyali kontrol et
-        from app.modules.rsi_signal_engine import check_rsi_momentum
-        signal = await check_rsi_momentum(symbol, interval, threshold)
+        # 2. Divergence kontrol
+        from app.modules.hidden_divergence import check_divergence
+        signal = await check_divergence(
+            symbol=symbol,
+            interval=interval,
+            rsi_long_threshold=cfg.get("rsi_long_threshold", 32),
+            rsi_short_threshold=cfg.get("rsi_short_threshold", 70),
+            max_gap=cfg.get("divergence_max_gap", 12),
+            entry_buffer=cfg.get("entry_buffer", 0.001),
+        )
         if signal is None:
             return
 
-        # Duplicate kontrolü — ayni mum icin birden fazla sinyal tetikleme
-        key = f"{symbol}_{interval}_rsi"
+        # 3. Duplicate kontrolu — ayni mum icin tekrar tetikleme
+        key = f"{symbol}_{interval}_div"
         now_ms = int(time.time() * 1000)
         iv_ms = INTERVAL_MS.get(interval, 900_000)
         current_candle_open = (now_ms // iv_ms) * iv_ms
         if _last_rsi_signal_time.get(key, 0) >= current_candle_open:
-            return  # Bu mum icin zaten sinyal islendi
-
+            return
         _last_rsi_signal_time[key] = current_candle_open
 
-        direction = signal["direction"]
-        price = signal["close"]
-        dt_str = signal["date"]
-
-        await log.ainfo(
-            "rsi_momentum_trade_signal",
-            symbol=symbol,
-            direction=direction,
-            price=price,
-            rsi_now=signal["rsi_now"],
-            rsi_change=signal["rsi_change"],
-        )
-
-        # Config kontrolleri
-        from app.config import settings
+        # 4. Config kontrolleri
         if not settings.trading_enabled:
-            await log.ainfo("rsi_trade_skipped_disabled", symbol=symbol)
+            await log.ainfo("divergence_trade_skipped", symbol=symbol, reason="trading_disabled")
             return
         if not cfg.get("enabled", True):
-            await log.ainfo("rsi_trade_skipped_symbol_disabled", symbol=symbol)
+            await log.ainfo("divergence_trade_skipped", symbol=symbol, reason="symbol_disabled")
             return
         if not cfg.get("listening", True):
-            await log.ainfo("rsi_trade_skipped_not_listening", symbol=symbol)
+            await log.ainfo("divergence_trade_skipped", symbol=symbol, reason="not_listening")
             return
 
-        # Sinyal logla
+        direction = signal.direction
+        entry_price = signal.entry_price
+        dt_str = signal.candle_b.get("date", "")
+
+        # 5. Sinyal logla
         from app.modules.st_signal_logger import log_st_signal
         row_id = await log_st_signal(
             dt=dt_str,
             symbol=symbol,
             direction=direction,
-            band=f"RSI:{signal['rsi_now']:.1f}",
-            price=price,
+            band=f"DIV:A_RSI={signal.rsi_a:.0f}→B_RSI={signal.rsi_b:.0f}",
+            price=entry_price,
             entered=True,
         )
 
-        # Trade ac — reverse_signal mantigi trade_executor'da zaten var
-        from app.modules.trade_executor import execute_trade
-        event_id = f"rsi-{row_id}-{int(time.time())}"
-        asyncio.create_task(execute_trade(
-            symbol=symbol,
-            signal=direction,
-            price=price,
-            event_id=event_id,
-            tf=interval,
-            tp_pct=cfg.get("tp_pct"),
-            sl_pct=cfg.get("sl_pct"),
-        ))
-
         await log.ainfo(
-            "rsi_trade_dispatched",
+            "divergence_trade_signal",
             symbol=symbol,
             direction=direction,
-            price=price,
+            entry_price=entry_price,
+            rsi_a=signal.rsi_a,
+            rsi_b=signal.rsi_b,
+            gap=signal.gap,
             signal_id=row_id,
         )
 
+        # 6. Limit order ile islem ac
+        from app.modules.divergence_executor import execute_divergence_trade
+        event_id = f"div-{row_id}-{int(time.time())}"
+        asyncio.create_task(execute_divergence_trade(
+            symbol=symbol,
+            direction=direction,
+            entry_price=entry_price,
+            event_id=event_id,
+            signal=signal,
+            cfg=cfg,
+        ))
+
     except Exception as e:
-        await log.aerror("rsi_signal_check_error", symbol=symbol, error=str(e))
+        await log.aerror("divergence_signal_check_error", symbol=symbol, error=str(e))
 
 
 async def stop_all_collections():

@@ -61,13 +61,16 @@ SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
     "XAGUSDT": {
         "bad_hours": set(),
         "allowed_directions": {"BUY", "SELL"},
-        "tp_pct": 0.025,   # %2.5 (RSI momentum icin optimize)
-        "sl_pct": None,     # SL yok — ters sinyal ile kapanir
-        "weight": 0.10,
-        "signal_source": "rsi_momentum",  # SuperTrend yerine RSI
-        "rsi_length": 10,
-        "rsi_momentum_threshold": 20,
+        "signal_source": "hidden_divergence",
         "interval": "15m",
+        "rsi_length": 10,
+        "rsi_long_threshold": 32,       # Mum A RSI <= 32 → LONG aday
+        "rsi_short_threshold": 70,      # Mum A RSI >= 70 → SHORT aday
+        "divergence_max_gap": 12,       # Mum A-B arasi max mum
+        "entry_buffer": 0.001,          # binde 1 (%0.1)
+        "tp_pct": 0.010,               # %1.0
+        "sl_pct": 0.003,               # %0.3
+        "weight": 0.10,
     },
 }
 
