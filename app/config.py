@@ -61,16 +61,10 @@ SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
     "XAGUSDT": {
         "bad_hours": set(),
         "allowed_directions": {"BUY", "SELL"},
-        "signal_source": "hidden_divergence",
-        "interval": "15m",
-        "rsi_length": 10,
-        "rsi_long_threshold": 32,       # Mum A RSI <= 32 → LONG aday
-        "rsi_short_threshold": 70,      # Mum A RSI >= 70 → SHORT aday
-        "divergence_max_gap": 12,       # Mum A-B arasi max mum
-        "entry_buffer": 0.001,          # binde 1 (%0.1)
         "tp_pct": 0.010,               # %1.0
         "sl_pct": 0.003,               # %0.3
         "weight": 0.10,
+        "interval": "15m",
     },
 }
 
