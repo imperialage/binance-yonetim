@@ -205,7 +205,30 @@ async def st_webhook(request: Request) -> JSONResponse:
             "message": f"Signal listening disabled for {symbol}",
         })
 
-    # ── 5. Log signal ──────────────────────────────────
+    # ── 5. Haftasonu kontrolu (TradFi semboller icin) ──
+    from datetime import datetime, timezone, timedelta
+    _tz_istanbul = timezone(timedelta(hours=3))
+    now_ist = datetime.now(_tz_istanbul)
+    weekday = now_ist.weekday()  # 0=Pazartesi, 4=Cuma, 5=Cumartesi, 6=Pazar
+    hour = now_ist.hour
+
+    # weekend_closed: Cuma 20:00 → Pazar 23:59 (Istanbul) arasi islem kapatir
+    is_weekend_closed = sym_cfg.get("weekend_closed", False) and (
+        (weekday == 4 and hour >= 20) or   # Cuma 20:00+
+        weekday == 5 or                     # Cumartesi
+        weekday == 6                        # Pazar
+    )
+
+    if is_weekend_closed:
+        log.info("st_webhook_weekend_closed", symbol=symbol, direction=direction, day=weekday, hour=hour)
+        return JSONResponse(content={
+            "status": "weekend_closed",
+            "symbol": symbol,
+            "direction": direction,
+            "message": f"{symbol} haftasonu kapali (Cuma 20:00 - Pazar 24:00 TR)",
+        })
+
+    # ── 6. Log signal ──────────────────────────────────
     row_id = await log_st_signal(
         dt=dt_str,
         symbol=symbol,
@@ -215,7 +238,7 @@ async def st_webhook(request: Request) -> JSONResponse:
         entered=True,
     )
 
-    # ── 6. Execute trade ───────────────────────────────
+    # ── 7. Execute trade ───────────────────────────────
     trade_dispatched = False
     skip_reason = None
 

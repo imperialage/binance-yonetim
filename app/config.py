@@ -65,6 +65,7 @@ SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
         "sl_pct": 0.003,               # %0.3
         "weight": 0.10,
         "interval": "15m",
+        "weekend_closed": True,         # Cuma 20:00 - Pazar 24:00 (TR) islem kapali
     },
 }
 
