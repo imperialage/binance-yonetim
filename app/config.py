@@ -12,57 +12,52 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Filtre parametreleri + TP/SL + izin verilen yönler
 SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
     "BTCUSDT": {
-        "bad_hours": {4, 19, 20},
-        "allowed_directions": {"SELL", "BUY"},
-        "band_filter": "LOW_ONLY",
-        "tp_pct": 0.023,   # %2.3
-        "sl_pct": 0.022,   # %2.2
-        "weight": 0.27,    # $370 → ~$100
+        "bad_hours": set(),
+        "allowed_directions": {"BUY", "SELL"},
+        "tp_pct": 0.010,   # %1.0
+        "sl_pct": 0.003,   # %0.3
+        "weight": 0.15,
     },
     "XRPUSDT": {
         "bad_hours": set(),
-        "allowed_directions": {"SELL"},
-        "vol_min": 2.0,
-        "tp_pct": 0.022,   # %2.2
-        "sl_pct": 0.013,   # %1.3
-        "weight": 0.18,    # $370 → ~$67
+        "allowed_directions": {"BUY", "SELL"},
+        "tp_pct": 0.010,   # %1.0
+        "sl_pct": 0.003,   # %0.3
+        "weight": 0.15,
     },
     "AVAXUSDT": {
         "bad_hours": set(),
-        "allowed_directions": {"SELL"},
-        "vol_min": 1.5,
-        "tp_pct": 0.016,   # %1.6
-        "sl_pct": 0.025,   # %2.5
-        "weight": 0.16,    # $370 → ~$59
+        "allowed_directions": {"BUY", "SELL"},
+        "tp_pct": 0.010,   # %1.0
+        "sl_pct": 0.003,   # %0.3
+        "weight": 0.15,
     },
     "DOGEUSDT": {
-        "bad_hours": {1, 3, 7, 10, 17},
-        "allowed_directions": {"SELL"},
-        "tp_pct": 0.024,   # %2.4
-        "sl_pct": 0.015,   # %1.5
-        "weight": 0.16,    # $370 → ~$59
+        "bad_hours": set(),
+        "allowed_directions": {"BUY", "SELL"},
+        "tp_pct": 0.010,   # %1.0
+        "sl_pct": 0.003,   # %0.3
+        "weight": 0.15,
     },
     "ETHUSDT": {
-        "bad_hours": {3, 4, 17, 21, 23},
-        "allowed_directions": {"SELL"},
-        "band_filter": "MID_ONLY",
-        "tp_pct": 0.015,   # %1.5
-        "sl_pct": 0.024,   # %2.4
-        "weight": 0.13,    # $370 → ~$48
+        "bad_hours": set(),
+        "allowed_directions": {"BUY", "SELL"},
+        "tp_pct": 0.010,   # %1.0
+        "sl_pct": 0.003,   # %0.3
+        "weight": 0.15,
     },
     "SOLUSDT": {
-        "bad_hours": {0, 3, 5, 13, 21},
-        "allowed_directions": {"SELL", "BUY"},
-        "band_filter": "HIGH_MID",
-        "tp_pct": 0.018,   # %1.8
-        "sl_pct": 0.013,   # %1.3
-        "weight": 0.10,    # $370 → ~$37
+        "bad_hours": set(),
+        "allowed_directions": {"BUY", "SELL"},
+        "tp_pct": 0.010,   # %1.0
+        "sl_pct": 0.003,   # %0.3
+        "weight": 0.15,
     },
     "XAGUSDT": {
         "bad_hours": set(),
         "allowed_directions": {"BUY", "SELL"},
-        "tp_pct": 0.010,               # %1.0
-        "sl_pct": 0.003,               # %0.3
+        "tp_pct": 0.010,   # %1.0
+        "sl_pct": 0.003,   # %0.3
         "weight": 0.10,
         "interval": "15m",
         "weekend_closed": True,         # Cuma 20:00 - Pazar 24:00 (TR) islem kapali
