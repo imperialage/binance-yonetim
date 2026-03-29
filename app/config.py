@@ -62,6 +62,13 @@ SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
         "interval": "15m",
         "weekend_closed": True,         # Cuma 20:00 - Pazar 24:00 (TR) islem kapali
     },
+    "MYXUSDT": {
+        "bad_hours": set(),
+        "allowed_directions": {"BUY", "SELL"},
+        "tp_pct": 0.010,   # %1.0
+        "sl_pct": 0.003,   # %0.3
+        "weight": 0.10,
+    },
 }
 
 # Tanımsız semboller için fallback
@@ -155,7 +162,7 @@ class Settings(BaseSettings):
     stop_loss_pct: float = 0.015      # 1.5% stop-loss (grid search optimal)
     take_profit_pct: float = 0.005    # 0.5% take-profit (grid search optimal)
     binance_proxy_url: str = ""       # SOCKS5 proxy for static IP
-    trading_symbols: str = "XRPUSDT,BTCUSDT,AVAXUSDT,DOGEUSDT,ETHUSDT,SOLUSDT,XAGUSDT"  # Comma-separated whitelist
+    trading_symbols: str = "XRPUSDT,BTCUSDT,AVAXUSDT,DOGEUSDT,ETHUSDT,SOLUSDT,XAGUSDT,MYXUSDT"  # Comma-separated whitelist
 
     # Per-timeframe strategy overrides
     trading_timeframes: str = "5m"      # Active TFs: "5m" or "1m" or "1m,5m"
