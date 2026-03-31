@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -64,15 +64,17 @@ def _parse_price(raw: float | str) -> float | None:
         return None
 
 
+_TZ_IST = timezone(timedelta(hours=3))  # Istanbul UTC+3
+
 def _parse_time(raw: str | int | None) -> tuple[int, str]:
-    """Parse signal time. Returns (unix_ts, formatted_str)."""
+    """Parse signal time. Returns (unix_ts, formatted_str in Istanbul time)."""
     now = int(time.time())
     if raw is None:
-        dt = datetime.fromtimestamp(now, tz=timezone.utc)
+        dt = datetime.fromtimestamp(now, tz=_TZ_IST)
         return now, dt.strftime("%Y-%m-%d %H:%M:%S")
 
     if isinstance(raw, int):
-        dt = datetime.fromtimestamp(raw, tz=timezone.utc)
+        dt = datetime.fromtimestamp(raw, tz=_TZ_IST)
         return raw, dt.strftime("%Y-%m-%d %H:%M:%S")
 
     raw_str = str(raw).strip()
@@ -80,7 +82,7 @@ def _parse_time(raw: str | int | None) -> tuple[int, str]:
     # Try plain integer
     try:
         ts = int(raw_str)
-        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        dt = datetime.fromtimestamp(ts, tz=_TZ_IST)
         return ts, dt.strftime("%Y-%m-%d %H:%M:%S")
     except ValueError:
         pass
@@ -89,12 +91,13 @@ def _parse_time(raw: str | int | None) -> tuple[int, str]:
     for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
         try:
             dt = datetime.strptime(raw_str, fmt).replace(tzinfo=timezone.utc)
-            return int(dt.timestamp()), dt.strftime("%Y-%m-%d %H:%M:%S")
+            dt_ist = dt.astimezone(_TZ_IST)
+            return int(dt.timestamp()), dt_ist.strftime("%Y-%m-%d %H:%M:%S")
         except ValueError:
             continue
 
     # Fallback: now
-    dt = datetime.fromtimestamp(now, tz=timezone.utc)
+    dt = datetime.fromtimestamp(now, tz=_TZ_IST)
     return now, dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
