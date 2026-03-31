@@ -115,6 +115,10 @@ tr:hover{background:#0d111788}
 /* Two-column layout */
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
 
+/* Scroll wrapper for tables */
+.scroll-list{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.scroll-list table{min-width:500px}
+
 /* Signal Detail Modal */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:100;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
 .modal-overlay.active{display:flex}
@@ -190,15 +194,40 @@ tr.clickable:hover{background:#1c212888}
   .two-col{grid-template-columns:1fr}
 }
 @media(max-width:700px){
-  header{padding:10px 14px;gap:8px}
+  header{padding:10px 14px;gap:8px;flex-wrap:wrap}
   header h1{font-size:15px}
-  .container{padding:12px}
-  .top-row{grid-template-columns:1fr 1fr;gap:8px}
-  .stat-card{padding:14px}
-  .stat-value{font-size:20px}
+  .nav-links{display:none}
+  .header-right{width:100%;justify-content:space-between}
+  .container{padding:8px}
+  .top-row{grid-template-columns:1fr 1fr;gap:6px}
+  .stat-card{padding:10px}
+  .stat-value{font-size:16px}
+  .stat-label{font-size:9px}
+  .stat-sub{font-size:10px}
   .sym-grid{grid-template-columns:1fr}
   .two-col{grid-template-columns:1fr}
-  th,td{padding:6px 8px;font-size:11px}
+  .panel{padding:12px}
+  .panel h2{font-size:11px}
+  .tabs{padding:2px}
+  .tab{padding:5px 10px;font-size:10px}
+  th{padding:5px 6px;font-size:9px}
+  td{padding:5px 6px;font-size:10px}
+  .scroll-list{max-height:350px}
+  .scroll-list table{min-width:600px}
+  .section-title{font-size:11px;flex-wrap:wrap}
+  .filter-icons{margin-top:4px}
+  .sym-card{padding:12px 14px}
+  .sym-name{font-size:14px}
+  .toggle-label{font-size:8px}
+  .mini-toggle{width:26px;height:15px}
+  .mini-toggle-dot{width:11px;height:11px}
+  .mini-toggle.on .mini-toggle-dot{transform:translateX(11px)}
+  .sym-tag{font-size:8px;padding:2px 6px}
+  .card-btn{font-size:10px;padding:6px 8px}
+}
+@media(max-width:400px){
+  .top-row{grid-template-columns:1fr}
+  .stat-value{font-size:14px}
 }
 </style>
 </head>
@@ -895,22 +924,23 @@ tr.clickable:hover{background:#1c212888}
     sorted.forEach(function(t){cum+=t.pnl;cums.push(cum);});
     cums.reverse();
 
-    var html='<table><thead><tr><th>Tarih</th><th>Sembol</th><th>Yon</th><th>Giris</th><th>Cikis</th><th>PnL</th><th>Kum.</th></tr></thead><tbody>';
+    var html='<table><thead><tr><th>Sembol</th><th>Yon</th><th>Giris Zaman</th><th>Cikis Zaman</th><th>Giris $</th><th>Cikis $</th><th>PnL</th><th>Kum.</th></tr></thead><tbody>';
     filtered.forEach(function(t,i){
       var cls=t.pnl>=0?'pnl-positive':'pnl-negative';
       var cumCls=cums[i]>=0?'pnl-positive':'pnl-negative';
       var sideBadge='--';
-      if(t.side==='LONG') sideBadge='<span class="badge badge-buy">LONG</span>';
-      else if(t.side==='SHORT') sideBadge='<span class="badge badge-sell">SHORT</span>';
+      if(t.side==='LONG') sideBadge='<span class="badge badge-buy">L</span>';
+      else if(t.side==='SHORT') sideBadge='<span class="badge badge-sell">S</span>';
 
       html+='<tr>';
-      html+='<td style="color:#6e7681;font-size:12px">'+(t.time||'--')+'</td>';
-      html+='<td><span class="badge-sym">'+(t.symbol||'--')+'</span></td>';
+      html+='<td><span class="badge-sym">'+(t.symbol||'--').replace('USDT','')+'</span></td>';
       html+='<td>'+sideBadge+'</td>';
-      html+='<td>'+(t.entry_price?fmt(t.entry_price,2):'--')+'</td>';
-      html+='<td>'+(t.exit_price?fmt(t.exit_price,2):'--')+'</td>';
-      html+='<td class="'+cls+'">'+fmtUSD(t.pnl)+'</td>';
-      html+='<td class="'+cumCls+'">'+fmtUSD(cums[i])+'</td>';
+      html+='<td style="color:#6e7681;font-size:11px;white-space:nowrap">'+(t.entry_time||'--')+'</td>';
+      html+='<td style="color:#6e7681;font-size:11px;white-space:nowrap">'+(t.time||'--')+'</td>';
+      html+='<td style="font-size:11px">'+(t.entry_price?fmt(t.entry_price,2):'--')+'</td>';
+      html+='<td style="font-size:11px">'+(t.exit_price?fmt(t.exit_price,2):'--')+'</td>';
+      html+='<td class="'+cls+'" style="font-size:11px">'+fmtUSD(t.pnl)+'</td>';
+      html+='<td class="'+cumCls+'" style="font-size:11px">'+fmtUSD(cums[i])+'</td>';
       html+='</tr>';
     });
     html+='</tbody></table>';
