@@ -189,45 +189,71 @@ tr.clickable:hover{background:#1c212888}
 .mod-input:focus{outline:none;border-color:#388bfd}
 
 /* Responsive */
+/* Tablet */
 @media(max-width:1100px){
   .sym-grid{grid-template-columns:repeat(2,1fr)}
   .two-col{grid-template-columns:1fr}
 }
-@media(max-width:700px){
-  header{padding:10px 14px;gap:8px;flex-wrap:wrap}
-  header h1{font-size:15px}
-  .nav-links{display:none}
+
+/* Mobil */
+@media(max-width:768px){
+  body{font-size:13px}
+  header{padding:10px 16px;gap:8px;flex-wrap:wrap}
+  header h1{font-size:16px}
+  .nav-links{font-size:11px;gap:8px}
   .header-right{width:100%;justify-content:space-between}
-  .container{padding:8px}
-  .top-row{grid-template-columns:1fr 1fr;gap:6px}
-  .stat-card{padding:10px}
-  .stat-value{font-size:16px}
-  .stat-label{font-size:9px}
-  .stat-sub{font-size:10px}
-  .sym-grid{grid-template-columns:1fr}
-  .two-col{grid-template-columns:1fr}
-  .panel{padding:12px}
-  .panel h2{font-size:11px}
-  .tabs{padding:2px}
-  .tab{padding:5px 10px;font-size:10px}
-  th{padding:5px 6px;font-size:9px}
-  td{padding:5px 6px;font-size:10px}
-  .scroll-list{max-height:350px}
-  .scroll-list table{min-width:600px}
-  .section-title{font-size:11px;flex-wrap:wrap}
-  .filter-icons{margin-top:4px}
-  .sym-card{padding:12px 14px}
-  .sym-name{font-size:14px}
-  .toggle-label{font-size:8px}
-  .mini-toggle{width:26px;height:15px}
-  .mini-toggle-dot{width:11px;height:11px}
-  .mini-toggle.on .mini-toggle-dot{transform:translateX(11px)}
-  .sym-tag{font-size:8px;padding:2px 6px}
-  .card-btn{font-size:10px;padding:6px 8px}
+  .container{padding:12px}
+
+  /* Ust kartlar 2x2 */
+  .top-row{grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px}
+  .stat-card{padding:12px 14px;border-radius:10px}
+  .stat-label{font-size:9px;letter-spacing:0.8px;margin-bottom:4px}
+  .stat-value{font-size:18px}
+  .stat-sub{font-size:10px;margin-top:2px}
+
+  /* Sembol kartlari tek sutun, tam genislik */
+  .section-title{font-size:12px;flex-wrap:wrap;margin-bottom:10px}
+  .filter-icons{margin-top:4px;margin-left:0;width:100%}
+  .sym-grid{grid-template-columns:1fr;gap:10px;margin-bottom:16px}
+  .sym-card{padding:14px 16px;border-radius:12px}
+  .sym-header{margin-bottom:8px}
+  .sym-name{font-size:16px}
+  .sym-price{font-size:15px}
+  .toggle-row{gap:12px;margin-bottom:6px}
+  .toggle-label{font-size:9px}
+  .sym-config{gap:6px;margin-bottom:8px}
+  .sym-tag{font-size:9px;padding:3px 8px}
+  .pos-row{font-size:12px}
+  .card-btn{font-size:11px;padding:8px 10px}
+
+  /* Tablolar — tam genislik, yatay scroll */
+  .two-col{grid-template-columns:1fr;gap:12px;margin-bottom:16px}
+  .panel{padding:14px;border-radius:12px}
+  .panel h2{font-size:12px;margin-bottom:10px}
+  .tabs{padding:2px;margin-bottom:10px}
+  .tab{padding:6px 12px;font-size:11px}
+  .scroll-list{max-height:400px;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -14px;padding:0 14px}
+  .scroll-list table{min-width:480px}
+  th{padding:8px 8px;font-size:10px;white-space:nowrap}
+  td{padding:7px 8px;font-size:11px;white-space:nowrap}
+
+  /* Modal */
+  .modal{padding:20px;width:95%;max-width:none;border-radius:14px}
+  .detail-grid{grid-template-columns:1fr 1fr;gap:8px}
+
+  /* Trade modal */
+  .mod-label{font-size:9px}
+  .mod-input{padding:8px 10px;font-size:13px}
 }
+
+/* Kucuk mobil */
 @media(max-width:400px){
-  .top-row{grid-template-columns:1fr}
-  .stat-value{font-size:14px}
+  .top-row{grid-template-columns:1fr 1fr;gap:6px}
+  .stat-value{font-size:16px}
+  .stat-label{font-size:8px}
+  .sym-name{font-size:14px}
+  .sym-price{font-size:13px}
+  .nav-links{display:none}
 }
 </style>
 </head>
