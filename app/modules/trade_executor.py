@@ -8,9 +8,12 @@ import time
 from app.config import settings
 from app.modules.binance_client import (
     cancel_all_open_orders,
+    cancel_order,
     get_exchange_info,
+    get_order_status,
     get_position_risk,
     get_usdt_balance,
+    place_limit_order,
     place_market_order,
     place_stop_market_order,
     place_take_profit_market_order,
@@ -244,31 +247,96 @@ async def _execute_trade_inner(
         )
         return
 
-    # ── 8. Market order ile giriş (hızlı, tüm fiyat seviyelerinde çalışır) ──
-    order_result = await place_market_order(symbol, side, quantity)
+    # ── 8. Limit order ile giriş (binde 1 buffer, 15dk timeout) ──
+    ENTRY_BUFFER = 0.001  # binde 1
+    LIMIT_TIMEOUT = 900   # 15 dakika (saniye)
+    POLL_INTERVAL = 5     # 5 saniye polling
+
+    if side == "BUY":
+        limit_price = round_price(price * (1 - ENTRY_BUFFER), tick_size)
+    else:
+        limit_price = round_price(price * (1 + ENTRY_BUFFER), tick_size)
+
+    order_result = await place_limit_order(symbol, side, quantity, limit_price)
     order_id = str(order_result.get("orderId", ""))
 
-    # Gerçek giriş fiyatını al (market order avgPrice=0 dönebilir)
+    log.info(
+        "limit_order_placed",
+        symbol=symbol,
+        side=side,
+        signal_price=price,
+        limit_price=limit_price,
+        quantity=quantity,
+        order_id=order_id,
+        timeout=LIMIT_TIMEOUT,
+    )
+
+    # Polling — fill bekle (max 15dk)
+    filled = False
+    entry_price = limit_price
+    elapsed = 0
+
+    while elapsed < LIMIT_TIMEOUT:
+        await asyncio.sleep(POLL_INTERVAL)
+        elapsed += POLL_INTERVAL
+
+        try:
+            status = await get_order_status(symbol, int(order_id))
+            order_status = status.get("status", "")
+
+            if order_status == "FILLED":
+                filled = True
+                entry_price = float(status.get("avgPrice", 0)) or limit_price
+                log.info("limit_order_filled", symbol=symbol, price=entry_price, elapsed=elapsed)
+                break
+            elif order_status in ("CANCELED", "CANCELLED", "EXPIRED", "REJECTED"):
+                log.info("limit_order_cancelled_external", symbol=symbol, status=order_status)
+                break
+        except Exception as e:
+            log.warning("limit_poll_error", symbol=symbol, error=str(e))
+
+    # Fill olmadiysa → iptal et, yeni sinyal bekle
+    if not filled:
+        try:
+            await cancel_order(symbol, int(order_id))
+            log.info("limit_order_timeout_cancelled", symbol=symbol, order_id=order_id, elapsed=elapsed)
+        except Exception as e:
+            log.warning("limit_cancel_error", symbol=symbol, error=str(e))
+
+        duration = (time.monotonic_ns() // 1_000_000) - start_ms
+        await log_trade(
+            event_id=event_id,
+            ts=ts,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            entry_price=limit_price,
+            order_id=order_id,
+            status="TIMEOUT",
+            reason=f"Limit order not filled in {LIMIT_TIMEOUT}s, cancelled",
+            duration_ms=duration,
+        )
+        return
+
+    # Gercek giris fiyatini pozisyondan dogrula
     await asyncio.sleep(0.3)
     pos_data = await get_position_risk(symbol)
-    entry_price = 0.0
     for p in pos_data:
         if p.get("symbol") == symbol:
-            entry_price = float(p.get("entryPrice", 0))
+            real_entry = float(p.get("entryPrice", 0))
+            if real_entry > 0:
+                entry_price = real_entry
             break
-    if entry_price <= 0:
-        entry_price = float(order_result.get("avgPrice", 0))
-    if entry_price <= 0:
-        entry_price = price
 
     log.info(
-        "market_order_filled",
+        "trade_entry_confirmed",
         symbol=symbol,
         side=side,
         tf=tf,
         quantity=quantity,
         entry_price=entry_price,
         signal_price=price,
+        limit_price=limit_price,
         order_id=order_id,
     )
 
