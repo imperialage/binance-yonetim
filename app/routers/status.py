@@ -404,19 +404,44 @@ async def debug_income() -> dict:
 
 
 @router.get("/api/chart-data")
-async def api_chart_data(symbol: str = "XAGUSDT", interval: str = "15m") -> dict:
-    """Grafik icin mum + RSI + sinyal + pozisyon verisi."""
+async def api_chart_data(
+    symbol: str = "XAGUSDT",
+    interval: str = "15m",
+    rsi_len: int = 10,
+    long_thresh: float = 32,
+    short_thresh: float = 70,
+    max_gap: int = 12,
+    entry_buffer: float = 0.1,
+    tp_pct_param: float = 0,
+    sl_pct_param: float = 0,
+) -> dict:
+    """Grafik icin mum + RSI + sinyal (server-side hesaplama) + pozisyon verisi."""
     from app.modules.candle_store import query_candles
-    from app.modules.st_signal_logger import query_st_signals
+    from app.modules.rsi_calculator import calculate_rsi
     from app.modules.binance_client import get_position_risk
+    from app.config import get_symbol_config
     from datetime import datetime, timezone, timedelta
 
     tz_ist = timezone(timedelta(hours=3))
+    sym = symbol.upper()
+    buf = entry_buffer / 100  # % → ondalik
+
+    # Config'den TP/SL (parametre 0 ise config'den al)
+    cfg = get_symbol_config(sym)
+    tp_pct = tp_pct_param / 100 if tp_pct_param > 0 else cfg.get("tp_pct", 0.01)
+    sl_pct = sl_pct_param / 100 if sl_pct_param > 0 else cfg.get("sl_pct", 0.003)
 
     # Mumlar
-    candles_raw = await query_candles(symbol.upper(), interval, limit=2000)
+    candles_raw = await query_candles(sym, interval, limit=3000)
+    if not candles_raw:
+        return {"candles": [], "signals": [], "trades": [], "position": None}
+
+    # RSI hesapla
+    closes = [c["close"] for c in candles_raw]
+    rsi_values = calculate_rsi(closes, rsi_len)
+
     candles = []
-    for c in candles_raw:
+    for i, c in enumerate(candles_raw):
         t = c.get("open_time", 0)
         candles.append({
             "time": t // 1000 if t > 1e12 else t,
@@ -425,44 +450,127 @@ async def api_chart_data(symbol: str = "XAGUSDT", interval: str = "15m") -> dict
             "low": c["low"],
             "close": c["close"],
             "volume": c.get("volume", 0),
-            "rsi": c.get("rsi_10"),
+            "rsi": rsi_values[i] if i < len(rsi_values) else None,
         })
 
-    # Sinyaller (st_signal_logger)
-    signals_raw = await query_st_signals(symbol=symbol.upper(), entered=True, limit=100)
+    # Hidden Divergence sinyal tespiti (server-side)
     signals = []
-    for s in signals_raw:
-        signals.append({
-            "date": s.get("datetime", ""),
-            "direction": s.get("direction", ""),
-            "entry_price": s.get("price", 0),
-            "rsi_a": None,
-            "rsi_b": None,
-            "gap": None,
-            "time": 0,  # frontend marker icin — tarihten hesaplanacak
-        })
+    trades = []
+    used_a = set()
+    state = 0  # 0=flat, 1=long, -1=short
+    entry = 0.0
+    tp_price = 0.0
+    sl_price = 0.0
+    entry_idx = 0
+    entry_time = 0
 
-    # Sinyallere zaman damgasi ekle
-    for sig in signals:
-        try:
-            dt = datetime.strptime(sig["date"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=tz_ist)
-            sig["time"] = int(dt.timestamp())
-        except Exception:
-            pass
+    n = len(candles)
+    for b_idx in range(max_gap + 1, n):
+        rsi_b = candles[b_idx].get("rsi")
+        if rsi_b is None:
+            continue
 
-    # Pozisyon
+        # TP/SL kontrol (acik pozisyon)
+        if state == 1 and b_idx > entry_idx:
+            if candles[b_idx]["low"] <= sl_price:
+                pnl = (sl_price - entry) / entry * 100 - 0.08
+                trades.append({"entry_time": entry_time, "exit_time": candles[b_idx]["time"],
+                    "entry_date": datetime.fromtimestamp(entry_time, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time > 0 else "",
+                    "exit_date": datetime.fromtimestamp(candles[b_idx]["time"], tz=tz_ist).strftime("%d.%m %H:%M"),
+                    "direction": "BUY", "entry_price": entry, "exit_price": sl_price,
+                    "reason": "SL", "pnl_pct": round(pnl, 3)})
+                state = 0
+            elif candles[b_idx]["high"] >= tp_price:
+                pnl = (tp_price - entry) / entry * 100 - 0.08
+                trades.append({"entry_time": entry_time, "exit_time": candles[b_idx]["time"],
+                    "entry_date": datetime.fromtimestamp(entry_time, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time > 0 else "",
+                    "exit_date": datetime.fromtimestamp(candles[b_idx]["time"], tz=tz_ist).strftime("%d.%m %H:%M"),
+                    "direction": "BUY", "entry_price": entry, "exit_price": tp_price,
+                    "reason": "TP", "pnl_pct": round(pnl, 3)})
+                state = 0
+
+        elif state == -1 and b_idx > entry_idx:
+            if candles[b_idx]["high"] >= sl_price:
+                pnl = (entry - sl_price) / entry * 100 - 0.08
+                trades.append({"entry_time": entry_time, "exit_time": candles[b_idx]["time"],
+                    "entry_date": datetime.fromtimestamp(entry_time, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time > 0 else "",
+                    "exit_date": datetime.fromtimestamp(candles[b_idx]["time"], tz=tz_ist).strftime("%d.%m %H:%M"),
+                    "direction": "SELL", "entry_price": entry, "exit_price": sl_price,
+                    "reason": "SL", "pnl_pct": round(pnl, 3)})
+                state = 0
+            elif candles[b_idx]["low"] <= tp_price:
+                pnl = (entry - tp_price) / entry * 100 - 0.08
+                trades.append({"entry_time": entry_time, "exit_time": candles[b_idx]["time"],
+                    "entry_date": datetime.fromtimestamp(entry_time, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time > 0 else "",
+                    "exit_date": datetime.fromtimestamp(candles[b_idx]["time"], tz=tz_ist).strftime("%d.%m %H:%M"),
+                    "direction": "SELL", "entry_price": entry, "exit_price": tp_price,
+                    "reason": "TP", "pnl_pct": round(pnl, 3)})
+                state = 0
+
+        # Sinyal tespiti (sadece flat iken)
+        if state != 0:
+            continue
+
+        found = False
+        # SHORT ara
+        for gap in range(1, min(max_gap + 1, b_idx)):
+            a_idx = b_idx - gap
+            if a_idx in used_a:
+                continue
+            rsi_a = candles[a_idx].get("rsi")
+            if rsi_a is None:
+                continue
+            if rsi_a >= short_thresh and candles[b_idx]["high"] > candles[a_idx]["high"] and rsi_b < rsi_a:
+                ep = round(candles[b_idx]["high"] * (1 + buf), 6)
+                sig = {"time": candles[b_idx]["time"], "direction": "SELL", "entry_price": ep,
+                    "rsi_a": rsi_a, "rsi_b": rsi_b, "gap": gap,
+                    "date": datetime.fromtimestamp(candles[b_idx]["time"], tz=tz_ist).strftime("%d.%m %H:%M")}
+                signals.append(sig)
+                used_a.add(a_idx)
+                state = -1
+                entry = ep
+                tp_price = ep * (1 - tp_pct)
+                sl_price = ep * (1 + sl_pct)
+                entry_idx = b_idx
+                entry_time = candles[b_idx]["time"]
+                found = True
+                break
+
+        if found:
+            continue
+
+        # LONG ara
+        for gap in range(1, min(max_gap + 1, b_idx)):
+            a_idx = b_idx - gap
+            if a_idx in used_a:
+                continue
+            rsi_a = candles[a_idx].get("rsi")
+            if rsi_a is None:
+                continue
+            if rsi_a <= long_thresh and candles[b_idx]["low"] < candles[a_idx]["low"] and rsi_b > rsi_a:
+                ep = round(candles[b_idx]["low"] * (1 - buf), 6)
+                sig = {"time": candles[b_idx]["time"], "direction": "BUY", "entry_price": ep,
+                    "rsi_a": rsi_a, "rsi_b": rsi_b, "gap": gap,
+                    "date": datetime.fromtimestamp(candles[b_idx]["time"], tz=tz_ist).strftime("%d.%m %H:%M")}
+                signals.append(sig)
+                used_a.add(a_idx)
+                state = 1
+                entry = ep
+                tp_price = ep * (1 + tp_pct)
+                sl_price = ep * (1 - sl_pct)
+                entry_idx = b_idx
+                entry_time = candles[b_idx]["time"]
+                break
+
+    # Binance acik pozisyon
     position = None
     try:
-        positions = await get_position_risk(symbol.upper())
+        positions = await get_position_risk(sym)
         for p in positions:
-            if p.get("symbol") == symbol.upper():
+            if p.get("symbol") == sym:
                 amt = float(p.get("positionAmt", 0))
                 if amt != 0:
                     entry_p = float(p.get("entryPrice", 0))
-                    from app.config import get_symbol_config
-                    cfg = get_symbol_config(symbol.upper())
-                    tp_pct = cfg.get("tp_pct", 0.01)
-                    sl_pct = cfg.get("sl_pct", 0.003)
                     is_long = amt > 0
                     position = {
                         "side": "BUY" if is_long else "SELL",
@@ -476,16 +584,15 @@ async def api_chart_data(symbol: str = "XAGUSDT", interval: str = "15m") -> dict
     except Exception:
         pass
 
-    # Trades (son 50)
-    trades = []
-
     return {
         "candles": candles,
         "signals": signals,
         "trades": trades,
         "position": position,
-        "symbol": symbol.upper(),
+        "symbol": sym,
         "interval": interval,
+        "params": {"rsi_len": rsi_len, "long_thresh": long_thresh, "short_thresh": short_thresh,
+                   "max_gap": max_gap, "entry_buffer": entry_buffer, "tp_pct": round(tp_pct*100,2), "sl_pct": round(sl_pct*100,2)},
     }
 
 
