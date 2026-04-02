@@ -403,6 +403,92 @@ async def debug_income() -> dict:
     }
 
 
+@router.get("/api/chart-data")
+async def api_chart_data(symbol: str = "XAGUSDT", interval: str = "15m") -> dict:
+    """Grafik icin mum + RSI + sinyal + pozisyon verisi."""
+    from app.modules.candle_store import query_candles
+    from app.modules.st_signal_logger import query_st_signals
+    from app.modules.binance_client import get_position_risk
+    from datetime import datetime, timezone, timedelta
+
+    tz_ist = timezone(timedelta(hours=3))
+
+    # Mumlar
+    candles_raw = await query_candles(symbol.upper(), interval, limit=2000)
+    candles = []
+    for c in candles_raw:
+        t = c.get("open_time", 0)
+        candles.append({
+            "time": t // 1000 if t > 1e12 else t,
+            "open": c["open"],
+            "high": c["high"],
+            "low": c["low"],
+            "close": c["close"],
+            "volume": c.get("volume", 0),
+            "rsi": c.get("rsi_10"),
+        })
+
+    # Sinyaller (st_signal_logger)
+    signals_raw = await query_st_signals(symbol=symbol.upper(), entered=True, limit=100)
+    signals = []
+    for s in signals_raw:
+        signals.append({
+            "date": s.get("datetime", ""),
+            "direction": s.get("direction", ""),
+            "entry_price": s.get("price", 0),
+            "rsi_a": None,
+            "rsi_b": None,
+            "gap": None,
+            "time": 0,  # frontend marker icin — tarihten hesaplanacak
+        })
+
+    # Sinyallere zaman damgasi ekle
+    for sig in signals:
+        try:
+            dt = datetime.strptime(sig["date"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=tz_ist)
+            sig["time"] = int(dt.timestamp())
+        except Exception:
+            pass
+
+    # Pozisyon
+    position = None
+    try:
+        positions = await get_position_risk(symbol.upper())
+        for p in positions:
+            if p.get("symbol") == symbol.upper():
+                amt = float(p.get("positionAmt", 0))
+                if amt != 0:
+                    entry_p = float(p.get("entryPrice", 0))
+                    from app.config import get_symbol_config
+                    cfg = get_symbol_config(symbol.upper())
+                    tp_pct = cfg.get("tp_pct", 0.01)
+                    sl_pct = cfg.get("sl_pct", 0.003)
+                    is_long = amt > 0
+                    position = {
+                        "side": "BUY" if is_long else "SELL",
+                        "entry_price": entry_p,
+                        "tp_price": entry_p * (1 + tp_pct) if is_long else entry_p * (1 - tp_pct),
+                        "sl_price": entry_p * (1 - sl_pct) if is_long else entry_p * (1 + sl_pct),
+                        "qty": abs(amt),
+                        "upnl": float(p.get("unRealizedProfit", 0)),
+                    }
+                break
+    except Exception:
+        pass
+
+    # Trades (son 50)
+    trades = []
+
+    return {
+        "candles": candles,
+        "signals": signals,
+        "trades": trades,
+        "position": position,
+        "symbol": symbol.upper(),
+        "interval": interval,
+    }
+
+
 @router.get("/api/st-signals")
 async def api_st_signals(limit: int = 80, symbols: str | None = None) -> dict:
     """Get recent SuperTrend signals — only TradingView webhook signals (entered=1).
