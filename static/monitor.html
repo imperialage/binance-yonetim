@@ -215,8 +215,6 @@ async function loadData(){
         $('candleBody').innerHTML='<tr><td colspan="9" style="text-align:center;color:#F0B90B;padding:20px">Yukleniyor...</td></tr>';
         var r=await fetch(u);chartData=await r.json();
         if(!chartData.candles)return;
-        rsiState=chartData.rsi_state||null;
-        console.log('RSI STATE:',JSON.stringify(rsiState));
         renderAll();
     }catch(e){console.error(e)}
 }
@@ -387,32 +385,10 @@ async function closePos(){
     }catch(e){alert('Hata: '+e.message)}
 }
 
-// ── Live RSI — backend'den gelen RMA state ile hesapla ──
-// rsi_state: {avg_gain, avg_loss, prev_close}
-var rsiState=null;
-
-// ── Live RSI ──
-// Backend rsi_state ile canli hesaplama.
-// Her WebSocket tick'inde: son kapanmis mumun state'inden RSI hesapla.
-// State sadece fetchLastCandle'da (yeni mum) ilerletilir.
-
-function calcLiveRSI_fromState(currentClose){
-    if(!rsiState)return null;
-    if(!rsiState.avg_gain && rsiState.avg_gain !== 0)return null;
-    if(!rsiState.prev_close || rsiState.prev_close === 0)return null;
-
-    var length = parseInt($('iR').value) || 10;
-    var prevClose = rsiState.prev_close;
-    var delta = currentClose - prevClose;
-    var gain = delta > 0 ? delta : 0;
-    var loss = delta < 0 ? -delta : 0;
-    var ag = (rsiState.avg_gain * (length - 1) + gain) / length;
-    var al = (rsiState.avg_loss * (length - 1) + loss) / length;
-
-    if (al === 0) return 100.0;
-    var rs = ag / al;
-    return Math.round((100.0 - (100.0 / (1.0 + rs))) * 10) / 10;
-}
+// ── RSI: frontend hesaplama YOK ──
+// RSI sadece backend'den gelir (mum kapanisinda).
+// Canli mum kartinda son kapanmis mumun RSI'i gosterilir (sabit).
+// Yeni mum kapandiginda fetchLastCandle ile guncellenir.
 
 // ── Live Candle Display ──
 function updateLiveCandleDisplay(c){
@@ -464,8 +440,7 @@ function connectWS(){
                     lc.high=Math.max(lc.high,price);
                     lc.low=Math.min(lc.low,price);
                     lc.close=price;
-                    var liveRsi=calcLiveRSI_fromState(price);
-                    if(liveRsi!=null)lc.rsi=liveRsi;
+                    // RSI degismez — backend'den gelen deger korunur
                     updateLiveCandleDisplay(lc);
                 }
 
@@ -539,19 +514,11 @@ async function fetchLastCandle(){
             chartData.candles.push(newCandle);
 
             // RSI hesapla (RMA state ile)
-            var liveRsi=calcLiveRSI_fromState(newCandle.close);
-            if(liveRsi!=null){
-                newCandle.rsi=liveRsi;
-                // State guncelle — yeni mum icin prev_close ve avg_gain/loss ilerlet
-                if(rsiState){
-                    var length=parseInt($('iR').value)||10;
-                    var delta=newCandle.close-rsiState.prev_close;
-                    var g=delta>0?delta:0;
-                    var l=delta<0?-delta:0;
-                    rsiState.avg_gain=(rsiState.avg_gain*(length-1)+g)/length;
-                    rsiState.avg_loss=(rsiState.avg_loss*(length-1)+l)/length;
-                    rsiState.prev_close=newCandle.close;
-                }
+            // RSI: yeni kapanmis mum icin backend'den hesaplanmis RSI yok
+            // Bir sonraki tam yukleme (loadData) ile gelecek
+            // Simdilik onceki mumun RSI'ini goster
+            if(chartData.candles.length>=2){
+                newCandle.rsi=chartData.candles[chartData.candles.length-2].rsi;
             }
 
             // Tabloya en uste ekle (DOM manipulasyonu — tum tablo yenileme yok)
@@ -581,8 +548,8 @@ async function fetchLastCandle(){
                 volume:parseFloat(current[5]),rsi:null
             };
             chartData.candles.push(liveMum);
-            var lr2=calcLiveRSI_fromState(liveMum.close);
-            if(lr2!=null)liveMum.rsi=lr2;
+            // RSI: onceki mumdan kopyala (backend hesaplamasini bekle)
+            if(chartData.candles.length>=2) liveMum.rsi=chartData.candles[chartData.candles.length-2].rsi;
             updateLiveCandleDisplay(liveMum);
         }
     }catch(e){console.error('fetchLastCandle error:',e)}
