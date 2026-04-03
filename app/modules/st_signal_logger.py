@@ -31,9 +31,22 @@ CREATE TABLE IF NOT EXISTS signal_log (
     skip_filter  TEXT,
     skip_reason  TEXT,
     outcome_pct  REAL,
-    hit_target   INTEGER
+    hit_target   INTEGER,
+    source       TEXT DEFAULT 'webhook',
+    rsi_a        REAL,
+    rsi_b        REAL,
+    gap          INTEGER,
+    candle_a_time INTEGER
 );
 """
+
+_SIGNAL_LOG_MIGRATIONS = [
+    "ALTER TABLE signal_log ADD COLUMN source TEXT DEFAULT 'webhook'",
+    "ALTER TABLE signal_log ADD COLUMN rsi_a REAL",
+    "ALTER TABLE signal_log ADD COLUMN rsi_b REAL",
+    "ALTER TABLE signal_log ADD COLUMN gap INTEGER",
+    "ALTER TABLE signal_log ADD COLUMN candle_a_time INTEGER",
+]
 
 _CREATE_SIGNAL_STATS = """
 CREATE TABLE IF NOT EXISTS signal_stats (
@@ -75,6 +88,12 @@ async def init_st_signal_db() -> None:
     await db.execute(_CREATE_SIGNAL_STATS)
     for idx_sql in _CREATE_INDEXES:
         await db.execute(idx_sql)
+    # Mevcut tabloya yeni sutunlar ekle (zaten varsa sessizce atla)
+    for migration in _SIGNAL_LOG_MIGRATIONS:
+        try:
+            await db.execute(migration)
+        except Exception:
+            pass
     await db.commit()
     await log.ainfo("st_signal_db_ready", path=str(DB_PATH))
 
@@ -100,6 +119,11 @@ async def log_st_signal(
     entered: bool = False,
     skip_filter: str | None = None,
     skip_reason: str | None = None,
+    source: str = "webhook",
+    rsi_a: float | None = None,
+    rsi_b: float | None = None,
+    gap: int | None = None,
+    candle_a_time: int | None = None,
 ) -> int:
     """Insert a signal record. Returns the row id."""
     db = await get_db()
@@ -107,8 +131,9 @@ async def log_st_signal(
         cursor = await db.execute(
             """INSERT INTO signal_log
                (datetime, symbol, direction, band, price, vol_ratio,
-                entered, skip_filter, skip_reason)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                entered, skip_filter, skip_reason,
+                source, rsi_a, rsi_b, gap, candle_a_time)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 dt,
                 symbol.upper(),
@@ -119,6 +144,11 @@ async def log_st_signal(
                 1 if entered else 0,
                 skip_filter,
                 skip_reason,
+                source,
+                rsi_a,
+                rsi_b,
+                gap,
+                candle_a_time,
             ),
         )
         await db.commit()

@@ -506,7 +506,7 @@ function renderPosition(pos){
     $('closeBtn').style.display='inline-block';
 }
 
-// ── Binance Position (gercek veri) ──
+// ── Binance Position (gercek veri + sinyal detayi) ──
 function renderBinancePosition(bp){
     if(!bp||!bp.entry_price||bp.entry_price<=0){
         renderPosition(null);return;
@@ -515,12 +515,45 @@ function renderBinancePosition(bp){
     var curPrice=lastPrice||bp.entry_price;
     var pnlPct=il?(curPrice-bp.entry_price)/bp.entry_price*100:(bp.entry_price-curPrice)/bp.entry_price*100;
     var pnlUsd=bp.upnl||0;
-    $('posInfo').innerHTML=
-        '<div class="cr"><span class="k">Yon</span><span class="v"><span class="pos-badge '+(il?'pos-long':'pos-short')+'">'+bp.side+'</span> <span style="color:#3B82F6;font-size:9px">BINANCE</span></span></div>'
-        +'<div class="cr"><span class="k">Giris</span><span class="v">'+fmt(bp.entry_price,dec(bp.entry_price))+' <span style="color:#6e7681;font-size:9px">'+bp.entry_str+'</span></span></div>'
-        +'<div class="cr"><span class="k">Miktar</span><span class="v">'+fmt(bp.qty,4)+'</span></div>'
-        +'<div class="cr"><span class="k">Anlik</span><span class="v" id="posPrice">'+fmt(curPrice,dec(curPrice))+'</span></div>'
-        +'<div class="cr"><span class="k">uPnL</span><span class="v '+(pnlPct>=0?'green':'red')+'" id="posPnl">'+fmt(pnlPct,2)+'% ($'+fmt(pnlUsd,2)+')</span></div>';
+    var d=dec(bp.entry_price);
+
+    // TP/SL progress
+    var tpDist=il?(bp.tp_price-bp.entry_price):(bp.entry_price-bp.tp_price);
+    var curDist=il?(curPrice-bp.entry_price):(bp.entry_price-curPrice);
+    var prog=tpDist>0?Math.max(-100,Math.min(100,(curDist/tpDist)*100)):0;
+
+    var html='<div class="cr"><span class="k">Yon</span><span class="v"><span class="pos-badge '+(il?'pos-long':'pos-short')+'">'+bp.side+'</span> <span style="color:#3B82F6;font-size:9px">BINANCE</span></span></div>';
+
+    // Sinyal bilgisi
+    if(bp.signal_time){
+        html+='<div class="cr"><span class="k">Sinyal</span><span class="v yellow">'+bp.signal_time+'</span></div>';
+    }
+    if(bp.signal_price){
+        var srcLabel=bp.signal_source==='server'?'<span style="color:#0ECB81;font-size:9px">SERVER</span>':'<span style="color:#6e7681;font-size:9px">WEBHOOK</span>';
+        html+='<div class="cr"><span class="k">Sinyal Fiyat</span><span class="v">'+fmt(bp.signal_price,d)+' '+srcLabel+'</span></div>';
+    }
+    if(bp.rsi_a!=null&&bp.rsi_b!=null){
+        html+='<div class="cr"><span class="k">RSI A→B</span><span class="v purple">'+fmt(bp.rsi_a,2)+' → '+fmt(bp.rsi_b,2)+'</span></div>';
+    }
+
+    // Giris bilgisi
+    html+='<div class="cr"><span class="k">Giris</span><span class="v">'+fmt(bp.entry_price,d)+' <span style="color:#6e7681;font-size:9px">'+bp.entry_str+'</span></span></div>'
+        +'<div class="cr"><span class="k">Miktar</span><span class="v">'+fmt(bp.qty,4)+'</span></div>';
+
+    // TP/SL
+    if(bp.tp_price){
+        html+='<div class="cr"><span class="k">TP</span><span class="v green">'+fmt(bp.tp_price,d)+'</span></div>';
+    }
+    if(bp.sl_price){
+        html+='<div class="cr"><span class="k">SL</span><span class="v red">'+fmt(bp.sl_price,d)+'</span></div>';
+    }
+
+    // Anlik + PnL
+    html+='<div class="cr"><span class="k">Anlik</span><span class="v" id="posPrice">'+fmt(curPrice,d)+'</span></div>'
+        +'<div class="cr"><span class="k">uPnL</span><span class="v '+(pnlPct>=0?'green':'red')+'" id="posPnl">'+fmt(pnlPct,2)+'% ($'+fmt(pnlUsd,2)+')</span></div>'
+        +'<div class="progress"><div class="progress-fill '+(prog>=0?'progress-green':'progress-red')+'" style="width:'+Math.min(Math.abs(prog),100)+'%"></div></div>';
+
+    $('posInfo').innerHTML=html;
     $('closeBtn').style.display='inline-block';
 }
 

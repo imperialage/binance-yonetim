@@ -540,14 +540,55 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
                 if en["order_id"] not in used_entries:
                     entry_time_ms = en["time_ms"]
                     break
+
+            entry_price = float(p.get("entryPrice", 0))
+            pos_side = "LONG" if amt > 0 else "SHORT"
+
+            # TP/SL fiyatlari hesapla (indicator_settings'ten)
+            try:
+                from app.modules.indicator_settings_store import get_settings_or_defaults
+                sym_settings = await get_settings_or_defaults(sym)
+                tp_pct_val = sym_settings.get("tp_pct", 1.0) / 100.0
+                sl_pct_val = sym_settings.get("sl_pct", 0.3) / 100.0
+                if pos_side == "LONG":
+                    tp_price = round(entry_price * (1 + tp_pct_val), 6)
+                    sl_price = round(entry_price * (1 - sl_pct_val), 6)
+                else:
+                    tp_price = round(entry_price * (1 - tp_pct_val), 6)
+                    sl_price = round(entry_price * (1 + sl_pct_val), 6)
+            except Exception:
+                tp_price = 0.0
+                sl_price = 0.0
+
+            # Son sinyal bilgisi (signal_log'dan)
+            signal_info = {}
+            try:
+                from app.modules.st_signal_logger import query_st_signals
+                recent = await query_st_signals(sym, direction="BUY" if pos_side == "LONG" else "SELL", entered=True, limit=1)
+                if recent:
+                    sig = recent[0]
+                    signal_info = {
+                        "signal_time": sig.get("datetime", ""),
+                        "signal_price": sig.get("price", 0),
+                        "signal_source": sig.get("source", ""),
+                        "rsi_a": sig.get("rsi_a"),
+                        "rsi_b": sig.get("rsi_b"),
+                        "gap": sig.get("gap"),
+                    }
+            except Exception:
+                pass
+
             all_positions.append({
                 "symbol": sym,
-                "side": "LONG" if amt > 0 else "SHORT",
-                "entry_price": float(p.get("entryPrice", 0)),
+                "side": pos_side,
+                "entry_price": entry_price,
                 "qty": abs(amt),
                 "upnl": float(p.get("unRealizedProfit", 0)),
                 "entry_time": entry_time_ms // 1000 if entry_time_ms else 0,
                 "entry_str": datetime.fromtimestamp(entry_time_ms / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time_ms else "",
+                "tp_price": tp_price,
+                "sl_price": sl_price,
+                **signal_info,
             })
             break
 

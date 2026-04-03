@@ -508,7 +508,7 @@ async def _engine_loop() -> None:
                         gap=signal["gap"],
                     )
 
-                    # Signal log
+                    # Signal log — tum detaylar DB'ye
                     row_id = await log_st_signal(
                         dt=dt_str,
                         symbol=sym,
@@ -516,6 +516,11 @@ async def _engine_loop() -> None:
                         band=engine.interval,
                         price=signal["entry_price"],
                         entered=True,
+                        source="server",
+                        rsi_a=signal["rsi_a"],
+                        rsi_b=signal["rsi_b"],
+                        gap=signal["gap"],
+                        candle_a_time=signal.get("candle_a_time"),
                     )
 
                     # Trade execute
