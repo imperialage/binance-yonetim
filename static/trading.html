@@ -183,6 +183,10 @@ tr.clickable:hover{background:#1c212888}
 /* Disabled card */
 .sym-card.disabled-card{opacity:0.5}
 
+/* Table scroll wrapper */
+.table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -16px;padding:0 16px}
+.table-scroll table{min-width:600px}
+
 /* Modal input styles */
 .mod-label{display:block;font-size:10px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:4px}
 .mod-input{width:100%;background:#0d1117;border:1px solid #21262d;color:#e6edf3;padding:10px 12px;border-radius:8px;font-size:14px;font-family:inherit;font-variant-numeric:tabular-nums;transition:border-color .2s}
@@ -253,7 +257,9 @@ tr.clickable:hover{background:#1c212888}
   .stat-label{font-size:8px}
   .sym-name{font-size:14px}
   .sym-price{font-size:13px}
-  .nav-links{display:none}
+  .nav-links{font-size:10px;gap:6px}
+  .table-scroll{margin:0 -12px;padding:0 12px}
+  .table-scroll table{min-width:520px}
 }
 </style>
 </head>
@@ -422,9 +428,34 @@ tr.clickable:hover{background:#1c212888}
   }
 
   function fetchIncome(){
-    fetch('/debug/income').then(function(r){return r.json();})
+    // Tum aktif sembollerin islem gecmisini binance-trades'ten cek
+    fetch('/api/binance-trades?days=7').then(function(r){return r.json();})
     .then(function(data){
-      incomeData=data;
+      // debug/income formatina donustur (geriye uyumluluk)
+      var trades=(data.trades||[]).map(function(t){
+        return {
+          symbol:t.symbol||'',
+          side:t.side||'',
+          entry_time:t.entry_str||'',
+          time:t.exit_str||'',
+          entry_price:t.entry_price||0,
+          exit_price:t.exit_price||0,
+          pnl:t.pnl||0,
+          exit_type:t.exit_type||'',
+        };
+      });
+      // Zamana gore sirala (yeniden eskiye)
+      trades.sort(function(a,b){return (b.time||'').localeCompare(a.time||'')});
+      var totalPnl=trades.reduce(function(s,t){return s+t.pnl},0);
+      var win=trades.filter(function(t){return t.pnl>0}).length;
+      var lose=trades.filter(function(t){return t.pnl<0}).length;
+      incomeData={
+        total_pnl:totalPnl,
+        trade_count:trades.length,
+        win:win,lose:lose,
+        win_rate:trades.length>0?Math.round(win/trades.length*100)+'%':'0%',
+        trades:trades,
+      };
       renderSummary();
       renderTrades();
     }).catch(function(){});
@@ -949,32 +980,36 @@ tr.clickable:hover{background:#1c212888}
       return;
     }
 
-    // Cumulative PnL (chronological order)
+    // Cumulative PnL (kronolojik — eskiden yeniye)
     var sorted=filtered.slice().reverse();
     var cum=0;var cums=[];
     sorted.forEach(function(t){cum+=t.pnl;cums.push(cum);});
     cums.reverse();
 
-    var html='<table><thead><tr><th>Sembol</th><th>Yon</th><th>Giris Zaman</th><th>Cikis Zaman</th><th>Giris $</th><th>Cikis $</th><th>PnL</th><th>Kum.</th></tr></thead><tbody>';
+    var html='<div class="table-scroll"><table><thead><tr><th>Sembol</th><th>Yon</th><th>Tip</th><th>Giris</th><th>Cikis</th><th>Giris $</th><th>Cikis $</th><th>PnL</th><th>Kum.</th></tr></thead><tbody>';
     filtered.forEach(function(t,i){
       var cls=t.pnl>=0?'pnl-positive':'pnl-negative';
       var cumCls=cums[i]>=0?'pnl-positive':'pnl-negative';
       var sideBadge='--';
       if(t.side==='LONG') sideBadge='<span class="badge badge-buy">L</span>';
       else if(t.side==='SHORT') sideBadge='<span class="badge badge-sell">S</span>';
+      var exType=t.exit_type||'';
+      var exLabel=exType.indexOf('STOP')>=0?'<span style="color:#f85149">SL</span>':exType.indexOf('TAKE')>=0?'<span style="color:#3fb950">TP</span>':exType.indexOf('MARKET')>=0?'MKT':'—';
+      var dp=t.entry_price>=100?2:t.entry_price>=1?4:6;
 
       html+='<tr>';
       html+='<td><span class="badge-sym">'+(t.symbol||'--').replace('USDT','')+'</span></td>';
       html+='<td>'+sideBadge+'</td>';
-      html+='<td style="color:#6e7681;font-size:11px;white-space:nowrap">'+(t.entry_time||'--')+'</td>';
-      html+='<td style="color:#6e7681;font-size:11px;white-space:nowrap">'+(t.time||'--')+'</td>';
-      html+='<td style="font-size:11px">'+(t.entry_price?fmt(t.entry_price,2):'--')+'</td>';
-      html+='<td style="font-size:11px">'+(t.exit_price?fmt(t.exit_price,2):'--')+'</td>';
-      html+='<td class="'+cls+'" style="font-size:11px">'+fmtUSD(t.pnl)+'</td>';
-      html+='<td class="'+cumCls+'" style="font-size:11px">'+fmtUSD(cums[i])+'</td>';
+      html+='<td style="font-size:10px">'+exLabel+'</td>';
+      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+(t.entry_time||'--')+'</td>';
+      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+(t.time||'--')+'</td>';
+      html+='<td style="font-size:11px">'+(t.entry_price?fmt(t.entry_price,dp):'--')+'</td>';
+      html+='<td style="font-size:11px">'+(t.exit_price?fmt(t.exit_price,dp):'--')+'</td>';
+      html+='<td class="'+cls+'" style="font-size:11px;font-weight:600">'+fmtUSD(t.pnl)+'</td>';
+      html+='<td class="'+cumCls+'" style="font-size:11px;font-weight:600">'+fmtUSD(cums[i])+'</td>';
       html+='</tr>';
     });
-    html+='</tbody></table>';
+    html+='</tbody></table></div>';
     $('tradesContent').innerHTML=html;
   }
 
