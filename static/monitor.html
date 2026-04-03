@@ -216,6 +216,7 @@ async function loadData(){
         var r=await fetch(u);chartData=await r.json();
         if(!chartData.candles)return;
         rsiState=chartData.rsi_state||null;
+        console.log('RSI STATE:',JSON.stringify(rsiState));
         renderAll();
     }catch(e){console.error(e)}
 }
@@ -390,16 +391,27 @@ async function closePos(){
 // rsi_state: {avg_gain, avg_loss, prev_close}
 var rsiState=null;
 
+// ── Live RSI ──
+// Backend rsi_state ile canli hesaplama.
+// Her WebSocket tick'inde: son kapanmis mumun state'inden RSI hesapla.
+// State sadece fetchLastCandle'da (yeni mum) ilerletilir.
+
 function calcLiveRSI_fromState(currentClose){
-    if(!rsiState||!rsiState.prev_close)return null;
-    var length=parseInt($('iR').value)||10;
-    var delta=currentClose-rsiState.prev_close;
-    var gain=delta>0?delta:0;
-    var loss=delta<0?-delta:0;
-    var ag=(rsiState.avg_gain*(length-1)+gain)/length;
-    var al=(rsiState.avg_loss*(length-1)+loss)/length;
-    if(al===0)return 100;
-    return Math.round((100-(100/(1+ag/al)))*10)/10;
+    if(!rsiState)return null;
+    if(!rsiState.avg_gain && rsiState.avg_gain !== 0)return null;
+    if(!rsiState.prev_close || rsiState.prev_close === 0)return null;
+
+    var length = parseInt($('iR').value) || 10;
+    var prevClose = rsiState.prev_close;
+    var delta = currentClose - prevClose;
+    var gain = delta > 0 ? delta : 0;
+    var loss = delta < 0 ? -delta : 0;
+    var ag = (rsiState.avg_gain * (length - 1) + gain) / length;
+    var al = (rsiState.avg_loss * (length - 1) + loss) / length;
+
+    if (al === 0) return 100.0;
+    var rs = ag / al;
+    return Math.round((100.0 - (100.0 / (1.0 + rs))) * 10) / 10;
 }
 
 // ── Live Candle Display ──
