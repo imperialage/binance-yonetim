@@ -146,13 +146,13 @@ tr.ob-row td:nth-child(8){color:#F6465D;font-weight:600}
     </div>
 </div>
 
-<!-- Filtre -->
+<!-- Filtre — bugun sabit -->
 <div class="filter-bar">
-    <label>Baslangic</label><input type="date" id="fStart" value="2026-01-07">
-    <label>Bitis</label><input type="date" id="fEnd" value="2026-04-03">
+    <label>Tarih</label><span style="color:#F0B90B;font-weight:600" id="todayLabel">Bugun</span>
     <div class="cb-wrap"><input type="checkbox" id="fSig"><label>Sadece sinyaller</label></div>
     <div class="cb-wrap"><input type="checkbox" id="fOSOB"><label>Oversold/Overbought</label></div>
-    <button class="hbtn" onclick="applyAndLoad()">Filtrele</button>
+    <button class="hbtn" onclick="applyAndLoad()">Yenile</button>
+    <input type="hidden" id="fStart"><input type="hidden" id="fEnd">
 </div>
 
 <!-- Mum Tablosu -->
@@ -183,14 +183,14 @@ function saveState(){
     localStorage.setItem('mon_state',JSON.stringify({sym:sym,tf:tf,
         iR:$('iR').value,iL:$('iL').value,iS:$('iS').value,iG:$('iG').value,
         iB:$('iB').value,iT:$('iT').value,iSL:$('iSL').value,
-        fStart:$('fStart').value,fEnd:$('fEnd').value,fSig:$('fSig').checked,fOSOB:$('fOSOB').checked}));
+        fSig:$('fSig').checked,fOSOB:$('fOSOB').checked}));
 }
 function loadState(){
     try{var s=JSON.parse(localStorage.getItem('mon_state'));if(!s)return;
     sym=s.sym||'XAGUSDT';tf=s.tf||'15m';
     $('iR').value=s.iR||10;$('iL').value=s.iL||32;$('iS').value=s.iS||70;$('iG').value=s.iG||12;
     $('iB').value=s.iB||0.1;$('iT').value=s.iT||0;$('iSL').value=s.iSL||0;
-    $('fStart').value=s.fStart||'2026-01-07';$('fEnd').value=s.fEnd||'2026-04-03';
+    // tarih her zaman bugun — localStorage'dan yuklenmez
     $('fSig').checked=!!s.fSig;$('fOSOB').checked=!!s.fOSOB;
     }catch(e){sym='XAGUSDT';tf='15m'}
 }
@@ -219,7 +219,7 @@ async function loadData(){
     }catch(e){console.error(e)}
 }
 
-function applyAndLoad(){saveState();loadData()}
+function applyAndLoad(){saveState();setToday();loadData();startRSIPolling()}
 
 // ── Render Everything ──
 function renderAll(){
@@ -555,13 +555,44 @@ async function fetchLastCandle(){
     }catch(e){console.error('fetchLastCandle error:',e)}
 }
 
+// ── Bugun tarihini set et ──
+function setToday(){
+    var d=new Date();
+    var str=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+    $('fStart').value=str;
+    $('fEnd').value=str;
+    $('todayLabel').textContent=('0'+d.getDate()).slice(-2)+'.'+('0'+(d.getMonth()+1)).slice(-2)+'.'+d.getFullYear();
+}
+
+// ── 1sn RSI Polling ──
+var rsiInterval=null;
+function startRSIPolling(){
+    if(rsiInterval)clearInterval(rsiInterval);
+    rsiInterval=setInterval(async function(){
+        try{
+            var resp=await fetch('/api/live-rsi?symbol='+sym+'&interval='+tf+'&rsi_len='+($('iR').value||10));
+            var data=await resp.json();
+            if(data.rsi!=null && chartData && chartData.candles && chartData.candles.length>0){
+                var lc=chartData.candles[chartData.candles.length-1];
+                lc.rsi=data.rsi;
+                // RSI degerini kart uzerinde guncelle
+                var re=$('lcR');
+                if(re){
+                    re.textContent=data.rsi.toFixed(1);
+                    var lt=parseFloat($('iL').value),st=parseFloat($('iS').value);
+                    re.style.color=data.rsi<=lt?'#0ECB81':data.rsi>=st?'#F6465D':'#A371F7';
+                }
+            }
+        }catch(e){}
+    },1000);
+}
+
 // ── Init ──
 sym='XAGUSDT';tf='15m';
 adminToken=localStorage.getItem('admin_token')||'';
 loadState();if(!sym)sym='XAGUSDT';if(!tf)tf='15m';
-initUI();loadData();connectWS();
-// Arka plan yenileme YOK — sadece mum kapanisinda fetchLastCandle calisir
-// Tam yenileme sadece kullanici "Uygula" veya "Filtrele" bastiginda olur
+setToday();
+initUI();loadData();connectWS();startRSIPolling();
 </script>
 </body>
 </html>

@@ -403,6 +403,20 @@ async def debug_income() -> dict:
     }
 
 
+@router.get("/api/live-rsi")
+async def api_live_rsi(symbol: str = "XAGUSDT", interval: str = "15m", rsi_len: int = 10) -> dict:
+    """Canli RSI — 1sn polling icin. Hafif, hizli."""
+    from app.modules.live_rsi import get_live_rsi
+    from app.modules.price_stream import get_live_price
+
+    price = get_live_price(symbol.upper())
+    if price is None:
+        return {"symbol": symbol.upper(), "rsi": None, "price": None, "error": "no_price"}
+
+    rsi = await get_live_rsi(symbol.upper(), interval, price, rsi_len)
+    return {"symbol": symbol.upper(), "interval": interval, "rsi": rsi, "price": price}
+
+
 @router.get("/api/chart-data")
 async def api_chart_data(
     symbol: str = "XAGUSDT",
