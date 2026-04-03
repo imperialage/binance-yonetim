@@ -461,7 +461,7 @@ async def api_chart_data(
         try:
             start_ms = int(datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
             # RSI warmup icin 200 mum oncesinden basla
-            warmup_ms = start_ms - (200 * iv_ms)
+            warmup_ms = start_ms - (1000 * iv_ms)
         except Exception:
             warmup_ms = int(_time.time() * 1000) - (1500 * iv_ms)
             start_ms = warmup_ms

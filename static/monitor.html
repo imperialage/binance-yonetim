@@ -276,7 +276,7 @@ function renderAll(){
             var sBadge=sig.direction==='BUY'?'<span class="badge b-buy">▲ BUY</span>':'<span class="badge b-sell">▼ SELL</span>';
             var stp=sig.direction==='BUY'?sig.entry_price*(1+tpPct/100):sig.entry_price*(1-tpPct/100);
             var ssl=sig.direction==='BUY'?sig.entry_price*(1-slPct/100):sig.entry_price*(1+slPct/100);
-            html+='<tr class="sig-row"><td colspan="9" class="sig-detail">'+sBadge+' <span class="yellow">'+fmt(sig.entry_price,dec(sig.entry_price))+'</span> &nbsp; TP:<span class="green">'+fmt(stp,dec(stp))+'</span> SL:<span class="red">'+fmt(ssl,dec(ssl))+'</span> &nbsp; RSI:<span class="purple">'+fmt(sig.rsi_a,0)+'→'+fmt(sig.rsi_b,0)+'</span> ↕'+sig.gap+'</td></tr>';
+            html+='<tr class="sig-row"><td colspan="9" class="sig-detail">'+sBadge+' <span class="yellow">'+fmt(sig.entry_price,dec(sig.entry_price))+'</span> &nbsp; TP:<span class="green">'+fmt(stp,dec(stp))+'</span> SL:<span class="red">'+fmt(ssl,dec(ssl))+'</span> &nbsp; RSI:<span class="purple">'+fmt(sig.rsi_a,2)+'→'+fmt(sig.rsi_b,2)+'</span> ↕'+sig.gap+'</td></tr>';
             rowCls='sig-row';
         }
 
@@ -289,7 +289,7 @@ function renderAll(){
             +'<td class="red">'+fmt(c.low,dec(c.low))+'</td>'
             +'<td>'+fmt(c.close,dec(c.close))+'</td>'
             +'<td style="color:#6e7681">'+fmtK(c.volume)+'</td>'
-            +'<td class="'+rsiClr+'">'+(c.rsi!=null?fmt(c.rsi,1):'--')+'</td>'
+            +'<td class="'+rsiClr+'">'+(c.rsi!=null?fmt(c.rsi,2):'--')+'</td>'
             +'<td>'+rsiZone+'</td>'
             +'<td>'+(sig?(sig.direction==='BUY'?'<span class="badge b-buy">▲L</span>':'<span class="badge b-sell">▼S</span>'):'')+'</td>'
             +'</tr>';
@@ -317,7 +317,7 @@ function renderAll(){
             +'<td class="yellow">'+fmt(s.entry_price,dec(s.entry_price))+'</td>'
             +'<td class="green">'+fmt(tp2,dec(tp2))+'</td>'
             +'<td class="red">'+fmt(sl2,dec(sl2))+'</td>'
-            +'<td class="purple">'+fmt(s.rsi_a,0)+'→'+fmt(s.rsi_b,0)+'</td>'
+            +'<td class="purple">'+fmt(s.rsi_a,2)+'→'+fmt(s.rsi_b,2)+'</td>'
             +'<td>'+s.gap+'</td>'
             +'<td>'+status+'</td>'
             +'<td>'+pnlStr+'</td></tr>';
@@ -400,7 +400,7 @@ function updateLiveCandleDisplay(c){
     var ce=$('lcC');ce.textContent=fmt(c.close,d);
     ce.style.color=c.close>=c.open?'#0ECB81':'#F6465D';
     var re=$('lcR');
-    re.textContent=c.rsi!=null?fmt(c.rsi,1):'--';
+    re.textContent=c.rsi!=null?fmt(c.rsi,2):'--';
     var lt=parseFloat($('iL').value),st=parseFloat($('iS').value);
     re.style.color=c.rsi!=null?(c.rsi<=lt?'#0ECB81':c.rsi>=st?'#F6465D':'#A371F7'):'#A371F7';
     $('lcV').textContent=fmtK(c.volume);
