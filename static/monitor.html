@@ -499,8 +499,8 @@ setInterval(function(){
     var now=Math.floor(Date.now()/1000);
     var elapsed=now-lc.time;
     if(elapsed>=sec+5){
-        // Yeni mum olusmus — veri yenile
-        loadData();
+        // Yeni mum olusmus — sadece son mumu cek, tablo yenileme
+        fetchLastCandle();
     }else{
         var remaining=Math.max(0,sec-elapsed);
         var min=Math.floor(remaining/60);var s=remaining%60;
@@ -509,13 +509,77 @@ setInterval(function(){
     }
 },1000);
 
+// ── Son mumu cek — tablo yenileme yapmadan tabloya ekle ──
+async function fetchLastCandle(){
+    try{
+        // Binance'tan sadece son 2 mumu cek
+        var resp=await fetch('https://fapi.binance.com/fapi/v1/klines?symbol='+sym+'&interval='+tf+'&limit=2');
+        var klines=await resp.json();
+        if(!klines||klines.length<2)return;
+
+        // Son kapanmis mum (sondan bir onceki)
+        var prev=klines[0];
+        var newCandle={
+            time:parseInt(prev[0])/1000,
+            open:parseFloat(prev[1]),high:parseFloat(prev[2]),
+            low:parseFloat(prev[3]),close:parseFloat(prev[4]),
+            volume:parseFloat(prev[5]),rsi:null
+        };
+
+        // Zaten varsa ekleme
+        if(chartData&&chartData.candles&&chartData.candles.length>0){
+            var lastTime=chartData.candles[chartData.candles.length-1].time;
+            if(newCandle.time<=lastTime)return;
+
+            // Yeni mumu veriye ekle
+            chartData.candles.push(newCandle);
+
+            // RSI hesapla
+            var rsiLen=parseInt($('iR').value)||10;
+            var liveRsi=calcLiveRSI(chartData.candles,rsiLen);
+            if(liveRsi!=null)newCandle.rsi=Math.round(liveRsi*10)/10;
+
+            // Tabloya en uste ekle (DOM manipulasyonu — tum tablo yenileme yok)
+            var d=dec(newCandle.open);
+            var rsiClr=newCandle.rsi!=null?(newCandle.rsi<=parseFloat($('iL').value)?'green':newCandle.rsi>=parseFloat($('iS').value)?'red':'purple'):'';
+            var rsiZone=newCandle.rsi!=null?(newCandle.rsi<=parseFloat($('iL').value)?'OS':newCandle.rsi>=parseFloat($('iS').value)?'OB':''):'';
+            var row='<tr><td style="color:#6e7681">'+timeStr(newCandle.time)+'</td>'
+                +'<td>'+fmt(newCandle.open,d)+'</td><td class="green">'+fmt(newCandle.high,d)+'</td>'
+                +'<td class="red">'+fmt(newCandle.low,d)+'</td><td>'+fmt(newCandle.close,d)+'</td>'
+                +'<td style="color:#6e7681">'+fmtK(newCandle.volume)+'</td>'
+                +'<td class="'+rsiClr+'">'+(newCandle.rsi!=null?fmt(newCandle.rsi,1):'--')+'</td>'
+                +'<td>'+rsiZone+'</td><td></td></tr>';
+
+            var tbody=$('candleBody');
+            tbody.insertAdjacentHTML('afterbegin',row);
+
+            // Mum sayisi guncelle
+            var cnt=parseInt($('candleCnt').textContent)||0;
+            $('candleCnt').textContent=cnt+1;
+
+            // Canli mum kartini yeni mum icin sifirla
+            var current=klines[1];
+            var liveMum={
+                time:parseInt(current[0])/1000,
+                open:parseFloat(current[1]),high:parseFloat(current[2]),
+                low:parseFloat(current[3]),close:parseFloat(current[4]),
+                volume:parseFloat(current[5]),rsi:null
+            };
+            chartData.candles.push(liveMum);
+            var lr2=calcLiveRSI(chartData.candles,rsiLen);
+            if(lr2!=null)liveMum.rsi=Math.round(lr2*10)/10;
+            updateLiveCandleDisplay(liveMum);
+        }
+    }catch(e){console.error('fetchLastCandle error:',e)}
+}
+
 // ── Init ──
 sym='XAGUSDT';tf='15m';
 adminToken=localStorage.getItem('admin_token')||'';
 loadState();if(!sym)sym='XAGUSDT';if(!tf)tf='15m';
 initUI();loadData();connectWS();
-// 3dk da bir tam yenileme
-setInterval(loadData,180000);
+// Arka plan yenileme YOK — sadece mum kapanisinda fetchLastCandle calisir
+// Tam yenileme sadece kullanici "Uygula" veya "Filtrele" bastiginda olur
 </script>
 </body>
 </html>
