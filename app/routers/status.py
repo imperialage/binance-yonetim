@@ -414,10 +414,13 @@ async def api_chart_data(
     entry_buffer: float = 0.1,
     tp_pct_param: float = 0,
     sl_pct_param: float = 0,
+    start_date: str = "",
+    end_date: str = "",
 ) -> dict:
     """Grafik icin mum + RSI + sinyal (server-side hesaplama) + pozisyon verisi.
 
     Binance API'den direkt mum ceker — tum semboller ve TF'ler desteklenir.
+    start_date/end_date: YYYY-MM-DD formatinda tarih filtresi.
     """
     from app.modules.rsi_calculator import calculate_rsi
     from app.modules.binance_client import get_position_risk
@@ -433,14 +436,45 @@ async def api_chart_data(
     tp_pct = tp_pct_param / 100 if tp_pct_param > 0 else cfg.get("tp_pct", 0.01)
     sl_pct = sl_pct_param / 100 if sl_pct_param > 0 else cfg.get("sl_pct", 0.003)
 
-    # Binance API'den mum cek (son 1500)
+    # Binance API'den mum cek (tarih filtreli, paginated)
+    import time as _time
+
+    INTERVAL_MS = {"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000}
+    iv_ms = INTERVAL_MS.get(interval, 900000)
+
+    # Tarih araligi hesapla
+    if start_date:
+        try:
+            start_ms = int(datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
+            # RSI warmup icin 200 mum oncesinden basla
+            warmup_ms = start_ms - (200 * iv_ms)
+        except Exception:
+            warmup_ms = int(_time.time() * 1000) - (1500 * iv_ms)
+            start_ms = warmup_ms
+    else:
+        warmup_ms = int(_time.time() * 1000) - (1500 * iv_ms)
+        start_ms = warmup_ms
+
+    end_ms = int(datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000) + 86400000 if end_date else int(_time.time() * 1000)
+
     try:
+        raw_klines = []
+        current = warmup_ms
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get("https://fapi.binance.com/fapi/v1/klines", params={
-                "symbol": sym, "interval": interval, "limit": 1500,
-            })
-            resp.raise_for_status()
-            raw_klines = resp.json()
+            while current < end_ms:
+                resp = await client.get("https://fapi.binance.com/fapi/v1/klines", params={
+                    "symbol": sym, "interval": interval, "startTime": current, "endTime": end_ms, "limit": 1500,
+                })
+                resp.raise_for_status()
+                batch = resp.json()
+                if not batch:
+                    break
+                raw_klines.extend(batch)
+                current = int(batch[-1][0]) + iv_ms
+                if len(batch) < 1500:
+                    break
+                import asyncio
+                await asyncio.sleep(0.2)
     except Exception as e:
         return {"candles": [], "signals": [], "trades": [], "position": None, "error": str(e)}
 
@@ -594,13 +628,26 @@ async def api_chart_data(
     except Exception:
         pass
 
+    # Tarih filtresi — sadece start_date sonrasi verileri dondur (warmup haric)
+    if start_date:
+        filtered_candles = [c for c in candles if c["time"] >= start_ms // 1000]
+        filtered_signals = [s for s in signals if s["time"] >= start_ms // 1000]
+        filtered_trades = [t for t in trades if t.get("entry_time", 0) >= start_ms // 1000]
+    else:
+        filtered_candles = candles
+        filtered_signals = signals
+        filtered_trades = trades
+
     return {
-        "candles": candles,
-        "signals": signals,
-        "trades": trades,
+        "candles": filtered_candles,
+        "signals": filtered_signals,
+        "trades": filtered_trades,
         "position": position,
         "symbol": sym,
         "interval": interval,
+        "total_candles": len(filtered_candles),
+        "total_signals": len(filtered_signals),
+        "total_trades": len(filtered_trades),
         "params": {"rsi_len": rsi_len, "long_thresh": long_thresh, "short_thresh": short_thresh,
                    "max_gap": max_gap, "entry_buffer": entry_buffer, "tp_pct": round(tp_pct*100,2), "sl_pct": round(sl_pct*100,2)},
     }

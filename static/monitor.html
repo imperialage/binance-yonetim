@@ -51,7 +51,8 @@ select:focus,input:focus{outline:none;border-color:#F0B90B}
 /* Tables */
 .section-title{font-size:11px;color:#6e7681;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px}
 .section-title .cnt{background:#21262d;color:#848E9C;font-size:10px;padding:1px 7px;border-radius:8px}
-.tbl-wrap{overflow-x:auto;margin-bottom:20px}
+.tbl-wrap{overflow-x:auto;overflow-y:auto;max-height:500px;margin-bottom:20px;border:1px solid #1b2130;border-radius:10px}
+.tbl-wrap thead{position:sticky;top:0;z-index:1}
 table{width:100%;border-collapse:collapse;background:#111827;border:1px solid #1b2130;border-radius:10px;overflow:hidden}
 thead{background:#0d1117}
 th{text-align:left;padding:7px 8px;font-size:9px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;font-weight:600;border-bottom:1px solid #1b2130;white-space:nowrap}
@@ -208,8 +209,10 @@ async function loadData(){
     var u='/api/chart-data?symbol='+sym+'&interval='+tf
         +'&rsi_len='+$('iR').value+'&long_thresh='+$('iL').value+'&short_thresh='+$('iS').value
         +'&max_gap='+$('iG').value+'&entry_buffer='+$('iB').value
-        +'&tp_pct_param='+$('iT').value+'&sl_pct_param='+$('iSL').value;
+        +'&tp_pct_param='+$('iT').value+'&sl_pct_param='+$('iSL').value
+        +'&start_date='+$('fStart').value+'&end_date='+$('fEnd').value;
     try{
+        $('candleBody').innerHTML='<tr><td colspan="9" style="text-align:center;color:#F0B90B;padding:20px">Yukleniyor...</td></tr>';
         var r=await fetch(u);chartData=await r.json();
         if(!chartData.candles)return;
         renderAll();
@@ -249,8 +252,8 @@ function renderAll(){
     });
 
     var html='';
-    var shown=Math.min(filtered.length,500);
-    for(var i=filtered.length-1;i>=filtered.length-shown&&i>=0;i--){
+    var shown=filtered.length;
+    for(var i=filtered.length-1;i>=0;i--){
         var c=filtered[i];
         var sig=sigMap[c.time];
         var tExit=tradeExitMap[c.time];
@@ -329,7 +332,8 @@ function renderAll(){
     var wr=tot>0?(tpC/tot*100).toFixed(1):'0';
     var pnl=trades.reduce(function(s,t){return s+t.pnl_pct},0);
     $('statsInfo').innerHTML=
-        '<div class="cr"><span class="k">Sinyal</span><span class="v">'+signals.length+'</span></div>'
+        '<div class="cr"><span class="k">Mum</span><span class="v">'+(d.total_candles||candles.length)+'</span></div>'
+        +'<div class="cr"><span class="k">Sinyal</span><span class="v">'+signals.length+'</span></div>'
         +'<div class="cr"><span class="k">Islem</span><span class="v">'+tot+' (TP:<span class="green">'+tpC+'</span> SL:<span class="red">'+slC+'</span>)</span></div>'
         +'<div class="cr"><span class="k">Win Rate</span><span class="v '+(parseFloat(wr)>=50?'green':'red')+'">'+wr+'%</span></div>'
         +'<div class="cr"><span class="k">PnL</span><span class="v '+(pnl>=0?'green':'red')+'">'+fmt(pnl,2)+'%</span></div>'
