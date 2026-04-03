@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>İndikatör Ayarları</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0B0E11;color:#E6EDF3;font-family:'Inter',-apple-system,sans-serif;font-size:13px;min-height:100vh}
+.header{background:#111827;border-bottom:1px solid #1b2130;padding:12px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.logo{color:#F0B90B;font-weight:800;font-size:16px}
+.hlink{color:#58a6ff;font-size:11px;text-decoration:none}
+.hlink:hover{text-decoration:underline}
+.container{max-width:900px;margin:0 auto;padding:20px}
+
+/* Form */
+.form-card{background:#111827;border:1px solid #1b2130;border-radius:12px;padding:20px;margin-bottom:16px}
+.form-title{font-size:11px;color:#F0B90B;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #1b2130}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+.fg label{display:block;font-size:10px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:4px}
+.fg input,.fg select{width:100%;background:#0d1117;border:1px solid #21262d;color:#E6EDF3;padding:8px 10px;border-radius:8px;font-size:13px;font-family:inherit}
+.fg input:focus,.fg select:focus{outline:none;border-color:#F0B90B}
+.fg input[type=checkbox]{width:auto;accent-color:#F0B90B}
+.cb-row{display:flex;align-items:center;gap:8px;padding:6px 0}
+.cb-row label{font-size:12px;color:#848E9C;margin:0}
+
+.btn-row{display:flex;gap:10px;margin-top:16px}
+.btn{padding:10px 24px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;border:none;font-family:inherit;transition:opacity .15s}
+.btn:hover{opacity:0.85}
+.btn-primary{background:#F0B90B;color:#0B0E11}
+.btn-secondary{background:#1c2128;color:#E6EDF3;border:1px solid #21262d}
+.btn-danger{background:#F6465D;color:#fff}
+
+/* Toast */
+.toast-wrap{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:99}
+.toast{padding:10px 24px;border-radius:8px;font-size:13px;font-weight:600;color:#fff;animation:fadeIn .3s}
+.toast-ok{background:rgba(14,203,129,0.9)}.toast-err{background:rgba(246,70,93,0.9)}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+/* Table */
+.tbl-card{background:#111827;border:1px solid #1b2130;border-radius:12px;overflow:hidden}
+table{width:100%;border-collapse:collapse}
+th{background:#0d1117;text-align:left;padding:8px 10px;font-size:10px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;font-weight:600;border-bottom:1px solid #1b2130;white-space:nowrap}
+td{padding:7px 10px;font-size:12px;border-bottom:1px solid #141922;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr:hover{background:#0d111788}
+tr.active-row{background:#F0B90B08;border-left:3px solid #F0B90B}
+.green{color:#0ECB81}.red{color:#F6465D}.yellow{color:#F0B90B}
+.edit-btn{padding:3px 10px;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;border:1px solid #F0B90B30;background:#F0B90B10;color:#F0B90B;font-family:inherit}
+.edit-btn:hover{background:#F0B90B20}
+.del-btn{padding:3px 10px;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;border:1px solid #F6465D30;background:#F6465D10;color:#F6465D;font-family:inherit}
+.section-title{font-size:12px;color:#6e7681;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <span class="logo">İndikatör Ayarları</span>
+    <a href="/trading" class="hlink">Dashboard</a>
+    <a href="/monitor" class="hlink">Monitor</a>
+</div>
+
+<div class="container">
+
+<!-- Sembol Secici -->
+<div class="form-card">
+    <div class="form-title">Sembol Sec</div>
+    <div class="form-grid">
+        <div class="fg">
+            <label>Sembol</label>
+            <select id="symSel" onchange="loadSymbol()">
+                <option value="">-- Sec --</option>
+            </select>
+        </div>
+        <div class="fg">
+            <label>Yeni Sembol Ekle</label>
+            <div style="display:flex;gap:6px">
+                <input id="newSym" placeholder="BTCUSDT" style="flex:1">
+                <button class="btn btn-secondary" onclick="addNewSymbol()" style="padding:6px 12px;font-size:11px">Ekle</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Ayar Formu -->
+<div class="form-card" id="settingsForm" style="display:none">
+    <div class="form-title" id="formTitle">Ayarlar</div>
+
+    <div class="form-grid">
+        <div class="fg"><label>Grafik Periyodu</label>
+            <select id="fInterval">
+                <option value="1m">1m</option><option value="5m">5m</option>
+                <option value="15m" selected>15m</option><option value="30m">30m</option>
+                <option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option>
+            </select>
+        </div>
+        <div class="fg"><label>RSI Uzunluk</label><input id="fRsi" type="number" value="10"></div>
+        <div class="fg"><label>LONG Esik (≤)</label><input id="fLong" type="number" value="32" step="1"></div>
+        <div class="fg"><label>SHORT Esik (≥)</label><input id="fShort" type="number" value="70" step="1"></div>
+        <div class="fg"><label>Max Gap</label><input id="fGap" type="number" value="12"></div>
+        <div class="fg"><label>Buffer %</label><input id="fBuf" type="number" value="0.1" step="0.05"></div>
+        <div class="fg"><label>TP %</label><input id="fTp" type="number" value="1.0" step="0.1"></div>
+        <div class="fg"><label>SL %</label><input id="fSl" type="number" value="0.3" step="0.05"></div>
+        <div class="fg"><label>Komisyon %</label><input id="fComm" type="number" value="0.08" step="0.01"></div>
+    </div>
+
+    <div style="margin-top:12px">
+        <div class="cb-row"><input type="checkbox" id="fWeekend"><label>Haftasonu Kapali (Cuma 20:00 - Pazar 24:00 TR)</label></div>
+        <div class="cb-row"><input type="checkbox" id="fActive" checked><label>Islem Aktif</label></div>
+        <div class="cb-row"><input type="checkbox" id="fListening" checked><label>Sinyal Dinleme Aktif</label></div>
+    </div>
+
+    <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveSettings()">Kaydet</button>
+        <button class="btn btn-secondary" onclick="resetForm()">Sifirla</button>
+        <button class="btn btn-danger" onclick="deleteSymbol()">Sil</button>
+    </div>
+</div>
+
+<!-- Tum Semboller Tablosu -->
+<div class="section-title">Tum Sembol Ayarlari <span id="totalCount" style="color:#F0B90B"></span></div>
+<div class="tbl-card">
+    <table>
+        <thead><tr>
+            <th>Sembol</th><th>TF</th><th>RSI</th><th>L≤</th><th>S≥</th><th>Gap</th><th>Buf%</th><th>TP%</th><th>SL%</th><th>Komis%</th><th>HfSn</th><th>Aktif</th><th>Dinle</th><th></th>
+        </tr></thead>
+        <tbody id="allBody"></tbody>
+    </table>
+</div>
+
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+var SYMS=['XAGUSDT','ETHUSDT','MYXUSDT','BTCUSDT','SOLUSDT','XRPUSDT','DOGEUSDT','AVAXUSDT'];
+var currentSym='';
+
+function $(id){return document.getElementById(id)}
+function toast(msg,ok){
+    var el=document.createElement('div');
+    el.className='toast '+(ok?'toast-ok':'toast-err');
+    el.textContent=msg;
+    $('toastWrap').appendChild(el);
+    setTimeout(function(){el.remove()},3000);
+}
+
+// ── Load all settings ──
+async function loadAll(){
+    var resp=await fetch('/api/indicator-settings');
+    var data=await resp.json();
+    var settings=data.settings||[];
+
+    // Dropdown guncelle
+    var existing=settings.map(function(s){return s.symbol});
+    var allSyms=[...new Set([...SYMS,...existing])].sort();
+    var opts='<option value="">-- Sec --</option>';
+    allSyms.forEach(function(s){
+        opts+='<option value="'+s+'"'+(s===currentSym?' selected':'')+'>'+s+'</option>';
+    });
+    $('symSel').innerHTML=opts;
+
+    // Tablo
+    var html='';
+    settings.forEach(function(s){
+        var cls=s.symbol===currentSym?' class="active-row"':'';
+        html+='<tr'+cls+'>'
+            +'<td><strong class="yellow">'+s.symbol+'</strong></td>'
+            +'<td>'+s.interval+'</td>'
+            +'<td>'+s.rsi_len+'</td>'
+            +'<td>'+s.long_thresh+'</td>'
+            +'<td>'+s.short_thresh+'</td>'
+            +'<td>'+s.max_gap+'</td>'
+            +'<td>'+s.entry_buffer+'</td>'
+            +'<td class="green">'+s.tp_pct+'</td>'
+            +'<td class="red">'+s.sl_pct+'</td>'
+            +'<td>'+s.commission+'</td>'
+            +'<td>'+(s.weekend_closed?'<span class="yellow">Evet</span>':'—')+'</td>'
+            +'<td>'+(s.active?'<span class="green">Aktif</span>':'<span class="red">Pasif</span>')+'</td>'
+            +'<td>'+(s.listening?'<span class="green">Dinle</span>':'<span class="red">Kapali</span>')+'</td>'
+            +'<td><button class="edit-btn" onclick="selectSym(\''+s.symbol+'\')">Duzenle</button></td>'
+            +'</tr>';
+    });
+    $('allBody').innerHTML=html||'<tr><td colspan="14" style="text-align:center;color:#484f58;padding:20px">Henuz ayar yok. Yukaridan sembol secin ve kaydedin.</td></tr>';
+    $('totalCount').textContent='('+settings.length+' sembol)';
+}
+
+// ── Load single symbol ──
+async function loadSymbol(){
+    var sym=$('symSel').value;
+    if(!sym){$('settingsForm').style.display='none';currentSym='';loadAll();return}
+    currentSym=sym;
+
+    var resp=await fetch('/api/indicator-settings/'+sym);
+    var s=await resp.json();
+
+    $('formTitle').textContent=sym+' Ayarlari';
+    $('fInterval').value=s.interval||'15m';
+    $('fRsi').value=s.rsi_len||10;
+    $('fLong').value=s.long_thresh||32;
+    $('fShort').value=s.short_thresh||70;
+    $('fGap').value=s.max_gap||12;
+    $('fBuf').value=s.entry_buffer||0.1;
+    $('fTp').value=s.tp_pct||1.0;
+    $('fSl').value=s.sl_pct||0.3;
+    $('fComm').value=s.commission||0.08;
+    $('fWeekend').checked=!!s.weekend_closed;
+    $('fActive').checked=s.active!==0;
+    $('fListening').checked=s.listening!==0;
+
+    $('settingsForm').style.display='block';
+    loadAll();
+}
+
+function selectSym(sym){
+    $('symSel').value=sym;
+    loadSymbol();
+    window.scrollTo({top:0,behavior:'smooth'});
+}
+
+// ── Save ──
+async function saveSettings(){
+    if(!currentSym){toast('Sembol secin',false);return}
+    var body={
+        interval:$('fInterval').value,
+        rsi_len:parseInt($('fRsi').value),
+        long_thresh:parseFloat($('fLong').value),
+        short_thresh:parseFloat($('fShort').value),
+        max_gap:parseInt($('fGap').value),
+        entry_buffer:parseFloat($('fBuf').value),
+        tp_pct:parseFloat($('fTp').value),
+        sl_pct:parseFloat($('fSl').value),
+        commission:parseFloat($('fComm').value),
+        weekend_closed:$('fWeekend').checked?1:0,
+        active:$('fActive').checked?1:0,
+        listening:$('fListening').checked?1:0,
+    };
+    try{
+        var resp=await fetch('/api/indicator-settings/'+currentSym,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        if(resp.ok){toast(currentSym+' kaydedildi',true);loadAll()}
+        else{toast('Hata: '+resp.statusText,false)}
+    }catch(e){toast('Hata: '+e.message,false)}
+}
+
+// ── Reset ──
+function resetForm(){
+    $('fInterval').value='15m';$('fRsi').value=10;$('fLong').value=32;$('fShort').value=70;
+    $('fGap').value=12;$('fBuf').value=0.1;$('fTp').value=1.0;$('fSl').value=0.3;$('fComm').value=0.08;
+    $('fWeekend').checked=false;$('fActive').checked=true;$('fListening').checked=true;
+}
+
+// ── Delete ──
+async function deleteSymbol(){
+    if(!currentSym)return;
+    if(!confirm(currentSym+' ayarlarini silmek istediginize emin misiniz?'))return;
+    try{
+        await fetch('/api/indicator-settings/'+currentSym,{method:'DELETE'});
+        toast(currentSym+' silindi',true);
+        currentSym='';$('symSel').value='';$('settingsForm').style.display='none';
+        loadAll();
+    }catch(e){toast('Hata: '+e.message,false)}
+}
+
+// ── Add new symbol ──
+function addNewSymbol(){
+    var sym=$('newSym').value.trim().toUpperCase();
+    if(!sym){toast('Sembol girin',false);return}
+    if(!sym.endsWith('USDT'))sym+='USDT';
+    currentSym=sym;
+    // Dropdown'a ekle
+    var opt=document.createElement('option');opt.value=sym;opt.textContent=sym;opt.selected=true;
+    $('symSel').appendChild(opt);
+    $('newSym').value='';
+    // Form goster default degerlerle
+    resetForm();
+    $('formTitle').textContent=sym+' Ayarlari (Yeni)';
+    $('settingsForm').style.display='block';
+}
+
+// ── Init ──
+loadAll();
+</script>
+</body>
+</html>

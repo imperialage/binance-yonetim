@@ -23,9 +23,10 @@ from app.modules.scheduler import start_scheduler, stop_scheduler
 from app.modules.data_collector import start_default_collections, stop_all_collections
 from app.modules.st_signal_logger import init_st_signal_db, close_st_signal_db
 from app.modules.st_stats_updater import start_st_stats_updater, stop_st_stats_updater
+from app.modules.indicator_settings_store import init_indicator_settings_db, close_indicator_settings_db
 from app.modules.order_stream import start_order_stream, stop_order_stream
 from app.routers import admin, backtest, chart, data_collector, events, latest, status, webhook, ws
-from app.routers import st_webhook
+from app.routers import st_webhook, indicator_settings
 from app.utils.logging import get_logger, setup_logging
 
 setup_logging(log_level=settings.log_level, json_output=settings.log_json)
@@ -42,6 +43,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await init_trade_db()
     await init_candle_db()
     await init_st_signal_db()
+    await init_indicator_settings_db()
     start_scheduler()
     start_st_stats_updater()
     start_price_stream()
@@ -55,6 +57,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await stop_scheduler()
     await close_binance()
     await close_redis()
+    await close_indicator_settings_db()
     await close_st_signal_db()
     await close_candle_db()
     await close_trade_db()
@@ -80,6 +83,7 @@ app.include_router(chart.router, tags=["chart"])
 app.include_router(backtest.router, tags=["backtest"])
 app.include_router(data_collector.router, tags=["data-collector"])
 app.include_router(st_webhook.router, tags=["st-webhook"])
+app.include_router(indicator_settings.router, tags=["indicator-settings"])
 
 # ── Static files & page routes ────────────────────────
 _static_dir = Path(__file__).resolve().parent.parent / "static"
@@ -107,6 +111,14 @@ async def backtest_page() -> FileResponse:
 async def chart_page() -> FileResponse:
     return FileResponse(
         str(_static_dir / "chart.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/settings")
+async def settings_page() -> FileResponse:
+    return FileResponse(
+        str(_static_dir / "settings.html"),
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
 
