@@ -68,6 +68,7 @@ SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
         "tp_pct": 0.010,   # %1.0
         "sl_pct": 0.003,   # %0.3
         "weight": 0.10,
+        "interval": "15m",
     },
 }
 
@@ -151,7 +152,7 @@ class Settings(BaseSettings):
     rate_limit_max_events: int = 30
 
     # ── Data Collector ─────────────────────────────
-    collector_symbols: str = "XRPUSDT,BTCUSDT,AVAXUSDT,DOGEUSDT,ETHUSDT,SOLUSDT,XAGUSDT"
+    collector_symbols: str = "XRPUSDT,BTCUSDT,AVAXUSDT,DOGEUSDT,ETHUSDT,SOLUSDT,XAGUSDT,MYXUSDT"
     collector_interval: str = "5m"
 
     # ── Binance Futures Trading ─────────────────────

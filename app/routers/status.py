@@ -415,41 +415,51 @@ async def api_chart_data(
     tp_pct_param: float = 0,
     sl_pct_param: float = 0,
 ) -> dict:
-    """Grafik icin mum + RSI + sinyal (server-side hesaplama) + pozisyon verisi."""
-    from app.modules.candle_store import query_candles
+    """Grafik icin mum + RSI + sinyal (server-side hesaplama) + pozisyon verisi.
+
+    Binance API'den direkt mum ceker — tum semboller ve TF'ler desteklenir.
+    """
     from app.modules.rsi_calculator import calculate_rsi
     from app.modules.binance_client import get_position_risk
     from app.config import get_symbol_config
     from datetime import datetime, timezone, timedelta
+    import httpx
 
     tz_ist = timezone(timedelta(hours=3))
     sym = symbol.upper()
-    buf = entry_buffer / 100  # % → ondalik
+    buf = entry_buffer / 100
 
-    # Config'den TP/SL (parametre 0 ise config'den al)
     cfg = get_symbol_config(sym)
     tp_pct = tp_pct_param / 100 if tp_pct_param > 0 else cfg.get("tp_pct", 0.01)
     sl_pct = sl_pct_param / 100 if sl_pct_param > 0 else cfg.get("sl_pct", 0.003)
 
-    # Mumlar
-    candles_raw = await query_candles(sym, interval, limit=3000)
-    if not candles_raw:
+    # Binance API'den mum cek (son 1500)
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get("https://fapi.binance.com/fapi/v1/klines", params={
+                "symbol": sym, "interval": interval, "limit": 1500,
+            })
+            resp.raise_for_status()
+            raw_klines = resp.json()
+    except Exception as e:
+        return {"candles": [], "signals": [], "trades": [], "position": None, "error": str(e)}
+
+    if not raw_klines:
         return {"candles": [], "signals": [], "trades": [], "position": None}
 
-    # RSI hesapla
-    closes = [c["close"] for c in candles_raw]
+    # Parse + RSI
+    closes = [float(k[4]) for k in raw_klines]
     rsi_values = calculate_rsi(closes, rsi_len)
 
     candles = []
-    for i, c in enumerate(candles_raw):
-        t = c.get("open_time", 0)
+    for i, k in enumerate(raw_klines):
         candles.append({
-            "time": t // 1000 if t > 1e12 else t,
-            "open": c["open"],
-            "high": c["high"],
-            "low": c["low"],
-            "close": c["close"],
-            "volume": c.get("volume", 0),
+            "time": int(k[0]) // 1000,
+            "open": float(k[1]),
+            "high": float(k[2]),
+            "low": float(k[3]),
+            "close": float(k[4]),
+            "volume": float(k[5]),
             "rsi": rsi_values[i] if i < len(rsi_values) else None,
         })
 
