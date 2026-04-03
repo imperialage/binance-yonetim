@@ -422,7 +422,7 @@ async def api_chart_data(
     Binance API'den direkt mum ceker — tum semboller ve TF'ler desteklenir.
     start_date/end_date: YYYY-MM-DD formatinda tarih filtresi.
     """
-    from app.modules.rsi_calculator import calculate_rsi
+    from app.modules.rsi_calculator import calculate_rsi_with_state
     from app.modules.binance_client import get_position_risk
     from app.config import get_symbol_config
     from datetime import datetime, timezone, timedelta
@@ -483,7 +483,7 @@ async def api_chart_data(
 
     # Parse + RSI
     closes = [float(k[4]) for k in raw_klines]
-    rsi_values = calculate_rsi(closes, rsi_len)
+    rsi_values, rsi_state = calculate_rsi_with_state(closes, rsi_len)
 
     candles = []
     for i, k in enumerate(raw_klines):
@@ -648,6 +648,7 @@ async def api_chart_data(
         "total_candles": len(filtered_candles),
         "total_signals": len(filtered_signals),
         "total_trades": len(filtered_trades),
+        "rsi_state": rsi_state,
         "params": {"rsi_len": rsi_len, "long_thresh": long_thresh, "short_thresh": short_thresh,
                    "max_gap": max_gap, "entry_buffer": entry_buffer, "tp_pct": round(tp_pct*100,2), "sl_pct": round(sl_pct*100,2)},
     }

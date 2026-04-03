@@ -215,6 +215,7 @@ async function loadData(){
         $('candleBody').innerHTML='<tr><td colspan="9" style="text-align:center;color:#F0B90B;padding:20px">Yukleniyor...</td></tr>';
         var r=await fetch(u);chartData=await r.json();
         if(!chartData.candles)return;
+        rsiState=chartData.rsi_state||null;
         renderAll();
     }catch(e){console.error(e)}
 }
@@ -385,27 +386,20 @@ async function closePos(){
     }catch(e){alert('Hata: '+e.message)}
 }
 
-// ── Live RSI Hesaplama (Wilder's RMA, JS) ──
-function calcLiveRSI(candles, length){
-    if(!candles||candles.length<length+1)return null;
-    var closes=candles.map(function(c){return c.close});
-    var n=closes.length;
-    var gains=new Array(n).fill(0);
-    var losses=new Array(n).fill(0);
-    for(var i=1;i<n;i++){
-        var d=closes[i]-closes[i-1];
-        gains[i]=d>0?d:0;
-        losses[i]=d<0?-d:0;
-    }
-    var ag=0,al=0;
-    for(var i=1;i<=length;i++){ag+=gains[i];al+=losses[i]}
-    ag/=length;al/=length;
-    for(var i=length+1;i<n;i++){
-        ag=(ag*(length-1)+gains[i])/length;
-        al=(al*(length-1)+losses[i])/length;
-    }
+// ── Live RSI — backend'den gelen RMA state ile hesapla ──
+// rsi_state: {avg_gain, avg_loss, prev_close}
+var rsiState=null;
+
+function calcLiveRSI_fromState(currentClose){
+    if(!rsiState||!rsiState.prev_close)return null;
+    var length=parseInt($('iR').value)||10;
+    var delta=currentClose-rsiState.prev_close;
+    var gain=delta>0?delta:0;
+    var loss=delta<0?-delta:0;
+    var ag=(rsiState.avg_gain*(length-1)+gain)/length;
+    var al=(rsiState.avg_loss*(length-1)+loss)/length;
     if(al===0)return 100;
-    return 100-(100/(1+ag/al));
+    return Math.round((100-(100/(1+ag/al)))*10)/10;
 }
 
 // ── Live Candle Display ──
@@ -452,16 +446,14 @@ function connectWS(){
                 el.textContent=fmt(price,dec(price));
                 lastPrice=price;
 
-                // Update live candle + RSI
+                // Update live candle + RSI (RMA state ile dogru hesaplama)
                 if(chartData&&chartData.candles&&chartData.candles.length>0){
                     var lc=chartData.candles[chartData.candles.length-1];
                     lc.high=Math.max(lc.high,price);
                     lc.low=Math.min(lc.low,price);
                     lc.close=price;
-                    // RSI canli hesapla
-                    var rsiLen=parseInt($('iR').value)||10;
-                    var liveRsi=calcLiveRSI(chartData.candles,rsiLen);
-                    if(liveRsi!=null)lc.rsi=Math.round(liveRsi*10)/10;
+                    var liveRsi=calcLiveRSI_fromState(price);
+                    if(liveRsi!=null)lc.rsi=liveRsi;
                     updateLiveCandleDisplay(lc);
                 }
 
@@ -534,10 +526,21 @@ async function fetchLastCandle(){
             // Yeni mumu veriye ekle
             chartData.candles.push(newCandle);
 
-            // RSI hesapla
-            var rsiLen=parseInt($('iR').value)||10;
-            var liveRsi=calcLiveRSI(chartData.candles,rsiLen);
-            if(liveRsi!=null)newCandle.rsi=Math.round(liveRsi*10)/10;
+            // RSI hesapla (RMA state ile)
+            var liveRsi=calcLiveRSI_fromState(newCandle.close);
+            if(liveRsi!=null){
+                newCandle.rsi=liveRsi;
+                // State guncelle — yeni mum icin prev_close ve avg_gain/loss ilerlet
+                if(rsiState){
+                    var length=parseInt($('iR').value)||10;
+                    var delta=newCandle.close-rsiState.prev_close;
+                    var g=delta>0?delta:0;
+                    var l=delta<0?-delta:0;
+                    rsiState.avg_gain=(rsiState.avg_gain*(length-1)+g)/length;
+                    rsiState.avg_loss=(rsiState.avg_loss*(length-1)+l)/length;
+                    rsiState.prev_close=newCandle.close;
+                }
+            }
 
             // Tabloya en uste ekle (DOM manipulasyonu — tum tablo yenileme yok)
             var d=dec(newCandle.open);
@@ -566,8 +569,8 @@ async function fetchLastCandle(){
                 volume:parseFloat(current[5]),rsi:null
             };
             chartData.candles.push(liveMum);
-            var lr2=calcLiveRSI(chartData.candles,rsiLen);
-            if(lr2!=null)liveMum.rsi=Math.round(lr2*10)/10;
+            var lr2=calcLiveRSI_fromState(liveMum.close);
+            if(lr2!=null)liveMum.rsi=lr2;
             updateLiveCandleDisplay(liveMum);
         }
     }catch(e){console.error('fetchLastCandle error:',e)}
