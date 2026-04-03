@@ -61,6 +61,10 @@ tr:hover{background:#0d111788}
 tr.sig-row{background:#F0B90B08;border-left:3px solid #F0B90B}
 tr.tp-row{background:#0ECB8108;border-left:3px solid #0ECB81}
 tr.sl-row{background:#F6465D08;border-left:3px solid #F6465D}
+tr.bn-entry{background:#3B82F610;border-left:3px solid #3B82F6}
+tr.bn-exit-tp{background:#0ECB8110;border-left:3px solid #0ECB81}
+tr.bn-exit-sl{background:#F6465D10;border-left:3px solid #F6465D}
+tr.bn-exit{background:#A371F710;border-left:3px solid #A371F7}
 tr.os-row td:nth-child(8){color:#0ECB81;font-weight:600}
 tr.ob-row td:nth-child(8){color:#F6465D;font-weight:600}
 .badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:700}
@@ -160,6 +164,12 @@ tr.ob-row td:nth-child(8){color:#F6465D;font-weight:600}
     <th>Tarih</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th><th>RSI</th><th>Bolge</th><th>Sinyal</th>
 </tr></thead><tbody id="candleBody"></tbody></table></div>
 
+<!-- Binance Islemleri Tablosu -->
+<div class="section-title">Binance Islemleri <span class="cnt" id="bnTradeCnt">0</span></div>
+<div class="tbl-wrap"><table><thead><tr>
+    <th>Yon</th><th>Giris</th><th>Giris Fiyat</th><th>Cikis</th><th>Cikis Fiyat</th><th>Miktar</th><th>PnL $</th><th>PnL %</th>
+</tr></thead><tbody id="bnTradeBody"></tbody></table></div>
+
 <!-- Sinyal Tablosu -->
 <div class="section-title">Sinyaller <span class="cnt" id="sigCnt">0</span></div>
 <div class="tbl-wrap"><table><thead><tr>
@@ -237,6 +247,8 @@ async function loadSettingsAndData(){
 }
 
 // ── Load Data ──
+var binanceTrades=null;
+
 async function loadData(){
     var u='/api/chart-data?symbol='+sym+'&interval='+tf
         +'&rsi_len='+$('iR').value+'&long_thresh='+$('iL').value+'&short_thresh='+$('iS').value
@@ -245,7 +257,13 @@ async function loadData(){
         +'&start_date='+$('fStart').value+'&end_date='+$('fEnd').value;
     try{
         $('candleBody').innerHTML='<tr><td colspan="9" style="text-align:center;color:#F0B90B;padding:20px">Yukleniyor...</td></tr>';
-        var r=await fetch(u);chartData=await r.json();
+        // Paralel cek: chart data + binance trades
+        var [r1,r2]=await Promise.all([
+            fetch(u),
+            fetch('/api/binance-trades?symbol='+sym+'&days=1')
+        ]);
+        chartData=await r1.json();
+        binanceTrades=await r2.json();
         if(!chartData.candles)return;
         renderAll();
     }catch(e){console.error(e)}
@@ -269,6 +287,28 @@ function renderAll(){
     var sigMap={};signals.forEach(function(s){sigMap[s.time]=s});
     var tradeExitMap={};trades.forEach(function(t){tradeExitMap[t.exit_time]=t});
 
+    // Binance islem event'lerini mum zamanina esle
+    var tfSec={'1m':60,'5m':300,'15m':900,'30m':1800,'1h':3600,'4h':14400,'1d':86400};
+    var ivSec=tfSec[tf]||900;
+    var bnEntryMap={};  // candle_time -> [event]
+    var bnExitMap={};   // candle_time -> [event]
+    if(binanceTrades&&binanceTrades.trades){
+        binanceTrades.trades.forEach(function(bt){
+            // Giris event'i
+            if(bt.entry_time>0){
+                var ck=Math.floor(bt.entry_time/ivSec)*ivSec;
+                if(!bnEntryMap[ck])bnEntryMap[ck]=[];
+                bnEntryMap[ck].push(bt);
+            }
+            // Cikis event'i
+            if(bt.exit_time>0){
+                var ck2=Math.floor(bt.exit_time/ivSec)*ivSec;
+                if(!bnExitMap[ck2])bnExitMap[ck2]=[];
+                bnExitMap[ck2].push(bt);
+            }
+        });
+    }
+
     // Filter
     var fStart=new Date($('fStart').value).getTime()/1000;
     var fEnd=new Date($('fEnd').value+'T23:59:59').getTime()/1000;
@@ -289,13 +329,29 @@ function renderAll(){
         var c=filtered[i];
         var sig=sigMap[c.time];
         var tExit=tradeExitMap[c.time];
+        var bnEntries=bnEntryMap[c.time]||[];
+        var bnExits=bnExitMap[c.time]||[];
         var rsiZone='';var rowCls='';
         if(c.rsi!=null){
             if(c.rsi<=longTh){rsiZone='OS';rowCls='os-row'}
             else if(c.rsi>=shortTh){rsiZone='OB';rowCls='ob-row'}
         }
 
-        // Trade exit row
+        // Binance cikis satirlari (mumdan once — ters kronolojik)
+        for(var ei=bnExits.length-1;ei>=0;ei--){
+            var bx=bnExits[ei];
+            var exPnlCls=bx.pnl>=0?'green':'red';
+            var exRowCls=bx.pnl>=0?'bn-exit-tp':'bn-exit-sl';
+            html+='<tr class="'+exRowCls+'"><td colspan="9" class="sig-detail">'
+                +'<span style="color:#A371F7;font-weight:700">BINANCE CIKIS</span> '
+                +'<span class="'+(bx.side==='LONG'?'green':'red')+'">'+bx.side+'</span> '
+                +bx.exit_str+' '
+                +'<span class="yellow">'+fmt(bx.exit_price,dec(bx.exit_price))+'</span> '
+                +'&nbsp; PnL: <span class="'+exPnlCls+'">$'+fmt(bx.pnl,2)+' ('+fmt(bx.pnl_pct,2)+'%)</span>'
+                +'</td></tr>';
+        }
+
+        // Trade exit row (sunucu hesapli)
         if(tExit){
             var exCls=tExit.reason==='TP'?'tp-row':'sl-row';
             var exIcon=tExit.reason==='TP'?'✓TP':'✗SL';
@@ -310,6 +366,18 @@ function renderAll(){
             var ssl=sig.direction==='BUY'?sig.entry_price*(1-slPct/100):sig.entry_price*(1+slPct/100);
             html+='<tr class="sig-row"><td colspan="9" class="sig-detail">'+sBadge+' <span class="yellow">'+fmt(sig.entry_price,dec(sig.entry_price))+'</span> &nbsp; TP:<span class="green">'+fmt(stp,dec(stp))+'</span> SL:<span class="red">'+fmt(ssl,dec(ssl))+'</span> &nbsp; RSI:<span class="purple">'+fmt(sig.rsi_a,2)+'→'+fmt(sig.rsi_b,2)+'</span> ↕'+sig.gap+'</td></tr>';
             rowCls='sig-row';
+        }
+
+        // Binance giris satirlari (sinyalden sonra, mumdan once)
+        for(var ni=bnEntries.length-1;ni>=0;ni--){
+            var bn=bnEntries[ni];
+            html+='<tr class="bn-entry"><td colspan="9" class="sig-detail">'
+                +'<span style="color:#3B82F6;font-weight:700">BINANCE GIRIS</span> '
+                +'<span class="'+(bn.side==='LONG'?'green':'red')+'">'+bn.side+'</span> '
+                +bn.entry_str+' '
+                +'<span class="yellow">'+fmt(bn.entry_price,dec(bn.entry_price))+'</span> '
+                +'x'+fmt(bn.qty,4)
+                +'</td></tr>';
         }
 
         // Candle row
@@ -371,8 +439,37 @@ function renderAll(){
         +'<div class="cr"><span class="k">PnL</span><span class="v '+(pnl>=0?'green':'red')+'">'+fmt(pnl,2)+'%</span></div>'
         +'<div class="cr"><span class="k">TP%/SL%</span><span class="v">'+tpPct+' / '+slPct+'</span></div>';
 
-    // Position
-    renderPosition(pos);
+    // Binance Islemleri tablosu
+    var bnTrades=binanceTrades&&binanceTrades.trades?binanceTrades.trades:[];
+    var bnHtml='';
+    var bnTotalPnl=0;
+    bnTrades.slice().reverse().forEach(function(bt){
+        bnTotalPnl+=bt.pnl;
+        var sideCls=bt.side==='LONG'?'b-buy':'b-sell';
+        var sideLabel=bt.side==='LONG'?'▲ LONG':'▼ SHORT';
+        var pCls=bt.pnl>=0?'green':'red';
+        bnHtml+='<tr>'
+            +'<td><span class="badge '+sideCls+'">'+sideLabel+'</span></td>'
+            +'<td style="color:#6e7681">'+bt.entry_str+'</td>'
+            +'<td class="yellow">'+fmt(bt.entry_price,dec(bt.entry_price))+'</td>'
+            +'<td style="color:#6e7681">'+bt.exit_str+'</td>'
+            +'<td class="yellow">'+fmt(bt.exit_price,dec(bt.exit_price))+'</td>'
+            +'<td>'+fmt(bt.qty,4)+'</td>'
+            +'<td class="'+pCls+'">$'+fmt(bt.pnl,2)+'</td>'
+            +'<td class="'+pCls+'">'+fmt(bt.pnl_pct,2)+'%</td>'
+            +'</tr>';
+    });
+    if(!bnHtml)bnHtml='<tr><td colspan="8" style="text-align:center;color:#484f58;padding:14px">Islem bulunamadi</td></tr>';
+    $('bnTradeBody').innerHTML=bnHtml;
+    $('bnTradeCnt').textContent=bnTrades.length+(bnTrades.length>0?' | Toplam: $'+fmt(bnTotalPnl,2):'');
+
+    // Position — Binance acik pozisyon varsa onu kullan
+    var bnPos=binanceTrades&&binanceTrades.position?binanceTrades.position:null;
+    if(bnPos&&bnPos.entry_price>0){
+        renderBinancePosition(bnPos);
+    }else{
+        renderPosition(pos);
+    }
 
     // Live candle — son mum
     if(candles.length>0) updateLiveCandleDisplay(candles[candles.length-1]);
@@ -402,6 +499,24 @@ function renderPosition(pos){
         +'<div class="cr"><span class="k">Anlik</span><span class="v" id="posPrice">'+fmt(curPrice,dec(curPrice))+'</span></div>'
         +'<div class="cr"><span class="k">PnL</span><span class="v '+(pnlPct>=0?'green':'red')+'" id="posPnl">'+fmt(pnlPct,2)+'% ($'+fmt(pnlUsd,2)+')</span></div>'
         +'<div class="progress"><div class="progress-fill '+(prog>=0?'progress-green':'progress-red')+'" style="width:'+Math.min(Math.abs(prog),100)+'%"></div></div>';
+    $('closeBtn').style.display='inline-block';
+}
+
+// ── Binance Position (gercek veri) ──
+function renderBinancePosition(bp){
+    if(!bp||!bp.entry_price||bp.entry_price<=0){
+        renderPosition(null);return;
+    }
+    var il=bp.side==='LONG';
+    var curPrice=lastPrice||bp.entry_price;
+    var pnlPct=il?(curPrice-bp.entry_price)/bp.entry_price*100:(bp.entry_price-curPrice)/bp.entry_price*100;
+    var pnlUsd=bp.upnl||0;
+    $('posInfo').innerHTML=
+        '<div class="cr"><span class="k">Yon</span><span class="v"><span class="pos-badge '+(il?'pos-long':'pos-short')+'">'+bp.side+'</span> <span style="color:#3B82F6;font-size:9px">BINANCE</span></span></div>'
+        +'<div class="cr"><span class="k">Giris</span><span class="v">'+fmt(bp.entry_price,dec(bp.entry_price))+' <span style="color:#6e7681;font-size:9px">'+bp.entry_str+'</span></span></div>'
+        +'<div class="cr"><span class="k">Miktar</span><span class="v">'+fmt(bp.qty,4)+'</span></div>'
+        +'<div class="cr"><span class="k">Anlik</span><span class="v" id="posPrice">'+fmt(curPrice,dec(curPrice))+'</span></div>'
+        +'<div class="cr"><span class="k">uPnL</span><span class="v '+(pnlPct>=0?'green':'red')+'" id="posPnl">'+fmt(pnlPct,2)+'% ($'+fmt(pnlUsd,2)+')</span></div>';
     $('closeBtn').style.display='inline-block';
 }
 

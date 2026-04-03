@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,8 @@ from app.utils.logging import get_logger
 log = get_logger(__name__)
 
 _db: aiosqlite.Connection | None = None
-DB_PATH = Path("data/st_signals.db")
+_DATA_DIR = os.getenv("DATA_DIR", "data")
+DB_PATH = Path(f"{_DATA_DIR}/st_signals.db")
 
 # ── Table definitions ─────────────────────────────────────
 
