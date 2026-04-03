@@ -205,13 +205,13 @@ async function loadSettingsAndData(){
         var resp=await fetch('/api/indicator-settings/'+sym);
         var s=await resp.json();
         // Hidden input'lara yaz
-        $('iR').value=s.rsi_len||10;
-        $('iL').value=s.long_thresh||32;
-        $('iS').value=s.short_thresh||70;
-        $('iG').value=s.max_gap||12;
-        $('iB').value=s.entry_buffer||0.1;
-        $('iT').value=s.tp_pct||0;
-        $('iSL').value=s.sl_pct||0;
+        $('iR').value=s.rsi_len!=null?s.rsi_len:10;
+        $('iL').value=s.long_thresh!=null?s.long_thresh:32;
+        $('iS').value=s.short_thresh!=null?s.short_thresh:70;
+        $('iG').value=s.max_gap!=null?s.max_gap:12;
+        $('iB').value=s.entry_buffer!=null?s.entry_buffer:0.1;
+        $('iT').value=s.tp_pct!=null?s.tp_pct:1.0;
+        $('iSL').value=s.sl_pct!=null?s.sl_pct:0.3;
         // TF settings'ten gelirse uygula
         if(s.interval&&s.symbol){
             tf=s.interval;
