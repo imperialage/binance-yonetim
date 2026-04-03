@@ -167,7 +167,7 @@ tr.ob-row td:nth-child(8){color:#F6465D;font-weight:600}
 <!-- Binance Islemleri Tablosu -->
 <div class="section-title">Binance Islemleri <span class="cnt" id="bnTradeCnt">0</span></div>
 <div class="tbl-wrap"><table><thead><tr>
-    <th>Yon</th><th>Giris</th><th>Giris Fiyat</th><th>Cikis</th><th>Cikis Fiyat</th><th>Miktar</th><th>PnL $</th><th>PnL %</th>
+    <th>Sembol</th><th>Yon</th><th>Giris</th><th>Giris Fiyat</th><th>Cikis</th><th>Cikis Fiyat</th><th>Tip</th><th>Miktar</th><th>PnL $</th><th>PnL %</th>
 </tr></thead><tbody id="bnTradeBody"></tbody></table></div>
 
 <!-- Sinyal Tablosu -->
@@ -260,7 +260,7 @@ async function loadData(){
         // Paralel cek: chart data + binance trades
         var [r1,r2]=await Promise.all([
             fetch(u),
-            fetch('/api/binance-trades?symbol='+sym+'&days=1')
+            fetch('/api/binance-trades?symbol='+sym+'&days=2')
         ]);
         chartData=await r1.json();
         binanceTrades=await r2.json();
@@ -448,18 +448,22 @@ function renderAll(){
         var sideCls=bt.side==='LONG'?'b-buy':'b-sell';
         var sideLabel=bt.side==='LONG'?'▲ LONG':'▼ SHORT';
         var pCls=bt.pnl>=0?'green':'red';
+        var exType=bt.exit_type||'';
+        var exLabel=exType.indexOf('STOP')>=0?'<span class="red">SL</span>':exType.indexOf('TAKE_PROFIT')>=0?'<span class="green">TP</span>':exType.indexOf('MARKET')>=0?'MKT':exType.indexOf('LIMIT')>=0?'LMT':exType;
         bnHtml+='<tr>'
+            +'<td class="yellow">'+(bt.symbol||sym)+'</td>'
             +'<td><span class="badge '+sideCls+'">'+sideLabel+'</span></td>'
             +'<td style="color:#6e7681">'+bt.entry_str+'</td>'
             +'<td class="yellow">'+fmt(bt.entry_price,dec(bt.entry_price))+'</td>'
             +'<td style="color:#6e7681">'+bt.exit_str+'</td>'
             +'<td class="yellow">'+fmt(bt.exit_price,dec(bt.exit_price))+'</td>'
+            +'<td>'+exLabel+'</td>'
             +'<td>'+fmt(bt.qty,4)+'</td>'
             +'<td class="'+pCls+'">$'+fmt(bt.pnl,2)+'</td>'
             +'<td class="'+pCls+'">'+fmt(bt.pnl_pct,2)+'%</td>'
             +'</tr>';
     });
-    if(!bnHtml)bnHtml='<tr><td colspan="8" style="text-align:center;color:#484f58;padding:14px">Islem bulunamadi</td></tr>';
+    if(!bnHtml)bnHtml='<tr><td colspan="10" style="text-align:center;color:#484f58;padding:14px">Islem bulunamadi</td></tr>';
     $('bnTradeBody').innerHTML=bnHtml;
     $('bnTradeCnt').textContent=bnTrades.length+(bnTrades.length>0?' | Toplam: $'+fmt(bnTotalPnl,2):'');
 

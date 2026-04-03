@@ -401,13 +401,23 @@ async def get_all_orders(
     symbol: str = "ETHUSDT",
     days: int = 3,
 ) -> list[dict]:
-    """Get all orders (filled, cancelled, etc.) from Binance Futures."""
+    """Get all orders (filled, cancelled, etc.) from Binance Futures, with pagination."""
     client = await get_client()
+    all_orders: list[dict] = []
     start_time = int((time.time() - days * 86400) * 1000)
-    params = _sign({"symbol": symbol, "startTime": start_time, "limit": 100})
-    resp = await client.get("/fapi/v1/allOrders", params=params)
-    _raise_for_binance(resp)
-    return resp.json()
+    for _ in range(5):  # max 5 pages = 2500 orders
+        p: dict = {"symbol": symbol, "startTime": start_time, "limit": 500}
+        params = _sign(p)
+        resp = await client.get("/fapi/v1/allOrders", params=params)
+        _raise_for_binance(resp)
+        batch = resp.json()
+        if not batch:
+            break
+        all_orders.extend(batch)
+        if len(batch) < 500:
+            break
+        start_time = int(batch[-1].get("time", 0)) + 1
+    return all_orders
 
 
 async def get_algo_orders_history(

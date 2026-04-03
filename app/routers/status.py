@@ -404,136 +404,166 @@ async def debug_income() -> dict:
 
 
 @router.get("/api/binance-trades")
-async def api_binance_trades(symbol: str = "ETHUSDT", days: int = 1) -> dict:
-    """Binance'tan gercek islem gecmisi — giris/cikis eslestirmesi ile."""
-    from app.modules.binance_client import get_user_trades, get_income_history, get_position_risk
+async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
+    """Binance'tan gercek islem gecmisi — allOrders + reduceOnly bazli eslestirme."""
+    from app.modules.binance_client import get_all_orders, get_position_risk
+    from app.modules.indicator_settings_store import get_all_settings
     from datetime import datetime, timezone, timedelta
     import asyncio
 
-    sym = symbol.upper()
     tz_ist = timezone(timedelta(hours=3))
 
+    # ── Sembolleri belirle ──
+    if symbol:
+        symbols = [symbol.upper()]
+    else:
+        try:
+            all_settings = await get_all_settings()
+            symbols = [s["symbol"] for s in all_settings if s.get("active")]
+        except Exception:
+            symbols = []
+        if not symbols:
+            symbols = ["ETHUSDT", "MYXUSDT", "XAGUSDT"]
+
+    # ── Tum semboller icin paralel cek ──
+    tasks = []
+    for sym in symbols:
+        tasks.append(get_all_orders(sym, days=days))
+        tasks.append(get_position_risk(sym))
     try:
-        user_trades, income_records, positions = await asyncio.gather(
-            get_user_trades(sym, days=days),
-            get_income_history(sym, "REALIZED_PNL", days=days),
-            get_position_risk(sym),
-        )
+        results = await asyncio.gather(*tasks, return_exceptions=True)
     except Exception as e:
-        return {"error": str(e), "trades": [], "position": None}
+        return {"error": str(e), "trades": [], "positions": [], "position": None}
 
-    # ── 1. Fill'leri ayir: opener vs closer ──
-    open_fills = []
-    close_fills = []
+    all_result_trades = []
+    all_positions = []
 
-    for ut in user_trades:
-        fill = {
-            "order_id": str(ut.get("orderId", "")),
-            "trade_id": str(ut.get("id", "")),
-            "price": float(ut.get("price", 0)),
-            "qty": float(ut.get("qty", 0)),
-            "rpnl": float(ut.get("realizedPnl", 0)),
-            "side": ut.get("side", ""),
-            "time_ms": int(ut.get("time", 0)),
-        }
-        if abs(fill["rpnl"]) > 0.0001:
-            close_fills.append(fill)
-        else:
-            open_fills.append(fill)
+    for idx, sym in enumerate(symbols):
+        orders_raw = results[idx * 2]
+        pos_raw = results[idx * 2 + 1]
+        if isinstance(orders_raw, Exception):
+            await log.awarning("binance_trades_fetch_error", symbol=sym, error=str(orders_raw))
+            continue
+        if isinstance(pos_raw, Exception):
+            pos_raw = []
 
-    # ── 2. Order bazinda grupla ──
-    def group_by_order(fills):
-        groups = {}
-        for f in fills:
-            oid = f["order_id"]
-            if oid not in groups:
-                groups[oid] = {"order_id": oid, "side": f["side"], "total_qty": 0.0,
-                               "total_value": 0.0, "rpnl": 0.0, "time_ms": f["time_ms"]}
-            g = groups[oid]
-            g["total_qty"] += f["qty"]
-            g["total_value"] += f["price"] * f["qty"]
-            g["rpnl"] += f["rpnl"]
-            if f["time_ms"] > g["time_ms"]:
-                g["time_ms"] = f["time_ms"]
-        for g in groups.values():
-            g["avg_price"] = round(g["total_value"] / g["total_qty"], 6) if g["total_qty"] > 0 else 0
-        return groups
+        # ── 1. Filled emirleri ayir: reduceOnly bazli ──
+        entries = []  # reduceOnly=false → giris emirleri
+        exits = []    # reduceOnly=true  → cikis emirleri
 
-    open_orders = group_by_order(open_fills)
-    close_orders = group_by_order(close_fills)
-
-    # ── 3. Close → Open eslestir ──
-    open_list = sorted(open_orders.values(), key=lambda x: x["time_ms"])
-    close_list = sorted(close_orders.values(), key=lambda x: x["time_ms"])
-
-    used_opens = set()
-    result_trades = []
-
-    for co in close_list:
-        close_side = co["side"]
-        open_side = "SELL" if close_side == "BUY" else "BUY"
-        best_open = None
-        for oo in reversed(open_list):
-            if oo["order_id"] in used_opens:
+        for o in orders_raw:
+            if o.get("status") != "FILLED":
                 continue
-            if oo["side"] == open_side and oo["time_ms"] <= co["time_ms"]:
-                best_open = oo
-                break
-        if best_open:
-            used_opens.add(best_open["order_id"])
+            qty = float(o.get("executedQty", 0))
+            if qty <= 0:
+                continue
+            avg_price = float(o.get("avgPrice", 0))
+            if avg_price <= 0:
+                continue
+            rec = {
+                "order_id": str(o.get("orderId", "")),
+                "side": o.get("side", ""),
+                "type": o.get("origType", o.get("type", "")),
+                "avg_price": avg_price,
+                "qty": qty,
+                "time_ms": int(o.get("updateTime", 0)) or int(o.get("time", 0)),
+                "symbol": sym,
+            }
+            if o.get("reduceOnly") or o.get("closePosition"):
+                exits.append(rec)
+            else:
+                entries.append(rec)
 
-        entry_price = best_open["avg_price"] if best_open else 0.0
-        entry_time = best_open["time_ms"] if best_open else 0
-        exit_price = co["avg_price"]
-        exit_time = co["time_ms"]
-        qty = round(co["total_qty"], 6)
-        pnl = round(co["rpnl"], 6)
-        pos_side = "LONG" if close_side == "SELL" else "SHORT"
-        pnl_pct = round(pnl / (entry_price * qty) * 100, 2) if entry_price > 0 and qty > 0 else 0
+        entries.sort(key=lambda x: x["time_ms"])
+        exits.sort(key=lambda x: x["time_ms"])
 
-        result_trades.append({
-            "type": "CLOSED",
-            "side": pos_side,
-            "entry_price": entry_price,
-            "exit_price": exit_price,
-            "qty": qty,
-            "entry_time": entry_time // 1000,
-            "exit_time": exit_time // 1000,
-            "entry_str": datetime.fromtimestamp(entry_time / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time else "",
-            "exit_str": datetime.fromtimestamp(exit_time / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if exit_time else "",
-            "pnl": pnl,
-            "pnl_pct": pnl_pct,
-        })
+        # ── 2. Exit → Entry eslestir (kronolojik) ──
+        used_entries = set()
+        sym_trades = []
 
-    # ── 4. Acik pozisyon ──
-    position = None
-    for p in positions:
-        if p.get("symbol") == sym:
+        for ex in exits:
+            exit_side = ex["side"]
+            entry_side = "SELL" if exit_side == "BUY" else "BUY"
+            best = None
+            for en in reversed(entries):
+                if en["order_id"] in used_entries:
+                    continue
+                if en["side"] == entry_side and en["time_ms"] <= ex["time_ms"]:
+                    best = en
+                    break
+            if best:
+                used_entries.add(best["order_id"])
+
+            entry_price = best["avg_price"] if best else 0.0
+            entry_time = best["time_ms"] if best else 0
+            exit_price = ex["avg_price"]
+            exit_time = ex["time_ms"]
+            qty = round(ex["qty"], 6)
+            pos_side = "LONG" if exit_side == "SELL" else "SHORT"
+            # PnL hesapla
+            if pos_side == "LONG" and entry_price > 0:
+                pnl = round((exit_price - entry_price) * qty, 6)
+            elif pos_side == "SHORT" and entry_price > 0:
+                pnl = round((entry_price - exit_price) * qty, 6)
+            else:
+                pnl = 0.0
+            pnl_pct = round(pnl / (entry_price * qty) * 100, 2) if entry_price > 0 and qty > 0 else 0.0
+
+            sym_trades.append({
+                "type": "CLOSED",
+                "symbol": sym,
+                "side": pos_side,
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "qty": qty,
+                "entry_time": entry_time // 1000,
+                "exit_time": exit_time // 1000,
+                "entry_str": datetime.fromtimestamp(entry_time / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time else "",
+                "exit_str": datetime.fromtimestamp(exit_time / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if exit_time else "",
+                "exit_type": ex["type"],
+                "pnl": pnl,
+                "pnl_pct": pnl_pct,
+            })
+
+        all_result_trades.extend(sym_trades)
+
+        # ── 3. Acik pozisyon ──
+        for p in pos_raw:
+            if p.get("symbol") != sym:
+                continue
             amt = float(p.get("positionAmt", 0))
-            if amt != 0:
-                # Giris zamanini bul (en son acik fill)
-                entry_time_ms = 0
-                for oo in reversed(open_list):
-                    if oo["order_id"] not in used_opens:
-                        entry_time_ms = oo["time_ms"]
-                        break
-                position = {
-                    "side": "LONG" if amt > 0 else "SHORT",
-                    "entry_price": float(p.get("entryPrice", 0)),
-                    "qty": abs(amt),
-                    "upnl": float(p.get("unRealizedProfit", 0)),
-                    "entry_time": entry_time_ms // 1000 if entry_time_ms else 0,
-                    "entry_str": datetime.fromtimestamp(entry_time_ms / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time_ms else "",
-                }
+            if amt == 0:
+                continue
+            # Son eslesmemis entry'den giris zamanini al
+            entry_time_ms = 0
+            for en in reversed(entries):
+                if en["order_id"] not in used_entries:
+                    entry_time_ms = en["time_ms"]
+                    break
+            all_positions.append({
+                "symbol": sym,
+                "side": "LONG" if amt > 0 else "SHORT",
+                "entry_price": float(p.get("entryPrice", 0)),
+                "qty": abs(amt),
+                "upnl": float(p.get("unRealizedProfit", 0)),
+                "entry_time": entry_time_ms // 1000 if entry_time_ms else 0,
+                "entry_str": datetime.fromtimestamp(entry_time_ms / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time_ms else "",
+            })
             break
 
-    result_trades.sort(key=lambda x: x.get("entry_time", 0))
+    all_result_trades.sort(key=lambda x: x.get("entry_time", 0))
+
+    # Tek sembol modunda geriye uyumluluk
+    single_pos = None
+    if len(symbols) == 1 and all_positions:
+        single_pos = all_positions[0]
 
     return {
-        "trades": result_trades,
-        "position": position,
-        "symbol": sym,
-        "total": len(result_trades),
+        "trades": all_result_trades,
+        "positions": all_positions,
+        "position": single_pos,
+        "symbols": symbols,
+        "total": len(all_result_trades),
     }
 
 
