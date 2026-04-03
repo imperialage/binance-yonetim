@@ -381,6 +381,29 @@ async function closePos(){
     }catch(e){alert('Hata: '+e.message)}
 }
 
+// ── Live RSI Hesaplama (Wilder's RMA, JS) ──
+function calcLiveRSI(candles, length){
+    if(!candles||candles.length<length+1)return null;
+    var closes=candles.map(function(c){return c.close});
+    var n=closes.length;
+    var gains=new Array(n).fill(0);
+    var losses=new Array(n).fill(0);
+    for(var i=1;i<n;i++){
+        var d=closes[i]-closes[i-1];
+        gains[i]=d>0?d:0;
+        losses[i]=d<0?-d:0;
+    }
+    var ag=0,al=0;
+    for(var i=1;i<=length;i++){ag+=gains[i];al+=losses[i]}
+    ag/=length;al/=length;
+    for(var i=length+1;i<n;i++){
+        ag=(ag*(length-1)+gains[i])/length;
+        al=(al*(length-1)+losses[i])/length;
+    }
+    if(al===0)return 100;
+    return 100-(100/(1+ag/al));
+}
+
 // ── Live Candle Display ──
 function updateLiveCandleDisplay(c){
     if(!c)return;
@@ -425,12 +448,16 @@ function connectWS(){
                 el.textContent=fmt(price,dec(price));
                 lastPrice=price;
 
-                // Update live candle
+                // Update live candle + RSI
                 if(chartData&&chartData.candles&&chartData.candles.length>0){
                     var lc=chartData.candles[chartData.candles.length-1];
                     lc.high=Math.max(lc.high,price);
                     lc.low=Math.min(lc.low,price);
                     lc.close=price;
+                    // RSI canli hesapla
+                    var rsiLen=parseInt($('iR').value)||10;
+                    var liveRsi=calcLiveRSI(chartData.candles,rsiLen);
+                    if(liveRsi!=null)lc.rsi=Math.round(liveRsi*10)/10;
                     updateLiveCandleDisplay(lc);
                 }
 
