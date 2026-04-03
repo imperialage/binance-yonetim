@@ -131,20 +131,19 @@ tr.ob-row td:nth-child(8){color:#F6465D;font-weight:600}
     </div>
 </div>
 
-<!-- Ayarlar -->
+<!-- Aktif Ayarlar (settings sayfasindan) -->
 <div class="card" style="margin-bottom:12px">
-    <div class="card-title">Indikatör Ayarlari</div>
-    <div class="params">
-        <div><label>RSI</label><input id="iR" type="number" value="10"></div>
-        <div><label>LONG ≤</label><input id="iL" type="number" value="32"></div>
-        <div><label>SHORT ≥</label><input id="iS" type="number" value="70"></div>
-        <div><label>Gap</label><input id="iG" type="number" value="12"></div>
-        <div><label>Buffer %</label><input id="iB" type="number" value="0.1" step="0.05"></div>
-        <div><label>TP %</label><input id="iT" type="number" value="0" step="0.1"></div>
-        <div><label>SL %</label><input id="iSL" type="number" value="0" step="0.05"></div>
-        <div style="display:flex;align-items:end"><button class="hbtn" onclick="applyAndLoad()">Uygula</button></div>
-    </div>
+    <div class="card-title">Indikatör Ayarlari <a href="/settings" class="hlink" style="font-size:10px;margin-left:auto">Duzenle →</a></div>
+    <div id="activeSettings" style="color:#484f58;font-size:11px">Yukleniyor...</div>
 </div>
+<!-- Gizli inputlar — settings'ten doldurulur -->
+<input type="hidden" id="iR" value="10">
+<input type="hidden" id="iL" value="32">
+<input type="hidden" id="iS" value="70">
+<input type="hidden" id="iG" value="12">
+<input type="hidden" id="iB" value="0.1">
+<input type="hidden" id="iT" value="0">
+<input type="hidden" id="iSL" value="0">
 
 <!-- Filtre — bugun sabit -->
 <div class="filter-bar">
@@ -181,16 +180,12 @@ function dec(p){return p>=100?2:p>=1?4:6}
 // ── LocalStorage ──
 function saveState(){
     localStorage.setItem('mon_state',JSON.stringify({sym:sym,tf:tf,
-        iR:$('iR').value,iL:$('iL').value,iS:$('iS').value,iG:$('iG').value,
-        iB:$('iB').value,iT:$('iT').value,iSL:$('iSL').value,
         fSig:$('fSig').checked,fOSOB:$('fOSOB').checked}));
 }
 function loadState(){
     try{var s=JSON.parse(localStorage.getItem('mon_state'));if(!s)return;
     sym=s.sym||'XAGUSDT';tf=s.tf||'15m';
-    $('iR').value=s.iR||10;$('iL').value=s.iL||32;$('iS').value=s.iS||70;$('iG').value=s.iG||12;
-    $('iB').value=s.iB||0.1;$('iT').value=s.iT||0;$('iSL').value=s.iSL||0;
-    // tarih her zaman bugun — localStorage'dan yuklenmez
+    // Indikatör ayarlari artik settings API'den yuklenir
     $('fSig').checked=!!s.fSig;$('fOSOB').checked=!!s.fOSOB;
     }catch(e){sym='XAGUSDT';tf='15m'}
 }
@@ -200,8 +195,45 @@ function initUI(){
     var sh='';SYMS.forEach(function(s){sh+='<option value="'+s+'"'+(s===sym?' selected':'')+'>'+s.replace('USDT','')+'</option>'});
     $('symSel').innerHTML=sh;
     $('tfSel').value=tf;
-    $('symSel').onchange=function(){sym=this.value;saveState();loadData()};
-    $('tfSel').onchange=function(){tf=this.value;saveState();loadData()};
+    $('symSel').onchange=function(){sym=this.value;saveState();loadSettingsAndData()};
+    $('tfSel').onchange=function(){tf=this.value;saveState();loadSettingsAndData()};
+}
+
+// ── Settings'ten indikatör ayarlarini yukle ──
+async function loadSettingsAndData(){
+    try{
+        var resp=await fetch('/api/indicator-settings/'+sym);
+        var s=await resp.json();
+        // Hidden input'lara yaz
+        $('iR').value=s.rsi_len||10;
+        $('iL').value=s.long_thresh||32;
+        $('iS').value=s.short_thresh||70;
+        $('iG').value=s.max_gap||12;
+        $('iB').value=s.entry_buffer||0.1;
+        $('iT').value=s.tp_pct||0;
+        $('iSL').value=s.sl_pct||0;
+        // TF settings'ten gelirse uygula
+        if(s.interval&&s.symbol){
+            tf=s.interval;
+            $('tfSel').value=tf;
+        }
+        // Aktif ayarlar kartini guncelle
+        $('activeSettings').innerHTML=
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:4px">'
+            +'<div class="cr"><span class="k">RSI</span><span class="v">'+s.rsi_len+'</span></div>'
+            +'<div class="cr"><span class="k">L≤</span><span class="v">'+s.long_thresh+'</span></div>'
+            +'<div class="cr"><span class="k">S≥</span><span class="v">'+s.short_thresh+'</span></div>'
+            +'<div class="cr"><span class="k">Gap</span><span class="v">'+s.max_gap+'</span></div>'
+            +'<div class="cr"><span class="k">Buf%</span><span class="v">'+s.entry_buffer+'</span></div>'
+            +'<div class="cr"><span class="k">TP%</span><span class="v green">'+s.tp_pct+'</span></div>'
+            +'<div class="cr"><span class="k">SL%</span><span class="v red">'+s.sl_pct+'</span></div>'
+            +'<div class="cr"><span class="k">TF</span><span class="v yellow">'+s.interval+'</span></div>'
+            +'</div>';
+    }catch(e){
+        $('activeSettings').innerHTML='<span style="color:#F6465D">Ayar bulunamadi — <a href="/settings" class="hlink">Ayarla</a></span>';
+    }
+    loadData();
+    startRSIPolling();
 }
 
 // ── Load Data ──
@@ -219,7 +251,7 @@ async function loadData(){
     }catch(e){console.error(e)}
 }
 
-function applyAndLoad(){saveState();setToday();loadData();startRSIPolling()}
+function applyAndLoad(){saveState();setToday();loadSettingsAndData()}
 
 // ── Render Everything ──
 function renderAll(){
@@ -592,7 +624,7 @@ sym='XAGUSDT';tf='15m';
 adminToken=localStorage.getItem('admin_token')||'';
 loadState();if(!sym)sym='XAGUSDT';if(!tf)tf='15m';
 setToday();
-initUI();loadData();connectWS();startRSIPolling();
+initUI();loadSettingsAndData();connectWS();
 </script>
 </body>
 </html>
