@@ -8,7 +8,7 @@ Mevcut TradingView alert formati ile tam uyumlu:
 
 from __future__ import annotations
 
-import asyncio
+
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field
 from app.config import settings, get_symbol_config
 from app.modules.normalizer import normalize_symbol, normalize_tf
 from app.modules.st_signal_logger import log_st_signal
-from app.modules.trade_executor import execute_trade
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -242,38 +241,19 @@ async def st_webhook(request: Request) -> JSONResponse:
         entered=True,
     )
 
-    # ── 7. Execute trade ───────────────────────────────
+    # ── 7. Webhook artik islem ACMIYOR — sadece loglama ──
+    # Islem acma tamamen signal_engine.py tarafindan yapiliyor.
+    # Webhook sinyalleri karsilastirma icin logda kaliyor.
     trade_dispatched = False
-    skip_reason = None
-
-    if not settings.trading_enabled:
-        skip_reason = "trading_disabled"
-    elif not sym_cfg.get("active", True):
-        skip_reason = "symbol_disabled"
-
-    if skip_reason:
-        log.info("st_trade_skipped", symbol=symbol, direction=direction, reason=skip_reason)
-    else:
-        event_id = f"st-{row_id}-{signal_ts}"
-
-        asyncio.create_task(execute_trade(
-            symbol=symbol,
-            signal=direction,
-            price=price,
-            event_id=event_id,
-            tf=tf,
-        ))
-        trade_dispatched = True
-        log.info(
-            "st_trade_dispatched",
-            symbol=symbol,
-            direction=direction,
-            price=price,
-            tf=tf,
-            indicator=indicator,
-            tp_pct=sym_cfg.get("tp_pct"),
-            sl_pct=sym_cfg.get("sl_pct"),
-        )
+    log.info(
+        "st_webhook_log_only",
+        symbol=symbol,
+        direction=direction,
+        price=price,
+        tf=tf,
+        indicator=indicator,
+        message="Webhook signal logged, trade execution handled by signal_engine",
+    )
 
     return JSONResponse(content={
         "status": "accepted",
