@@ -544,21 +544,40 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
             entry_price = float(p.get("entryPrice", 0))
             pos_side = "LONG" if amt > 0 else "SHORT"
 
-            # TP/SL fiyatlari hesapla (indicator_settings'ten)
+            # TP/SL fiyatlari — Binance'tan gercek acik emirleri cek (teyitli)
+            tp_price = 0.0
+            sl_price = 0.0
+            tp_confirmed = False
+            sl_confirmed = False
             try:
-                from app.modules.indicator_settings_store import get_settings_or_defaults
-                sym_settings = await get_settings_or_defaults(sym)
-                tp_pct_val = sym_settings.get("tp_pct", 1.0) / 100.0
-                sl_pct_val = sym_settings.get("sl_pct", 0.3) / 100.0
-                if pos_side == "LONG":
-                    tp_price = round(entry_price * (1 + tp_pct_val), 6)
-                    sl_price = round(entry_price * (1 - sl_pct_val), 6)
-                else:
-                    tp_price = round(entry_price * (1 - tp_pct_val), 6)
-                    sl_price = round(entry_price * (1 + sl_pct_val), 6)
+                from app.modules.binance_client import get_all_orders
+                recent_orders = await get_all_orders(sym, days=1)
+                for o in recent_orders:
+                    if o.get("status") != "NEW":
+                        continue
+                    otype = o.get("origType", o.get("type", ""))
+                    stop_px = float(o.get("stopPrice", 0))
+                    if otype == "TAKE_PROFIT_MARKET" and stop_px > 0:
+                        tp_price = stop_px
+                        tp_confirmed = True
+                    elif otype == "STOP_MARKET" and stop_px > 0:
+                        sl_price = stop_px
+                        sl_confirmed = True
             except Exception:
-                tp_price = 0.0
-                sl_price = 0.0
+                pass
+            # Binance'ta bulunamadiysa hesaplanmis degerler
+            if not tp_confirmed or not sl_confirmed:
+                try:
+                    from app.modules.indicator_settings_store import get_settings_or_defaults
+                    sym_settings = await get_settings_or_defaults(sym)
+                    tp_pct_val = sym_settings.get("tp_pct", 1.0) / 100.0
+                    sl_pct_val = sym_settings.get("sl_pct", 0.3) / 100.0
+                    if not tp_confirmed:
+                        tp_price = round(entry_price * (1 + tp_pct_val), 6) if pos_side == "LONG" else round(entry_price * (1 - tp_pct_val), 6)
+                    if not sl_confirmed:
+                        sl_price = round(entry_price * (1 - sl_pct_val), 6) if pos_side == "LONG" else round(entry_price * (1 + sl_pct_val), 6)
+                except Exception:
+                    pass
 
             # Son sinyal bilgisi (signal_log'dan)
             signal_info = {}
@@ -588,6 +607,8 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
                 "entry_str": datetime.fromtimestamp(entry_time_ms / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time_ms else "",
                 "tp_price": tp_price,
                 "sl_price": sl_price,
+                "tp_confirmed": tp_confirmed,
+                "sl_confirmed": sl_confirmed,
                 **signal_info,
             })
             break

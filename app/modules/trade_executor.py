@@ -292,13 +292,22 @@ async def _execute_trade_inner(
         except Exception as e:
             log.warning("limit_poll_error", symbol=symbol, error=str(e))
 
-    # Fill olmadiysa → iptal et, yeni sinyal bekle
+    # Fill olmadiysa → iptal et, signal_engine'e bildir, yeni sinyal bekle
     if not filled:
         try:
             await cancel_order(symbol, int(order_id))
             log.info("limit_order_timeout_cancelled", symbol=symbol, order_id=order_id, elapsed=elapsed)
         except Exception as e:
             log.warning("limit_cancel_error", symbol=symbol, error=str(e))
+
+        # signal_engine'e trade_pending temizle
+        try:
+            from app.modules.signal_engine import get_engine
+            engine = get_engine(symbol)
+            if engine:
+                engine.trade_pending = False
+        except Exception:
+            pass
 
         duration = (time.monotonic_ns() // 1_000_000) - start_ms
         await log_trade(

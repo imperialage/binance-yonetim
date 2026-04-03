@@ -540,12 +540,14 @@ function renderBinancePosition(bp){
     html+='<div class="cr"><span class="k">Giris</span><span class="v">'+fmt(bp.entry_price,d)+' <span style="color:#6e7681;font-size:9px">'+bp.entry_str+'</span></span></div>'
         +'<div class="cr"><span class="k">Miktar</span><span class="v">'+fmt(bp.qty,4)+'</span></div>';
 
-    // TP/SL
+    // TP/SL — teyit durumu ile
     if(bp.tp_price){
-        html+='<div class="cr"><span class="k">TP</span><span class="v green">'+fmt(bp.tp_price,d)+'</span></div>';
+        var tpStatus=bp.tp_confirmed?'<span style="color:#0ECB81;font-size:9px"> TEYITLI</span>':'<span style="color:#F6465D;font-size:9px"> HESAPLANDI</span>';
+        html+='<div class="cr"><span class="k">TP</span><span class="v green">'+fmt(bp.tp_price,d)+tpStatus+'</span></div>';
     }
     if(bp.sl_price){
-        html+='<div class="cr"><span class="k">SL</span><span class="v red">'+fmt(bp.sl_price,d)+'</span></div>';
+        var slStatus=bp.sl_confirmed?'<span style="color:#0ECB81;font-size:9px"> TEYITLI</span>':'<span style="color:#F6465D;font-size:9px"> HESAPLANDI</span>';
+        html+='<div class="cr"><span class="k">SL</span><span class="v red">'+fmt(bp.sl_price,d)+slStatus+'</span></div>';
     }
 
     // Anlik + PnL
