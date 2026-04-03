@@ -531,7 +531,7 @@ async def api_chart_data(
             if rsi_a is None:
                 continue
             if rsi_a >= short_thresh and candles[b_idx]["high"] > candles[a_idx]["high"] and rsi_b < rsi_a:
-                ep = round(candles[b_idx]["high"] * (1 + buf), 6)
+                ep = round(candles[b_idx]["high"] * (1 - buf), 6)
                 sig = {"time": candles[b_idx]["time"], "direction": "SELL", "entry_price": ep,
                     "rsi_a": rsi_a, "rsi_b": rsi_b, "gap": gap,
                     "date": datetime.fromtimestamp(candles[b_idx]["time"], tz=tz_ist).strftime("%d.%m %H:%M")}
@@ -558,7 +558,7 @@ async def api_chart_data(
             if rsi_a is None:
                 continue
             if rsi_a <= long_thresh and candles[b_idx]["low"] < candles[a_idx]["low"] and rsi_b > rsi_a:
-                ep = round(candles[b_idx]["low"] * (1 - buf), 6)
+                ep = round(candles[b_idx]["low"] * (1 + buf), 6)
                 sig = {"time": candles[b_idx]["time"], "direction": "BUY", "entry_price": ep,
                     "rsi_a": rsi_a, "rsi_b": rsi_b, "gap": gap,
                     "date": datetime.fromtimestamp(candles[b_idx]["time"], tz=tz_ist).strftime("%d.%m %H:%M")}
