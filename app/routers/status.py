@@ -422,7 +422,7 @@ async def api_chart_data(
     Binance API'den direkt mum ceker — tum semboller ve TF'ler desteklenir.
     start_date/end_date: YYYY-MM-DD formatinda tarih filtresi.
     """
-    from app.modules.rsi_calculator import calculate_rsi_with_state
+    from app.modules.rsi_calculator import calculate_rsi
     from app.modules.binance_client import get_position_risk
     from app.config import get_symbol_config
     from datetime import datetime, timezone, timedelta
@@ -483,7 +483,29 @@ async def api_chart_data(
 
     # Parse + RSI
     closes = [float(k[4]) for k in raw_klines]
-    rsi_values, rsi_state = calculate_rsi_with_state(closes, rsi_len)
+    rsi_values = calculate_rsi(closes, rsi_len)
+
+    # RSI state hesapla — sondan bir onceki mumun state'i (canli mum icin)
+    # Wilder's RMA'yi yeniden calistir, sondan bir onceki adimda dur
+    rsi_state = None
+    n = len(closes)
+    if n >= rsi_len + 2:
+        gains = [0.0] * n
+        losses_arr = [0.0] * n
+        for i in range(1, n):
+            d = closes[i] - closes[i - 1]
+            gains[i] = max(d, 0.0)
+            losses_arr[i] = max(-d, 0.0)
+        ag = sum(gains[1:rsi_len + 1]) / rsi_len
+        al = sum(losses_arr[1:rsi_len + 1]) / rsi_len
+        for i in range(rsi_len + 1, n - 1):  # n-1'de dur (sondan bir onceki)
+            ag = (ag * (rsi_len - 1) + gains[i]) / rsi_len
+            al = (al * (rsi_len - 1) + losses_arr[i]) / rsi_len
+        rsi_state = {
+            "avg_gain": round(ag, 12),
+            "avg_loss": round(al, 12),
+            "prev_close": closes[-2],  # sondan bir onceki mum
+        }
 
     candles = []
     for i, k in enumerate(raw_klines):
