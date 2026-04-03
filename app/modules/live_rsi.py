@@ -43,7 +43,7 @@ class RSITracker:
         self.warmed_up: bool = False
 
     async def warmup(self) -> None:
-        """Binance'tan son 200 mum cekip RSI state olustur."""
+        """Binance'tan TUM gecmis mumlari cekip RSI state olustur (sayfalama ile)."""
         try:
             proxy_url = None
             try:
@@ -52,15 +52,35 @@ class RSITracker:
             except Exception:
                 pass
 
-            async with httpx.AsyncClient(timeout=15, proxy=proxy_url) as client:
-                resp = await client.get(BINANCE_URL, params={
-                    "symbol": self.symbol,
-                    "interval": self.interval,
-                    "limit": 1000,
-                })
-                resp.raise_for_status()
-                klines = resp.json()
+            import asyncio
 
+            # Sembolun ilk mumundan baslayarak tum verileri cek
+            all_klines = []
+            # 1 Ocak 2026'dan basla (semboller bu tarihten sonra listelenmis)
+            current_start = 1735689600000  # 2026-01-01 UTC ms
+            end_ms = int(time.time() * 1000)
+            iv_ms = INTERVAL_SECONDS.get(self.interval, 900) * 1000
+
+            async with httpx.AsyncClient(timeout=15, proxy=proxy_url) as client:
+                while current_start < end_ms:
+                    resp = await client.get(BINANCE_URL, params={
+                        "symbol": self.symbol,
+                        "interval": self.interval,
+                        "startTime": current_start,
+                        "endTime": end_ms,
+                        "limit": 1500,
+                    })
+                    resp.raise_for_status()
+                    batch = resp.json()
+                    if not batch:
+                        break
+                    all_klines.extend(batch)
+                    current_start = int(batch[-1][0]) + iv_ms
+                    if len(batch) < 1500:
+                        break
+                    await asyncio.sleep(0.2)
+
+            klines = all_klines
             if not klines or len(klines) < self.length + 2:
                 return
 
