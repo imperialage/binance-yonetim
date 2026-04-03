@@ -119,6 +119,24 @@ async def _handle_event(data: dict[str, Any]) -> None:
             except Exception as e:
                 await log.aerror("fill_callback_error", symbol=symbol, error=str(e))
 
+        # FILLED event → signal_engine'e bildir (pozisyon acildi/kapandi)
+        if status == "FILLED":
+            try:
+                from app.modules.signal_engine import get_engine
+                engine = get_engine(symbol)
+                if engine:
+                    reduce_only = order.get("R", False)  # reduceOnly flag
+                    close_pos = order.get("cp", False)    # closePosition flag
+                    if reduce_only or close_pos:
+                        engine.on_position_closed()
+                        await log.ainfo("signal_engine_position_closed", symbol=symbol, side=side)
+                    else:
+                        pos_side = "LONG" if side == "BUY" else "SHORT"
+                        engine.on_position_opened(pos_side)
+                        await log.ainfo("signal_engine_position_opened", symbol=symbol, side=pos_side)
+            except Exception as e:
+                await log.awarning("signal_engine_notify_error", symbol=symbol, error=str(e))
+
     elif event_type == "ACCOUNT_UPDATE":
         # Pozisyon degisiklikleri — loglama icin
         pass

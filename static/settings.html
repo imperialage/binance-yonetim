@@ -101,12 +101,22 @@ tr.active-row{background:#F0B90B08;border-left:3px solid #F0B90B}
         <div class="fg"><label>TP %</label><input id="fTp" type="number" value="1.0" step="0.1"></div>
         <div class="fg"><label>SL %</label><input id="fSl" type="number" value="0.3" step="0.05"></div>
         <div class="fg"><label>Komisyon %</label><input id="fComm" type="number" value="0.08" step="0.01"></div>
+        <div class="fg"><label>Bakiye Agirligi</label><input id="fWeight" type="number" value="0.10" step="0.01" min="0.01" max="1.0"></div>
+        <div class="fg"><label>Yon</label>
+            <select id="fDir">
+                <option value="BOTH">BOTH (Cift Yon)</option>
+                <option value="BUY">Sadece LONG</option>
+                <option value="SELL">Sadece SHORT</option>
+            </select>
+        </div>
     </div>
 
     <div style="margin-top:12px">
         <div class="cb-row"><input type="checkbox" id="fWeekend"><label>Haftasonu Kapali (Cuma 20:00 - Pazar 24:00 TR)</label></div>
         <div class="cb-row"><input type="checkbox" id="fActive" checked><label>Islem Aktif</label></div>
         <div class="cb-row"><input type="checkbox" id="fListening" checked><label>Sinyal Dinleme Aktif</label></div>
+        <div class="cb-row"><input type="checkbox" id="fSlEnabled" checked><label>Stop Loss Aktif</label></div>
+        <div class="cb-row"><input type="checkbox" id="fReverse"><label>Ters Sinyal (Pozisyon Ters Cevirme)</label></div>
     </div>
 
     <div class="btn-row">
@@ -121,7 +131,7 @@ tr.active-row{background:#F0B90B08;border-left:3px solid #F0B90B}
 <div class="tbl-card">
     <table>
         <thead><tr>
-            <th>Sembol</th><th>TF</th><th>RSI</th><th>L≤</th><th>S≥</th><th>Gap</th><th>Buf%</th><th>TP%</th><th>SL%</th><th>Komis%</th><th>HfSn</th><th>Aktif</th><th>Dinle</th><th></th>
+            <th>Sembol</th><th>TF</th><th>RSI</th><th>L≤</th><th>S≥</th><th>Gap</th><th>Buf%</th><th>TP%</th><th>SL%</th><th>Agrlk</th><th>Yon</th><th>SL</th><th>Ters</th><th>Aktif</th><th>Dinle</th><th></th>
         </tr></thead>
         <tbody id="allBody"></tbody>
     </table>
@@ -173,14 +183,16 @@ async function loadAll(){
             +'<td>'+s.entry_buffer+'</td>'
             +'<td class="green">'+s.tp_pct+'</td>'
             +'<td class="red">'+s.sl_pct+'</td>'
-            +'<td>'+s.commission+'</td>'
-            +'<td>'+(s.weekend_closed?'<span class="yellow">Evet</span>':'—')+'</td>'
+            +'<td>'+(s.weight!=null?s.weight:'0.10')+'</td>'
+            +'<td>'+(s.allowed_directions||'BOTH')+'</td>'
+            +'<td>'+(s.sl_enabled!==0?'<span class="green">On</span>':'<span class="red">Off</span>')+'</td>'
+            +'<td>'+(s.reverse_signal?'<span class="yellow">Evet</span>':'—')+'</td>'
             +'<td>'+(s.active?'<span class="green">Aktif</span>':'<span class="red">Pasif</span>')+'</td>'
             +'<td>'+(s.listening?'<span class="green">Dinle</span>':'<span class="red">Kapali</span>')+'</td>'
             +'<td><button class="edit-btn" onclick="selectSym(\''+s.symbol+'\')">Duzenle</button></td>'
             +'</tr>';
     });
-    $('allBody').innerHTML=html||'<tr><td colspan="14" style="text-align:center;color:#484f58;padding:20px">Henuz ayar yok. Yukaridan sembol secin ve kaydedin.</td></tr>';
+    $('allBody').innerHTML=html||'<tr><td colspan="16" style="text-align:center;color:#484f58;padding:20px">Henuz ayar yok. Yukaridan sembol secin ve kaydedin.</td></tr>';
     $('totalCount').textContent='('+settings.length+' sembol)';
 }
 
@@ -203,9 +215,13 @@ async function loadSymbol(){
     $('fTp').value=s.tp_pct||1.0;
     $('fSl').value=s.sl_pct||0.3;
     $('fComm').value=s.commission||0.08;
+    $('fWeight').value=s.weight!=null?s.weight:0.10;
+    $('fDir').value=s.allowed_directions||'BOTH';
     $('fWeekend').checked=!!s.weekend_closed;
     $('fActive').checked=s.active!==0;
     $('fListening').checked=s.listening!==0;
+    $('fSlEnabled').checked=s.sl_enabled!==0;
+    $('fReverse').checked=!!s.reverse_signal;
 
     $('settingsForm').style.display='block';
     loadAll();
@@ -230,9 +246,13 @@ async function saveSettings(){
         tp_pct:parseFloat($('fTp').value),
         sl_pct:parseFloat($('fSl').value),
         commission:parseFloat($('fComm').value),
+        weight:parseFloat($('fWeight').value),
+        allowed_directions:$('fDir').value,
         weekend_closed:$('fWeekend').checked?1:0,
         active:$('fActive').checked?1:0,
         listening:$('fListening').checked?1:0,
+        sl_enabled:$('fSlEnabled').checked?1:0,
+        reverse_signal:$('fReverse').checked?1:0,
     };
     try{
         var resp=await fetch('/api/indicator-settings/'+currentSym,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -245,7 +265,9 @@ async function saveSettings(){
 function resetForm(){
     $('fInterval').value='15m';$('fRsi').value=10;$('fLong').value=32;$('fShort').value=70;
     $('fGap').value=12;$('fBuf').value=0.1;$('fTp').value=1.0;$('fSl').value=0.3;$('fComm').value=0.08;
+    $('fWeight').value=0.10;$('fDir').value='BOTH';
     $('fWeekend').checked=false;$('fActive').checked=true;$('fListening').checked=true;
+    $('fSlEnabled').checked=true;$('fReverse').checked=false;
 }
 
 // ── Delete ──

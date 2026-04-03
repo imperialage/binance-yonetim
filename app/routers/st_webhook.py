@@ -195,8 +195,9 @@ async def st_webhook(request: Request) -> JSONResponse:
             "message": "Same signal received within 5 minutes",
         })
 
-    # ── 4. Config kontrolleri ─────────────────────────
-    sym_cfg = get_symbol_config(symbol)
+    # ── 4. Config kontrolleri — indicator_settings'ten ──
+    from app.modules.indicator_settings_store import get_settings_or_defaults
+    sym_cfg = await get_settings_or_defaults(symbol)
 
     # Listening kapali → sinyal loglanir ama isleme alinmaz
     if not sym_cfg.get("listening", True):
@@ -247,7 +248,7 @@ async def st_webhook(request: Request) -> JSONResponse:
 
     if not settings.trading_enabled:
         skip_reason = "trading_disabled"
-    elif not sym_cfg.get("enabled", True):
+    elif not sym_cfg.get("active", True):
         skip_reason = "symbol_disabled"
 
     if skip_reason:
@@ -261,8 +262,6 @@ async def st_webhook(request: Request) -> JSONResponse:
             price=price,
             event_id=event_id,
             tf=tf,
-            tp_pct=sym_cfg.get("tp_pct"),
-            sl_pct=sym_cfg.get("sl_pct"),
         ))
         trade_dispatched = True
         log.info(

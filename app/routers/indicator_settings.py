@@ -31,6 +31,10 @@ class IndicatorSettingsBody(BaseModel):
     weekend_closed: int | None = None
     active: int | None = None
     listening: int | None = None
+    weight: float | None = None
+    reverse_signal: int | None = None
+    sl_enabled: int | None = None
+    allowed_directions: str | None = None
 
 
 @router.get("/api/indicator-settings")

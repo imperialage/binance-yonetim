@@ -359,7 +359,7 @@ tr.clickable:hover{background:#1c212888}
 
 <script>
 (function(){
-  var SYMBOLS = ['BTCUSDT','XRPUSDT','AVAXUSDT','DOGEUSDT','ETHUSDT','SOLUSDT','XAGUSDT','MYXUSDT'];
+  var SYMBOLS = [];  // indicator_settings'ten yuklenecek
   var ADMIN_TOKEN = localStorage.getItem('admin_token')||'';
   var diagData = null;
   var incomeData = null;
@@ -458,9 +458,22 @@ tr.clickable:hover{background:#1c212888}
   }
 
   function fetchSymConfigs(){
-    fetch('/api/symbol-config').then(function(r){return r.json();})
+    fetch('/api/indicator-settings').then(function(r){return r.json();})
     .then(function(data){
-      symConfigs=data;
+      var settings=data.settings||[];
+      // SYMBOLS listesini indicator_settings'ten olustur
+      SYMBOLS=settings.filter(function(s){return s.active}).map(function(s){return s.symbol});
+      // symConfigs'i indicator_settings formatindan donustur
+      symConfigs={};
+      settings.forEach(function(s){
+        symConfigs[s.symbol]={
+          tp_pct:s.tp_pct/100,sl_pct:s.sl_pct/100,weight:s.weight,
+          allowed_directions:s.allowed_directions==='BOTH'?['BUY','SELL']:s.allowed_directions==='BUY'?['BUY']:['SELL'],
+          enabled:!!s.active,listening:!!s.listening,
+          sl_enabled:!!s.sl_enabled,reverse_signal:!!s.reverse_signal,
+          weekend_closed:!!s.weekend_closed,interval:s.interval,
+        };
+      });
       if(diagData) renderSymbolGrid();
     }).catch(function(){});
   }
@@ -549,29 +562,22 @@ tr.clickable:hover{background:#1c212888}
     setTimeout(function(){el.remove();},3000);
   }
 
-  // ── Update symbol config ──
+  // ── Update symbol config — indicator_settings API uzerinden ──
   window.updateSymConfig=function(sym,field,value){
     var body={};
-    body[field]=value;
-    adminFetch('/api/symbol-config/'+sym,{method:'PUT',body:JSON.stringify(body)})
+    // Field mapping: trading.html field adlari → indicator_settings field adlari
+    var fieldMap={enabled:'active',listening:'listening',sl_enabled:'sl_enabled',reverse_signal:'reverse_signal'};
+    var apiField=fieldMap[field]||field;
+    // Boolean → integer donusumu
+    if(typeof value==='boolean') value=value?1:0;
+    body[apiField]=value;
+    fetch('/api/indicator-settings/'+sym,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.json()})
     .then(function(data){
-      symConfigs[sym]=data.config;
-      renderSymbolGrid();
-      // TP/SL degistiyse Binance emir durumunu goster
-      if(data.orders_updated){
-        var ou=data.orders_updated;
-        if(ou.status==='updated'){
-          var msg=sym+' Binance emirleri guncellendi — TP:'+ou.tp_price+' SL:'+ou.sl_price;
-          showToast(msg);
-        }else if(ou.status==='no_position'){
-          showToast(sym+' '+field+' guncellendi (acik pozisyon yok)');
-        }else if(ou.error){
-          showToast(sym+' config OK ama Binance hata: '+ou.error,'error');
-        }
-      }else{
-        showToast(sym+' '+field+' guncellendi');
-      }
-    }).catch(function(e){if(e.message!=='401')showToast('Hata: '+e.message,'error');});
+      // symConfigs guncelle
+      fetchSymConfigs();
+      showToast(sym+' '+field+' guncellendi');
+    }).catch(function(e){showToast('Hata: '+e.message,'error');});
   };
 
   // ── Toggle helpers ──

@@ -115,15 +115,13 @@ async def _execute_trade_inner(
     pos_amt = float(current_pos.get("positionAmt", 0)) if current_pos else 0.0
     closed_previous = False
 
-    # ── 2b. Sembol config (sl_enabled, reverse_signal) ──
-    from app.config import get_symbol_config as _get_sym_cfg
-    sym_cfg = _get_sym_cfg(symbol)
-    reverse_signal = sym_cfg.get("reverse_signal", False)
-    sl_enabled = sym_cfg.get("sl_enabled", True)
-    # reverse_signal acikken veya sl_pct=None ise SL konmaz
+    # ── 2b. Sembol config — indicator_settings'ten oku (kalici) ──
+    from app.modules.indicator_settings_store import get_settings_or_defaults
+    sym_cfg = await get_settings_or_defaults(symbol)
+    reverse_signal = bool(sym_cfg.get("reverse_signal", 0))
+    sl_enabled = bool(sym_cfg.get("sl_enabled", 1))
+    # reverse_signal acikken SL konmaz
     if reverse_signal:
-        sl_enabled = False
-    if sym_cfg.get("sl_pct") is None:
         sl_enabled = False
 
     # ── 2c. Clean orphan orders if no position ──────
@@ -227,8 +225,7 @@ async def _execute_trade_inner(
         return
 
     # EV-weighted capital allocation — her sembol kendi ağırlığı kadar bakiye kullanır
-    from app.config import get_symbol_config
-    sym_weight = get_symbol_config(symbol).get("weight", 1.0 / 6)
+    sym_weight = sym_cfg.get("weight", 0.10)
     usable_balance = balance * sym_weight * 0.98
     raw_qty = usable_balance / price
     quantity = round_step_size(raw_qty, step_size)
@@ -341,14 +338,14 @@ async def _execute_trade_inner(
     )
 
     # ── 9. Place TP + SL ────────────────────────────────
-    _default_sl, _default_tp = settings.get_strategy(tf)
+    # TP/SL indicator_settings'ten gelir (yuzde olarak: 1.0 = %1)
+    # execute_trade'e oran olarak gonderilir (0.01 = %1)
     if tp_pct is None:
-        tp_pct = _default_tp
-    # sl_pct None ise: config'den None gelmis olabilir (SL yok) veya default kullan
+        tp_pct = sym_cfg.get("tp_pct", 1.0) / 100.0
     if sl_pct is None and sl_enabled:
-        sl_pct = _default_sl
+        sl_pct = sym_cfg.get("sl_pct", 0.3) / 100.0
     elif sl_pct is None:
-        sl_pct = 0.0  # SL devre disi, hesaplama icin 0
+        sl_pct = 0.0
 
     if side == "BUY":
         raw_tp = entry_price * (1 + tp_pct)

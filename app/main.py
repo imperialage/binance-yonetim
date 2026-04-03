@@ -25,6 +25,7 @@ from app.modules.st_signal_logger import init_st_signal_db, close_st_signal_db
 from app.modules.st_stats_updater import start_st_stats_updater, stop_st_stats_updater
 from app.modules.indicator_settings_store import init_indicator_settings_db, close_indicator_settings_db
 from app.modules.order_stream import start_order_stream, stop_order_stream
+from app.modules.signal_engine import start_signal_engines, stop_signal_engines
 from app.routers import admin, backtest, chart, data_collector, events, latest, status, webhook, ws
 from app.routers import st_webhook, indicator_settings
 from app.utils.logging import get_logger, setup_logging
@@ -48,8 +49,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     start_st_stats_updater()
     start_price_stream()
     start_order_stream()
+    start_signal_engines()
     start_default_collections()
     yield
+    await stop_signal_engines()
     await stop_order_stream()
     await stop_price_stream()
     await stop_all_collections()

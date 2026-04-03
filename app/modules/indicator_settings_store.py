@@ -22,22 +22,34 @@ DB_PATH = Path(f"{_DATA_DIR}/indicator_settings.db")
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS indicator_settings (
-    symbol          TEXT PRIMARY KEY,
-    interval        TEXT NOT NULL DEFAULT '15m',
-    rsi_len         INTEGER NOT NULL DEFAULT 10,
-    long_thresh     REAL NOT NULL DEFAULT 32,
-    short_thresh    REAL NOT NULL DEFAULT 70,
-    max_gap         INTEGER NOT NULL DEFAULT 12,
-    entry_buffer    REAL NOT NULL DEFAULT 0.1,
-    tp_pct          REAL NOT NULL DEFAULT 1.0,
-    sl_pct          REAL NOT NULL DEFAULT 0.3,
-    commission      REAL NOT NULL DEFAULT 0.08,
-    weekend_closed  INTEGER NOT NULL DEFAULT 0,
-    active          INTEGER NOT NULL DEFAULT 1,
-    listening       INTEGER NOT NULL DEFAULT 1,
-    updated_at      TEXT DEFAULT CURRENT_TIMESTAMP
+    symbol             TEXT PRIMARY KEY,
+    interval           TEXT NOT NULL DEFAULT '15m',
+    rsi_len            INTEGER NOT NULL DEFAULT 10,
+    long_thresh        REAL NOT NULL DEFAULT 32,
+    short_thresh       REAL NOT NULL DEFAULT 70,
+    max_gap            INTEGER NOT NULL DEFAULT 12,
+    entry_buffer       REAL NOT NULL DEFAULT 0.1,
+    tp_pct             REAL NOT NULL DEFAULT 1.0,
+    sl_pct             REAL NOT NULL DEFAULT 0.3,
+    commission         REAL NOT NULL DEFAULT 0.08,
+    weekend_closed     INTEGER NOT NULL DEFAULT 0,
+    active             INTEGER NOT NULL DEFAULT 1,
+    listening          INTEGER NOT NULL DEFAULT 1,
+    weight             REAL NOT NULL DEFAULT 0.10,
+    reverse_signal     INTEGER NOT NULL DEFAULT 0,
+    sl_enabled         INTEGER NOT NULL DEFAULT 1,
+    allowed_directions TEXT NOT NULL DEFAULT 'BOTH',
+    updated_at         TEXT DEFAULT CURRENT_TIMESTAMP
 );
 """
+
+# Yeni sutunlar icin migration — mevcut tablo varsa sutun ekle
+_MIGRATIONS = [
+    "ALTER TABLE indicator_settings ADD COLUMN weight REAL NOT NULL DEFAULT 0.10",
+    "ALTER TABLE indicator_settings ADD COLUMN reverse_signal INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE indicator_settings ADD COLUMN sl_enabled INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE indicator_settings ADD COLUMN allowed_directions TEXT NOT NULL DEFAULT 'BOTH'",
+]
 
 # Default ayarlar — yeni sembol eklendiginde kullanilir
 DEFAULTS = {
@@ -53,6 +65,10 @@ DEFAULTS = {
     "weekend_closed": 0,
     "active": 1,
     "listening": 1,
+    "weight": 0.10,
+    "reverse_signal": 0,
+    "sl_enabled": 1,
+    "allowed_directions": "BOTH",
 }
 
 
@@ -70,6 +86,12 @@ async def get_db() -> aiosqlite.Connection:
 async def init_indicator_settings_db() -> None:
     db = await get_db()
     await db.execute(_CREATE_TABLE)
+    # Mevcut tabloya yeni sutunlar ekle (zaten varsa sessizce atla)
+    for migration in _MIGRATIONS:
+        try:
+            await db.execute(migration)
+        except Exception:
+            pass  # sutun zaten var
     await db.commit()
     await log.ainfo("indicator_settings_db_ready", path=str(DB_PATH))
 
@@ -138,8 +160,9 @@ async def upsert_settings(symbol: str, data: dict[str, Any]) -> dict[str, Any]:
         await db.execute(
             """INSERT INTO indicator_settings
                (symbol, interval, rsi_len, long_thresh, short_thresh, max_gap,
-                entry_buffer, tp_pct, sl_pct, commission, weekend_closed, active, listening)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                entry_buffer, tp_pct, sl_pct, commission, weekend_closed, active, listening,
+                weight, reverse_signal, sl_enabled, allowed_directions)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 sym,
                 row["interval"],
@@ -154,6 +177,10 @@ async def upsert_settings(symbol: str, data: dict[str, Any]) -> dict[str, Any]:
                 row["weekend_closed"],
                 row["active"],
                 row["listening"],
+                row["weight"],
+                row["reverse_signal"],
+                row["sl_enabled"],
+                row["allowed_directions"],
             ),
         )
         await db.commit()
