@@ -111,6 +111,14 @@ async def chart_page() -> FileResponse:
     )
 
 
+@app.get("/monitor")
+async def monitor_page() -> FileResponse:
+    return FileResponse(
+        str(_static_dir / "monitor.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
 @app.get("/collector")
 async def collector_page() -> FileResponse:
     return FileResponse(

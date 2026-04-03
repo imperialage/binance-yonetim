@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mum İzleme</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0B0E11;color:#E6EDF3;font-family:'Inter',-apple-system,sans-serif;font-size:13px;min-height:100vh}
+
+/* Header */
+.header{background:#111827;border-bottom:1px solid #1b2130;padding:10px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:10}
+.logo{color:#F0B90B;font-weight:800;font-size:16px}
+.hlink{color:#58a6ff;font-size:11px;text-decoration:none}
+select,input[type=date],input[type=number]{background:#0d1117;border:1px solid #21262d;color:#E6EDF3;padding:5px 8px;border-radius:6px;font-size:12px;font-family:inherit}
+select:focus,input:focus{outline:none;border-color:#F0B90B}
+.hbtn{padding:5px 14px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;border:none;font-family:inherit;background:#F0B90B;color:#0B0E11}
+.hbtn:hover{opacity:0.85}
+.hbtn-red{background:#F6465D;color:#fff}
+.live-price{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;margin-left:auto;transition:color .2s}
+.live-price.up{color:#0ECB81}.live-price.down{color:#F6465D}.live-price.flat{color:#E6EDF3}
+.live-dot{width:7px;height:7px;border-radius:50%;background:#F6465D;display:inline-block;margin-right:4px}
+.live-dot.on{background:#0ECB81;box-shadow:0 0 6px #0ECB81}
+
+.container{max-width:1400px;margin:0 auto;padding:16px 20px}
+
+/* Cards grid */
+.cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px}
+.card{background:#111827;border:1px solid #1b2130;border-radius:12px;padding:14px 16px}
+.card-title{font-size:10px;color:#6e7681;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+.cr{display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px}
+.cr .k{color:#6e7681}.cr .v{font-weight:600;font-variant-numeric:tabular-nums}
+.green{color:#0ECB81}.red{color:#F6465D}.yellow{color:#F0B90B}.blue{color:#3B82F6}.purple{color:#A371F7}
+.pos-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700}
+.pos-long{background:#0ECB8118;color:#0ECB81}.pos-short{background:#F6465D18;color:#F6465D}
+.progress{height:6px;background:#1E2329;border-radius:3px;overflow:hidden;margin-top:6px}
+.progress-fill{height:100%;border-radius:3px;transition:width .3s}
+.progress-green{background:linear-gradient(90deg,#0ECB81,#3fb950)}.progress-red{background:linear-gradient(90deg,#F6465D,#f0883e)}
+
+/* Params panel */
+.params{display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:6px}
+.params label{display:block;font-size:9px;color:#6e7681;margin-bottom:2px;font-weight:600}
+.params input{width:100%;padding:4px 6px;font-size:11px}
+
+/* Filter bar */
+.filter-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;padding:10px 14px;background:#111827;border:1px solid #1b2130;border-radius:10px}
+.filter-bar label{font-size:10px;color:#6e7681;font-weight:600}
+.cb-wrap{display:flex;align-items:center;gap:4px;font-size:11px;color:#848E9C}
+.cb-wrap input[type=checkbox]{accent-color:#F0B90B}
+
+/* Tables */
+.section-title{font-size:11px;color:#6e7681;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.section-title .cnt{background:#21262d;color:#848E9C;font-size:10px;padding:1px 7px;border-radius:8px}
+.tbl-wrap{overflow-x:auto;margin-bottom:20px}
+table{width:100%;border-collapse:collapse;background:#111827;border:1px solid #1b2130;border-radius:10px;overflow:hidden}
+thead{background:#0d1117}
+th{text-align:left;padding:7px 8px;font-size:9px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;font-weight:600;border-bottom:1px solid #1b2130;white-space:nowrap}
+td{padding:5px 8px;font-size:11px;border-bottom:1px solid #141922;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr:hover{background:#0d111788}
+tr.sig-row{background:#F0B90B08;border-left:3px solid #F0B90B}
+tr.tp-row{background:#0ECB8108;border-left:3px solid #0ECB81}
+tr.sl-row{background:#F6465D08;border-left:3px solid #F6465D}
+tr.os-row td:nth-child(8){color:#0ECB81;font-weight:600}
+tr.ob-row td:nth-child(8){color:#F6465D;font-weight:600}
+.badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:700}
+.b-buy{background:#0ECB8118;color:#0ECB81}.b-sell{background:#F6465D18;color:#F6465D}
+.b-tp{background:#0ECB8118;color:#0ECB81}.b-sl{background:#F6465D18;color:#F6465D}
+.b-open{background:#F0B90B18;color:#F0B90B}
+.sig-detail{font-size:10px;padding:4px 8px 4px 20px;color:#F0B90B}
+
+/* Mobile */
+@media(max-width:900px){.cards{grid-template-columns:1fr}}
+@media(max-width:600px){.header{padding:8px 12px}.container{padding:10px 12px}.live-price{font-size:16px}}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <span class="logo">Monitor</span>
+    <a href="/trading" class="hlink">Dashboard</a>
+    <select id="symSel"></select>
+    <select id="tfSel">
+        <option value="5m">5m</option>
+        <option value="15m" selected>15m</option>
+        <option value="1h">1h</option>
+        <option value="4h">4h</option>
+    </select>
+    <span><span class="live-dot" id="ld"></span><span id="liveTime">--</span></span>
+    <span class="live-price flat" id="lp">--</span>
+</div>
+
+<div class="container">
+
+<!-- 3 Cards -->
+<div class="cards">
+
+    <!-- Canli Mum -->
+    <div class="card" id="liveCard">
+        <div class="card-title">Canli Mum <span id="candleTimer" style="color:#F0B90B">--</span></div>
+        <div id="liveCandle">
+            <div class="cr"><span class="k">Open</span><span class="v" id="lcO">--</span></div>
+            <div class="cr"><span class="k">High</span><span class="v green" id="lcH">--</span></div>
+            <div class="cr"><span class="k">Low</span><span class="v red" id="lcL">--</span></div>
+            <div class="cr"><span class="k">Close</span><span class="v" id="lcC">--</span></div>
+            <div class="cr"><span class="k">RSI(10)</span><span class="v purple" id="lcR">--</span></div>
+            <div class="progress"><div class="progress-fill progress-green" id="lcProg" style="width:0%"></div></div>
+        </div>
+    </div>
+
+    <!-- Pozisyon -->
+    <div class="card">
+        <div class="card-title">Acik Pozisyon <button class="hbtn hbtn-red" style="font-size:9px;padding:3px 8px;display:none" id="closeBtn" onclick="closePos()">Kapat</button></div>
+        <div id="posInfo" style="color:#484f58;font-size:11px">Yok</div>
+    </div>
+
+    <!-- Istatistik + Ayarlar -->
+    <div class="card">
+        <div class="card-title">Istatistik</div>
+        <div id="statsInfo" style="color:#484f58;font-size:11px">--</div>
+    </div>
+</div>
+
+<!-- Ayarlar -->
+<div class="card" style="margin-bottom:12px">
+    <div class="card-title">Indikatör Ayarlari</div>
+    <div class="params">
+        <div><label>RSI</label><input id="iR" type="number" value="10"></div>
+        <div><label>LONG ≤</label><input id="iL" type="number" value="32"></div>
+        <div><label>SHORT ≥</label><input id="iS" type="number" value="70"></div>
+        <div><label>Gap</label><input id="iG" type="number" value="12"></div>
+        <div><label>Buffer %</label><input id="iB" type="number" value="0.1" step="0.05"></div>
+        <div><label>TP %</label><input id="iT" type="number" value="0" step="0.1"></div>
+        <div><label>SL %</label><input id="iSL" type="number" value="0" step="0.05"></div>
+        <div style="display:flex;align-items:end"><button class="hbtn" onclick="applyAndLoad()">Uygula</button></div>
+    </div>
+</div>
+
+<!-- Filtre -->
+<div class="filter-bar">
+    <label>Baslangic</label><input type="date" id="fStart" value="2026-01-07">
+    <label>Bitis</label><input type="date" id="fEnd" value="2026-04-03">
+    <div class="cb-wrap"><input type="checkbox" id="fSig"><label>Sadece sinyaller</label></div>
+    <div class="cb-wrap"><input type="checkbox" id="fOSOB"><label>Oversold/Overbought</label></div>
+    <button class="hbtn" onclick="applyAndLoad()">Filtrele</button>
+</div>
+
+<!-- Mum Tablosu -->
+<div class="section-title">Mum Gecmisi <span class="cnt" id="candleCnt">0</span></div>
+<div class="tbl-wrap"><table id="candleTable"><thead><tr>
+    <th>Tarih</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th><th>RSI</th><th>Bolge</th><th>Sinyal</th>
+</tr></thead><tbody id="candleBody"></tbody></table></div>
+
+<!-- Sinyal Tablosu -->
+<div class="section-title">Sinyaller <span class="cnt" id="sigCnt">0</span></div>
+<div class="tbl-wrap"><table><thead><tr>
+    <th>Tarih</th><th>Yon</th><th>Giris</th><th>TP</th><th>SL</th><th>RSI A→B</th><th>Gap</th><th>Durum</th><th>PnL</th>
+</tr></thead><tbody id="sigBody"></tbody></table></div>
+
+</div>
+
+<script>
+var SYMS=['XAGUSDT','ETHUSDT','MYXUSDT','BTCUSDT','SOLUSDT','XRPUSDT','DOGEUSDT','AVAXUSDT'];
+var sym,tf,ws,prices={},lastPrice=0,chartData=null,adminToken='';
+
+function $(id){return document.getElementById(id)}
+function fmt(n,d){return n==null||isNaN(n)?'--':Number(n).toFixed(d!=null?d:4)}
+function fmtK(n){if(n==null)return'--';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(0)+'K';return n.toFixed(0)}
+function dec(p){return p>=100?2:p>=1?4:6}
+
+// ── LocalStorage ──
+function saveState(){
+    localStorage.setItem('mon_state',JSON.stringify({sym:sym,tf:tf,
+        iR:$('iR').value,iL:$('iL').value,iS:$('iS').value,iG:$('iG').value,
+        iB:$('iB').value,iT:$('iT').value,iSL:$('iSL').value,
+        fStart:$('fStart').value,fEnd:$('fEnd').value,fSig:$('fSig').checked,fOSOB:$('fOSOB').checked}));
+}
+function loadState(){
+    try{var s=JSON.parse(localStorage.getItem('mon_state'));if(!s)return;
+    sym=s.sym||'XAGUSDT';tf=s.tf||'15m';
+    $('iR').value=s.iR||10;$('iL').value=s.iL||32;$('iS').value=s.iS||70;$('iG').value=s.iG||12;
+    $('iB').value=s.iB||0.1;$('iT').value=s.iT||0;$('iSL').value=s.iSL||0;
+    $('fStart').value=s.fStart||'2026-01-07';$('fEnd').value=s.fEnd||'2026-04-03';
+    $('fSig').checked=!!s.fSig;$('fOSOB').checked=!!s.fOSOB;
+    }catch(e){sym='XAGUSDT';tf='15m'}
+}
+
+// ── Init selects ──
+function initUI(){
+    var sh='';SYMS.forEach(function(s){sh+='<option value="'+s+'"'+(s===sym?' selected':'')+'>'+s.replace('USDT','')+'</option>'});
+    $('symSel').innerHTML=sh;
+    $('tfSel').value=tf;
+    $('symSel').onchange=function(){sym=this.value;saveState();loadData()};
+    $('tfSel').onchange=function(){tf=this.value;saveState();loadData()};
+}
+
+// ── Load Data ──
+async function loadData(){
+    var u='/api/chart-data?symbol='+sym+'&interval='+tf
+        +'&rsi_len='+$('iR').value+'&long_thresh='+$('iL').value+'&short_thresh='+$('iS').value
+        +'&max_gap='+$('iG').value+'&entry_buffer='+$('iB').value
+        +'&tp_pct_param='+$('iT').value+'&sl_pct_param='+$('iSL').value;
+    try{
+        var r=await fetch(u);chartData=await r.json();
+        if(!chartData.candles)return;
+        renderAll();
+    }catch(e){console.error(e)}
+}
+
+function applyAndLoad(){saveState();loadData()}
+
+// ── Render Everything ──
+function renderAll(){
+    var d=chartData;if(!d)return;
+    var candles=d.candles||[];
+    var signals=d.signals||[];
+    var trades=d.trades||[];
+    var pos=d.position;
+    var longTh=parseFloat($('iL').value);
+    var shortTh=parseFloat($('iS').value);
+    var tpPct=d.params?d.params.tp_pct:1.0;
+    var slPct=d.params?d.params.sl_pct:0.3;
+
+    // Build signal/trade maps
+    var sigMap={};signals.forEach(function(s){sigMap[s.time]=s});
+    var tradeExitMap={};trades.forEach(function(t){tradeExitMap[t.exit_time]=t});
+
+    // Filter
+    var fStart=new Date($('fStart').value).getTime()/1000;
+    var fEnd=new Date($('fEnd').value+'T23:59:59').getTime()/1000;
+    var fSig=$('fSig').checked;
+    var fOSOB=$('fOSOB').checked;
+
+    // Candle table — son mumdan geriye
+    var filtered=candles.filter(function(c){
+        if(c.time<fStart||c.time>fEnd)return false;
+        if(fSig&&!sigMap[c.time])return false;
+        if(fOSOB&&c.rsi!=null&&c.rsi>longTh&&c.rsi<shortTh)return false;
+        return true;
+    });
+
+    var html='';
+    var shown=Math.min(filtered.length,500);
+    for(var i=filtered.length-1;i>=filtered.length-shown&&i>=0;i--){
+        var c=filtered[i];
+        var sig=sigMap[c.time];
+        var tExit=tradeExitMap[c.time];
+        var rsiZone='';var rowCls='';
+        if(c.rsi!=null){
+            if(c.rsi<=longTh){rsiZone='OS';rowCls='os-row'}
+            else if(c.rsi>=shortTh){rsiZone='OB';rowCls='ob-row'}
+        }
+
+        // Trade exit row
+        if(tExit){
+            var exCls=tExit.reason==='TP'?'tp-row':'sl-row';
+            var exIcon=tExit.reason==='TP'?'✓TP':'✗SL';
+            var exClr=tExit.reason==='TP'?'green':'red';
+            html+='<tr class="'+exCls+'"><td colspan="9" class="sig-detail"><span class="'+exClr+'">'+exIcon+' '+fmt(tExit.pnl_pct,2)+'%</span> &nbsp; '+tExit.entry_date+' → '+tExit.exit_date+' &nbsp; Giris:'+fmt(tExit.entry_price,dec(tExit.entry_price))+' Cikis:'+fmt(tExit.exit_price,dec(tExit.exit_price))+'</td></tr>';
+        }
+
+        // Signal row
+        if(sig){
+            var sBadge=sig.direction==='BUY'?'<span class="badge b-buy">▲ BUY</span>':'<span class="badge b-sell">▼ SELL</span>';
+            var stp=sig.direction==='BUY'?sig.entry_price*(1+tpPct/100):sig.entry_price*(1-tpPct/100);
+            var ssl=sig.direction==='BUY'?sig.entry_price*(1-slPct/100):sig.entry_price*(1+slPct/100);
+            html+='<tr class="sig-row"><td colspan="9" class="sig-detail">'+sBadge+' <span class="yellow">'+fmt(sig.entry_price,dec(sig.entry_price))+'</span> &nbsp; TP:<span class="green">'+fmt(stp,dec(stp))+'</span> SL:<span class="red">'+fmt(ssl,dec(ssl))+'</span> &nbsp; RSI:<span class="purple">'+fmt(sig.rsi_a,0)+'→'+fmt(sig.rsi_b,0)+'</span> ↕'+sig.gap+'</td></tr>';
+            rowCls='sig-row';
+        }
+
+        // Candle row
+        var rsiClr=c.rsi!=null?(c.rsi<=longTh?'green':c.rsi>=shortTh?'red':'purple'):'';
+        html+='<tr class="'+rowCls+'">'
+            +'<td style="color:#6e7681">'+timeStr(c.time)+'</td>'
+            +'<td>'+fmt(c.open,dec(c.open))+'</td>'
+            +'<td class="green">'+fmt(c.high,dec(c.high))+'</td>'
+            +'<td class="red">'+fmt(c.low,dec(c.low))+'</td>'
+            +'<td>'+fmt(c.close,dec(c.close))+'</td>'
+            +'<td style="color:#6e7681">'+fmtK(c.volume)+'</td>'
+            +'<td class="'+rsiClr+'">'+(c.rsi!=null?fmt(c.rsi,1):'--')+'</td>'
+            +'<td>'+rsiZone+'</td>'
+            +'<td>'+(sig?(sig.direction==='BUY'?'<span class="badge b-buy">▲L</span>':'<span class="badge b-sell">▼S</span>'):'')+'</td>'
+            +'</tr>';
+    }
+    $('candleBody').innerHTML=html;
+    $('candleCnt').textContent=shown;
+
+    // Signal table
+    var shtml='';
+    signals.slice().reverse().forEach(function(s){
+        var tp2=s.direction==='BUY'?s.entry_price*(1+tpPct/100):s.entry_price*(1-tpPct/100);
+        var sl2=s.direction==='BUY'?s.entry_price*(1-slPct/100):s.entry_price*(1+slPct/100);
+        // Find matching trade
+        var matchTrade=null;
+        trades.forEach(function(t){if(t.entry_time===s.time)matchTrade=t});
+        var status='<span class="badge b-open">Bekliyor</span>';
+        var pnlStr='';
+        if(matchTrade){
+            status=matchTrade.reason==='TP'?'<span class="badge b-tp">✓TP</span>':'<span class="badge b-sl">✗SL</span>';
+            pnlStr='<span class="'+(matchTrade.pnl_pct>=0?'green':'red')+'">'+fmt(matchTrade.pnl_pct,2)+'%</span>';
+        }
+        shtml+='<tr>'
+            +'<td style="color:#6e7681">'+s.date+'</td>'
+            +'<td>'+(s.direction==='BUY'?'<span class="badge b-buy">▲ LONG</span>':'<span class="badge b-sell">▼ SHORT</span>')+'</td>'
+            +'<td class="yellow">'+fmt(s.entry_price,dec(s.entry_price))+'</td>'
+            +'<td class="green">'+fmt(tp2,dec(tp2))+'</td>'
+            +'<td class="red">'+fmt(sl2,dec(sl2))+'</td>'
+            +'<td class="purple">'+fmt(s.rsi_a,0)+'→'+fmt(s.rsi_b,0)+'</td>'
+            +'<td>'+s.gap+'</td>'
+            +'<td>'+status+'</td>'
+            +'<td>'+pnlStr+'</td></tr>';
+    });
+    $('sigBody').innerHTML=shtml;
+    $('sigCnt').textContent=signals.length;
+
+    // Stats
+    var tpC=trades.filter(function(t){return t.reason==='TP'}).length;
+    var slC=trades.filter(function(t){return t.reason==='SL'}).length;
+    var tot=trades.length;
+    var wr=tot>0?(tpC/tot*100).toFixed(1):'0';
+    var pnl=trades.reduce(function(s,t){return s+t.pnl_pct},0);
+    $('statsInfo').innerHTML=
+        '<div class="cr"><span class="k">Sinyal</span><span class="v">'+signals.length+'</span></div>'
+        +'<div class="cr"><span class="k">Islem</span><span class="v">'+tot+' (TP:<span class="green">'+tpC+'</span> SL:<span class="red">'+slC+'</span>)</span></div>'
+        +'<div class="cr"><span class="k">Win Rate</span><span class="v '+(parseFloat(wr)>=50?'green':'red')+'">'+wr+'%</span></div>'
+        +'<div class="cr"><span class="k">PnL</span><span class="v '+(pnl>=0?'green':'red')+'">'+fmt(pnl,2)+'%</span></div>'
+        +'<div class="cr"><span class="k">TP%/SL%</span><span class="v">'+tpPct+' / '+slPct+'</span></div>';
+
+    // Position
+    renderPosition(pos);
+
+    // Live candle — son mum
+    if(candles.length>0) updateLiveCandleDisplay(candles[candles.length-1]);
+}
+
+// ── Position ──
+function renderPosition(pos){
+    if(!pos||!pos.entry_price||pos.entry_price<=0){
+        $('posInfo').innerHTML='<span style="color:#484f58">Pozisyon yok</span>';
+        $('closeBtn').style.display='none';
+        return;
+    }
+    var il=pos.side==='BUY';
+    var curPrice=lastPrice||pos.entry_price;
+    var pnlPct=il?(curPrice-pos.entry_price)/pos.entry_price*100:(pos.entry_price-curPrice)/pos.entry_price*100;
+    var pnlUsd=pnlPct/100*pos.entry_price*pos.qty;
+    var tpDist=il?(pos.tp_price-pos.entry_price):(pos.entry_price-pos.tp_price);
+    var curDist=il?(curPrice-pos.entry_price):(pos.entry_price-curPrice);
+    var prog=tpDist>0?Math.max(-100,Math.min(100,(curDist/tpDist)*100)):0;
+
+    $('posInfo').innerHTML=
+        '<div class="cr"><span class="k">Yon</span><span class="v"><span class="pos-badge '+(il?'pos-long':'pos-short')+'">'+(il?'LONG':'SHORT')+'</span></span></div>'
+        +'<div class="cr"><span class="k">Giris</span><span class="v">'+fmt(pos.entry_price,dec(pos.entry_price))+'</span></div>'
+        +'<div class="cr"><span class="k">Miktar</span><span class="v">'+fmt(pos.qty,4)+'</span></div>'
+        +'<div class="cr"><span class="k">TP</span><span class="v green">'+fmt(pos.tp_price,dec(pos.tp_price))+'</span></div>'
+        +'<div class="cr"><span class="k">SL</span><span class="v red">'+fmt(pos.sl_price,dec(pos.sl_price))+'</span></div>'
+        +'<div class="cr"><span class="k">Anlik</span><span class="v" id="posPrice">'+fmt(curPrice,dec(curPrice))+'</span></div>'
+        +'<div class="cr"><span class="k">PnL</span><span class="v '+(pnlPct>=0?'green':'red')+'" id="posPnl">'+fmt(pnlPct,2)+'% ($'+fmt(pnlUsd,2)+')</span></div>'
+        +'<div class="progress"><div class="progress-fill '+(prog>=0?'progress-green':'progress-red')+'" style="width:'+Math.min(Math.abs(prog),100)+'%"></div></div>';
+    $('closeBtn').style.display='inline-block';
+}
+
+// ── Close Position ──
+async function closePos(){
+    if(!confirm(sym+' pozisyonunu kapatmak istediginize emin misiniz?'))return;
+    if(!adminToken){adminToken=prompt('Admin Token:');if(!adminToken)return;localStorage.setItem('admin_token',adminToken)}
+    try{
+        var r=await fetch('/manual/close',{method:'POST',headers:{'Content-Type':'application/json','X-Admin-Token':adminToken},body:JSON.stringify({symbol:sym})});
+        if(r.status===401){adminToken='';localStorage.removeItem('admin_token');alert('Gecersiz token');return}
+        var d=await r.json();alert(sym+' kapatildi: '+d.side+' '+d.qty);
+        setTimeout(loadData,2000);
+    }catch(e){alert('Hata: '+e.message)}
+}
+
+// ── Live Candle Display ──
+function updateLiveCandleDisplay(c){
+    if(!c)return;
+    $('lcO').textContent=fmt(c.open,dec(c.open));
+    $('lcH').textContent=fmt(c.high,dec(c.high));
+    $('lcL').textContent=fmt(c.low,dec(c.low));
+    $('lcC').textContent=fmt(c.close,dec(c.close));
+    $('lcR').textContent=c.rsi!=null?fmt(c.rsi,1):'--';
+
+    // Mum omru progress
+    var tfMs={'5m':300,'15m':900,'1h':3600,'4h':14400};
+    var sec=tfMs[tf]||900;
+    var now=Math.floor(Date.now()/1000);
+    var elapsed=now-c.time;
+    var pct=Math.min(100,Math.max(0,(elapsed/sec)*100));
+    $('lcProg').style.width=pct+'%';
+    var remaining=Math.max(0,sec-elapsed);
+    var min=Math.floor(remaining/60);var s=remaining%60;
+    $('candleTimer').textContent=min+':'+('0'+s).slice(-2);
+}
+
+// ── WebSocket ──
+function connectWS(){
+    var p=location.protocol==='https:'?'wss:':'ws:';
+    ws=new WebSocket(p+'//'+location.host+'/ws/prices');
+    ws.onopen=function(){$('ld').classList.add('on')};
+    ws.onmessage=function(e){
+        try{
+            prices=JSON.parse(e.data);
+            var v=prices[sym];
+            if(v){
+                var price=parseFloat(v);
+                // Price display
+                var el=$('lp');
+                el.className='live-price '+(price>lastPrice?'up':price<lastPrice?'down':'flat');
+                el.textContent=fmt(price,dec(price));
+                lastPrice=price;
+
+                // Update live candle
+                if(chartData&&chartData.candles&&chartData.candles.length>0){
+                    var lc=chartData.candles[chartData.candles.length-1];
+                    lc.high=Math.max(lc.high,price);
+                    lc.low=Math.min(lc.low,price);
+                    lc.close=price;
+                    updateLiveCandleDisplay(lc);
+                }
+
+                // Update position PnL
+                if(chartData&&chartData.position&&chartData.position.entry_price>0){
+                    var pos=chartData.position;
+                    var il=pos.side==='BUY';
+                    var pp=il?(price-pos.entry_price)/pos.entry_price*100:(pos.entry_price-price)/pos.entry_price*100;
+                    var pu=pp/100*pos.entry_price*pos.qty;
+                    var pel=$('posPnl');if(pel)pel.innerHTML='<span class="'+(pp>=0?'green':'red')+'">'+fmt(pp,2)+'% ($'+fmt(pu,2)+')</span>';
+                    var ppl=$('posPrice');if(ppl)ppl.textContent=fmt(price,dec(price));
+                }
+
+                $('liveTime').textContent=new Date().toLocaleTimeString('tr-TR');
+            }
+        }catch(x){}
+    };
+    ws.onclose=function(){$('ld').classList.remove('on');setTimeout(connectWS,3000)};
+    ws.onerror=function(){ws.close()};
+}
+
+function timeStr(ts){
+    var d=new Date(ts*1000);
+    var dd=('0'+d.getDate()).slice(-2);var mm=('0'+(d.getMonth()+1)).slice(-2);
+    var hh=('0'+d.getHours()).slice(-2);var mi=('0'+d.getMinutes()).slice(-2);
+    return dd+'.'+mm+' '+hh+':'+mi;
+}
+
+// ── Candle timer tick ──
+setInterval(function(){
+    if(!chartData||!chartData.candles||!chartData.candles.length)return;
+    var lc=chartData.candles[chartData.candles.length-1];
+    var tfMs={'5m':300,'15m':900,'1h':3600,'4h':14400};
+    var sec=tfMs[tf]||900;
+    var now=Math.floor(Date.now()/1000);
+    var elapsed=now-lc.time;
+    if(elapsed>=sec+5){
+        // Yeni mum olusmus — veri yenile
+        loadData();
+    }else{
+        var remaining=Math.max(0,sec-elapsed);
+        var min=Math.floor(remaining/60);var s=remaining%60;
+        $('candleTimer').textContent=min+':'+('0'+s).slice(-2);
+        $('lcProg').style.width=Math.min(100,(elapsed/sec)*100)+'%';
+    }
+},1000);
+
+// ── Init ──
+sym='XAGUSDT';tf='15m';
+adminToken=localStorage.getItem('admin_token')||'';
+loadState();if(!sym)sym='XAGUSDT';if(!tf)tf='15m';
+initUI();loadData();connectWS();
+// 3dk da bir tam yenileme
+setInterval(loadData,180000);
+</script>
+</body>
+</html>
