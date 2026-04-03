@@ -73,6 +73,7 @@ class SignalEngine:
 
         # Sinyal state
         self.signal_fired_this_bar: bool = False
+        self.trade_pending: bool = False  # execute_trade cagrildi, fill bekleniyor
         self.used_a: set[int] = set()  # kullanilmis A mum zamanlari
         self.warmed_up: bool = False
         self.last_signal_time: float = 0.0
@@ -195,7 +196,7 @@ class SignalEngine:
 
     # ── Pozisyon senkronizasyonu ─────────────────────────
     async def _sync_position(self) -> None:
-        """Binance'tan gercek pozisyon durumunu al."""
+        """Binance'tan gercek pozisyon durumunu al. trade_pending'i de duzelt."""
         try:
             positions = await get_position_risk(self.symbol)
             for p in positions:
@@ -204,15 +205,19 @@ class SignalEngine:
                     if amt > 0:
                         self.has_position = True
                         self.position_side = "LONG"
+                        self.trade_pending = False
                     elif amt < 0:
                         self.has_position = True
                         self.position_side = "SHORT"
+                        self.trade_pending = False
                     else:
                         self.has_position = False
                         self.position_side = ""
+                        self.trade_pending = False  # timeout/fail durumunu temizle
                     return
             self.has_position = False
             self.position_side = ""
+            self.trade_pending = False
         except Exception as e:
             await log.awarning("signal_engine_position_check_error", symbol=self.symbol, error=str(e))
 
@@ -221,11 +226,17 @@ class SignalEngine:
         """TP/SL fill → pozisyon kapandi."""
         self.has_position = False
         self.position_side = ""
+        self.trade_pending = False
 
     def on_position_opened(self, side: str) -> None:
         """Limit order fill → pozisyon acildi."""
         self.has_position = True
         self.position_side = side
+        self.trade_pending = False
+
+    def on_trade_pending(self) -> None:
+        """execute_trade cagrildi, fill bekleniyor."""
+        self.trade_pending = True
 
     # ── Ana tick handler ─────────────────────────────────
     async def on_price_tick(self, price: float) -> dict | None:
@@ -273,8 +284,8 @@ class SignalEngine:
         if self.signal_fired_this_bar:
             return None
 
-        # ── 4. Pozisyon varsa sinyal arama ──
-        if self.has_position:
+        # ── 4. Pozisyon varsa veya emir bekliyorsa sinyal arama ──
+        if self.has_position or self.trade_pending:
             return None
 
         # ── 5. Anlik RSI hesapla ──
@@ -410,7 +421,18 @@ async def _engine_loop() -> None:
         sym = s["symbol"]
         engine = SignalEngine(sym, s)
         await engine.warmup()
-        _engines[sym] = engine
+        if not engine.warmed_up:
+            # Retry 3 kez, 10sn arayla
+            for attempt in range(1, 4):
+                await log.awarning("signal_engine_warmup_retry", symbol=sym, attempt=attempt)
+                await asyncio.sleep(10)
+                await engine.warmup()
+                if engine.warmed_up:
+                    break
+        if engine.warmed_up:
+            _engines[sym] = engine
+        else:
+            await log.aerror("signal_engine_warmup_failed", symbol=sym)
 
     await log.ainfo("signal_engine_started", symbols=list(_engines.keys()))
 
@@ -418,17 +440,52 @@ async def _engine_loop() -> None:
     last_pos_sync = time.time()
     POS_SYNC_INTERVAL = 30
 
+    # Settings reload periyodik (60sn)
+    last_settings_reload = time.time()
+    SETTINGS_RELOAD_INTERVAL = 60
+
     # Ana dongu — her 200ms fiyat kontrol
     while True:
         try:
             await asyncio.sleep(0.2)
 
-            # Periyodik pozisyon sync
             now = time.time()
+
+            # Periyodik pozisyon sync (30sn)
             if now - last_pos_sync > POS_SYNC_INTERVAL:
                 last_pos_sync = now
                 for engine in _engines.values():
                     await engine._sync_position()
+
+            # Periyodik settings reload (60sn)
+            if now - last_settings_reload > SETTINGS_RELOAD_INTERVAL:
+                last_settings_reload = now
+                try:
+                    fresh = await get_all_settings()
+                    for s in fresh:
+                        sym = s["symbol"]
+                        if sym in _engines:
+                            eng = _engines[sym]
+                            eng.settings = s
+                            eng.rsi_len = s.get("rsi_len", 10)
+                            eng.long_thresh = s.get("long_thresh", 32.0)
+                            eng.short_thresh = s.get("short_thresh", 70.0)
+                            eng.max_gap = s.get("max_gap", 12)
+                            eng.entry_buffer = s.get("entry_buffer", 0.1) / 100.0
+                        elif s.get("active") and s.get("listening"):
+                            # Yeni sembol eklendi — engine olustur
+                            new_engine = SignalEngine(sym, s)
+                            await new_engine.warmup()
+                            _engines[sym] = new_engine
+                            await log.ainfo("signal_engine_new_symbol", symbol=sym)
+                    # Silinen/deaktif sembolleri kaldir
+                    active_syms = {s["symbol"] for s in fresh if s.get("active") and s.get("listening")}
+                    for sym in list(_engines.keys()):
+                        if sym not in active_syms:
+                            del _engines[sym]
+                            await log.ainfo("signal_engine_removed", symbol=sym)
+                except Exception as e:
+                    await log.awarning("signal_engine_settings_reload_error", error=str(e))
 
             # Her engine icin fiyat tick
             for sym, engine in _engines.items():
@@ -462,8 +519,12 @@ async def _engine_loop() -> None:
                     )
 
                     # Trade execute
+                    # NOT: on_position_opened burada CAGRILMAZ.
+                    # Pozisyon acilmasini order_stream callback'inden ogreniyoruz.
+                    # Boylece execute_trade basarisiz olursa state yanlis kalmaz.
                     from app.config import settings as app_settings
                     if app_settings.trading_enabled:
+                        engine.on_trade_pending()
                         event_id = f"se-{row_id}-{int(time.time())}"
                         asyncio.create_task(execute_trade(
                             symbol=sym,
@@ -472,9 +533,6 @@ async def _engine_loop() -> None:
                             event_id=event_id,
                             tf=engine.interval,
                         ))
-                        engine.on_position_opened(
-                            "LONG" if signal["direction"] == "BUY" else "SHORT"
-                        )
 
         except asyncio.CancelledError:
             break
