@@ -56,7 +56,7 @@ class RSITracker:
                 resp = await client.get(BINANCE_URL, params={
                     "symbol": self.symbol,
                     "interval": self.interval,
-                    "limit": 200,
+                    "limit": 1000,
                 })
                 resp.raise_for_status()
                 klines = resp.json()
@@ -114,7 +114,7 @@ class RSITracker:
         al = (self.avg_loss * (self.length - 1) + l_val) / self.length
         if al == 0:
             return 100.0
-        return round(100.0 - (100.0 / (1.0 + ag / al)), 1)
+        return round(100.0 - (100.0 / (1.0 + ag / al)), 2)
 
     def update_price(self, price: float) -> float | None:
         """Yeni fiyat geldi — RSI hesapla (state degistirmez)."""

@@ -578,7 +578,7 @@ function startRSIPolling(){
                 // RSI degerini kart uzerinde guncelle
                 var re=$('lcR');
                 if(re){
-                    re.textContent=data.rsi.toFixed(1);
+                    re.textContent=data.rsi.toFixed(2);
                     var lt=parseFloat($('iL').value),st=parseFloat($('iS').value);
                     re.style.color=data.rsi<=lt?'#0ECB81':data.rsi>=st?'#F6465D':'#A371F7';
                 }
