@@ -72,6 +72,15 @@ async def execute_trade(
                 event_id=event_id,
                 error=str(e),
             )
+            # trade_pending temizle — sıkışmasın
+            try:
+                from app.modules.signal_engine import get_engine
+                eng = get_engine(symbol)
+                if eng:
+                    eng.trade_pending = False
+                    eng.pending_order = None
+            except Exception:
+                pass
             await log_trade(
                 event_id=event_id,
                 ts=ts,

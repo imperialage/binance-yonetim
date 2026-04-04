@@ -203,7 +203,7 @@ class SignalEngine:
 
     # ── Pozisyon senkronizasyonu ─────────────────────────
     async def _sync_position(self) -> None:
-        """Binance'tan gercek pozisyon durumunu al. trade_pending'i de duzelt."""
+        """Binance'tan gercek pozisyon durumunu al."""
         try:
             positions = await get_position_risk(self.symbol)
             for p in positions:
@@ -212,19 +212,21 @@ class SignalEngine:
                     if amt > 0:
                         self.has_position = True
                         self.position_side = "LONG"
-                        self.trade_pending = False
                     elif amt < 0:
                         self.has_position = True
                         self.position_side = "SHORT"
-                        self.trade_pending = False
                     else:
                         self.has_position = False
                         self.position_side = ""
-                        self.trade_pending = False  # timeout/fail durumunu temizle
+                        # pending_order yoksa trade_pending temizle
+                        # pending_order varsa dokunma — check_pending_fill halledecek
+                        if not self.pending_order:
+                            self.trade_pending = False
                     return
             self.has_position = False
             self.position_side = ""
-            self.trade_pending = False
+            if not self.pending_order:
+                self.trade_pending = False
         except Exception as e:
             await log.awarning("signal_engine_position_check_error", symbol=self.symbol, error=str(e))
 
@@ -251,7 +253,10 @@ class SignalEngine:
         """Limit order fill → pozisyon acildi."""
         self.has_position = True
         self.position_side = side
-        self.trade_pending = False
+        # pending_order doluysa trade_pending'e dokunma
+        # check_pending_fill TP/SL koyacak
+        if not self.pending_order:
+            self.trade_pending = False
 
     def on_trade_pending(self) -> None:
         """execute_trade cagrildi, fill bekleniyor."""
