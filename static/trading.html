@@ -323,21 +323,22 @@ tr.clickable:hover{background:#1c212888}
   <!-- Two Column: Signals + Trades -->
   <div class="two-col">
 
-    <!-- ST Signals (TradingView only) -->
+    <!-- Order History (Binance) -->
     <div class="panel">
-      <h2>Son Sinyaller <span style="font-size:10px;color:#58a6ff;font-weight:400;text-transform:none;letter-spacing:0">(TradingView Webhook)</span></h2>
+      <h2>Emir Gecmisi <span style="font-size:10px;color:#58a6ff;font-weight:400;text-transform:none;letter-spacing:0">(Binance Order History)</span></h2>
       <div class="scroll-list" id="signalsContent">
         <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
       </div>
     </div>
 
-    <!-- Trade History -->
+    <!-- Transaction History (Binance) -->
     <div class="panel">
-      <h2>Islem Gecmisi (7 Gun)</h2>
+      <h2>Transaction History</h2>
       <div class="tabs" id="tradeTabs">
         <button class="tab active" data-filter="all">Tumu</button>
-        <button class="tab" data-filter="win">Kazanan</button>
-        <button class="tab" data-filter="loss">Kaybeden</button>
+        <button class="tab" data-filter="pnl">PnL</button>
+        <button class="tab" data-filter="fee">Komisyon</button>
+        <button class="tab" data-filter="funding">Funding</button>
       </div>
       <div class="scroll-list" id="tradesContent">
         <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
@@ -428,34 +429,9 @@ tr.clickable:hover{background:#1c212888}
   }
 
   function fetchIncome(){
-    // Tum aktif sembollerin islem gecmisini binance-trades'ten cek
-    fetch('/api/binance-trades?days=7').then(function(r){return r.json();})
+    fetch('/api/transaction-history?days=7').then(function(r){return r.json();})
     .then(function(data){
-      // debug/income formatina donustur (geriye uyumluluk)
-      var trades=(data.trades||[]).map(function(t){
-        return {
-          symbol:t.symbol||'',
-          side:t.side||'',
-          entry_time:t.entry_str||'',
-          time:t.exit_str||'',
-          entry_price:t.entry_price||0,
-          exit_price:t.exit_price||0,
-          pnl:t.pnl||0,
-          exit_type:t.exit_type||'',
-        };
-      });
-      // Zamana gore sirala (yeniden eskiye)
-      trades.sort(function(a,b){return (b.time||'').localeCompare(a.time||'')});
-      var totalPnl=trades.reduce(function(s,t){return s+t.pnl},0);
-      var win=trades.filter(function(t){return t.pnl>0}).length;
-      var lose=trades.filter(function(t){return t.pnl<0}).length;
-      incomeData={
-        total_pnl:totalPnl,
-        trade_count:trades.length,
-        win:win,lose:lose,
-        win_rate:trades.length>0?Math.round(win/trades.length*100)+'%':'0%',
-        trades:trades,
-      };
+      incomeData=data;
       renderSummary();
       renderTrades();
     }).catch(function(){});
@@ -475,12 +451,7 @@ tr.clickable:hover{background:#1c212888}
   }
 
   function fetchSignals(){
-    var syms=getFilteredSymbols();
-    var url='/api/st-signals?limit=80';
-    if(symFilter!=='all'&&syms.length>0&&syms.length<SYMBOLS.length){
-      url+='&symbols='+syms.join(',');
-    }
-    fetch(url).then(function(r){return r.json();})
+    fetch('/api/order-history?days=1').then(function(r){return r.json();})
     .then(function(data){
       signalsData=data;
       renderSignals();
@@ -556,12 +527,14 @@ tr.clickable:hover{background:#1c212888}
       $('totalUpnl').className='stat-value';
     }
 
-    // Weekly PnL
-    if(incomeData&&!incomeData.error){
-      var wp=incomeData.total_pnl;
+    // Weekly PnL (transaction history'den)
+    if(incomeData&&incomeData.total!=null){
+      var wp=incomeData.total;
       $('weekPnl').textContent=fmtUSD(wp);
       $('weekPnl').className='stat-value '+(wp>=0?'positive':'negative');
-      $('weekPnlSub').textContent=incomeData.trade_count+' islem | '+incomeData.win_rate+' kazanim';
+      var txCount=(incomeData.transactions||[]).length;
+      var pnlCount=(incomeData.transactions||[]).filter(function(t){return t.type==='REALIZED_PNL'}).length;
+      $('weekPnlSub').textContent=pnlCount+' islem | '+txCount+' hareket';
     }
   }
 
@@ -908,49 +881,66 @@ tr.clickable:hover{background:#1c212888}
   var allSignals=[];
 
   function renderSignals(){
-    if(!signalsData||!signalsData.signals||signalsData.signals.length===0){
-      $('signalsContent').innerHTML='<div class="empty-state">Henuz TradingView sinyali yok</div>';
+    var orders=(signalsData&&signalsData.orders)||[];
+    if(orders.length===0){
+      $('signalsContent').innerHTML='<div class="empty-state">Emir bulunamadi</div>';
       return;
     }
-    allSignals=signalsData.signals;
 
-    var html='<table><thead><tr><th>Tarih</th><th>Sembol</th><th>Yon</th><th>Fiyat</th><th>TF</th></tr></thead><tbody>';
-    allSignals.forEach(function(s,idx){
-      var dir=s.direction||'';
-      var dirBadge=(dir==='BUY'||dir==='UP')?
-        '<span class="badge badge-buy">BUY</span>':
-        '<span class="badge badge-sell">SELL</span>';
-
+    var html='<div class="table-scroll"><table><thead><tr><th>Zaman</th><th>Sembol</th><th>Tip</th><th>Yon</th><th>Fiyat</th><th>Ort.</th><th>Miktar</th><th>Dolum</th><th>RO</th><th>Durum</th></tr></thead><tbody>';
+    orders.forEach(function(o,idx){
+      var sideCls=o.side==='BUY'?'badge-buy':'badge-sell';
+      var statusCls=o.status==='FILLED'?'color:#3fb950':o.status==='CANCELED'?'color:#6e7681':o.status==='NEW'?'color:#F0B90B':'color:#f85149';
+      var dp=o.avg_price>=100?2:o.avg_price>=1?4:6;
+      var ro=o.reduce_only?'<span style="color:#F0B90B">Yes</span>':'No';
+      var trigger=o.stop_price>0?fmt(o.stop_price,dp):'—';
+      var typeLabel=o.type;
+      if(o.type==='TAKE_PROFIT_MARKET') typeLabel='TP Market';
+      else if(o.type==='STOP_MARKET') typeLabel='SL Market';
+      else if(o.type==='LIMIT') typeLabel='Limit';
+      else if(o.type==='MARKET') typeLabel='Market';
       html+='<tr class="clickable" onclick="showSignalDetail('+idx+')">';
-      html+='<td style="color:#6e7681;font-size:12px">'+(s.datetime||'--')+'</td>';
-      html+='<td><span class="badge-sym">'+(s.symbol||'--')+'</span></td>';
-      html+='<td>'+dirBadge+'</td>';
-      html+='<td>'+fmt(s.price,s.price>=100?2:4)+'</td>';
-      html+='<td style="color:#6e7681;font-size:12px">'+(s.band==='N/A'?'5m':(s.band||'5m'))+'</td>';
+      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+o.time+'</td>';
+      html+='<td><span class="badge-sym">'+(o.symbol||'').replace('USDT','')+'</span></td>';
+      html+='<td style="font-size:10px">'+typeLabel+'</td>';
+      html+='<td><span class="badge '+sideCls+'">'+o.side+'</span></td>';
+      html+='<td style="font-size:11px">'+(o.price>0?fmt(o.price,dp):trigger)+'</td>';
+      html+='<td style="font-size:11px">'+(o.avg_price>0?fmt(o.avg_price,dp):'—')+'</td>';
+      html+='<td style="font-size:11px">'+fmt(o.quantity,o.quantity>=10?0:4)+'</td>';
+      html+='<td style="font-size:11px">'+fmt(o.filled,o.filled>=10?0:4)+'</td>';
+      html+='<td style="font-size:10px">'+ro+'</td>';
+      html+='<td style="font-size:10px;'+statusCls+'">'+o.status+'</td>';
       html+='</tr>';
     });
-    html+='</tbody></table>';
+    html+='</tbody></table></div>';
     $('signalsContent').innerHTML=html;
   }
 
-  // ── Signal Detail Modal ──
+  // ── Order Detail Modal ──
   window.showSignalDetail=function(idx){
-    var s=allSignals[idx];
-    if(!s) return;
+    var orders=(signalsData&&signalsData.orders)||[];
+    var o=orders[idx];
+    if(!o) return;
 
-    var dir=s.direction||'';
-    var isBuy=(dir==='BUY'||dir==='UP');
-    var shortSym=(s.symbol||'').replace('USDT','');
+    var isBuy=o.side==='BUY';
+    var shortSym=(o.symbol||'').replace('USDT','');
 
-    $('modalTitle').textContent=shortSym+' / USDT — '+(isBuy?'BUY':'SELL')+' Sinyali';
+    $('modalTitle').textContent=shortSym+' — '+o.type+' '+o.side;
     $('modalTitle').style.color=isBuy?'#3fb950':'#f85149';
-    $('modalSub').textContent=s.datetime||'';
+    $('modalSub').textContent=o.time||'';
 
+    var dp=o.avg_price>=100?2:o.avg_price>=1?4:6;
     var html='<div class="detail-grid">';
-    html+='<div class="detail-item"><div class="dl">Sembol</div><div class="dv">'+s.symbol+'</div></div>';
-    html+='<div class="detail-item"><div class="dl">Yon</div><div class="dv" style="color:'+(isBuy?'#3fb950':'#f85149')+'">'+(isBuy?'BUY':'SELL')+'</div></div>';
-    html+='<div class="detail-item"><div class="dl">Fiyat</div><div class="dv">'+fmt(s.price,s.price>=100?2:4)+'</div></div>';
-    html+='<div class="detail-item"><div class="dl">Kaynak</div><div class="dv" style="color:#58a6ff">TradingView Webhook</div></div>';
+    html+='<div class="detail-item"><div class="dl">Sembol</div><div class="dv">'+o.symbol+'</div></div>';
+    html+='<div class="detail-item"><div class="dl">Tip</div><div class="dv">'+o.type+'</div></div>';
+    html+='<div class="detail-item"><div class="dl">Yon</div><div class="dv" style="color:'+(isBuy?'#3fb950':'#f85149')+'">'+o.side+'</div></div>';
+    html+='<div class="detail-item"><div class="dl">Fiyat</div><div class="dv">'+(o.price>0?fmt(o.price,dp):'Market')+'</div></div>';
+    html+='<div class="detail-item"><div class="dl">Ort. Fiyat</div><div class="dv">'+(o.avg_price>0?fmt(o.avg_price,dp):'—')+'</div></div>';
+    html+='<div class="detail-item"><div class="dl">Miktar</div><div class="dv">'+o.quantity+'</div></div>';
+    html+='<div class="detail-item"><div class="dl">Dolum</div><div class="dv">'+o.filled+'</div></div>';
+    html+='<div class="detail-item"><div class="dl">Reduce Only</div><div class="dv">'+(o.reduce_only?'Evet':'Hayir')+'</div></div>';
+    html+='<div class="detail-item"><div class="dl">Stop Fiyat</div><div class="dv">'+(o.stop_price>0?fmt(o.stop_price,dp):'—')+'</div></div>';
+    html+='<div class="detail-item"><div class="dl">Durum</div><div class="dv">'+o.status+'</div></div>';
     html+='</div>';
 
     $('modalBody').innerHTML=html;
@@ -964,53 +954,62 @@ tr.clickable:hover{background:#1c212888}
 
   // ── Trade History Table ──
   function renderTrades(){
-    if(!incomeData||incomeData.error){
-      $('tradesContent').innerHTML='<div class="empty-state">'+(incomeData&&incomeData.error?incomeData.error:'Islem yok')+'</div>';
+    var txns=(incomeData&&incomeData.transactions)||[];
+    if(txns.length===0){
+      $('tradesContent').innerHTML='<div class="empty-state">Transaction bulunamadi</div>';
       return;
     }
-    var trades=incomeData.trades||[];
 
     // Filter
-    var filtered=trades;
-    if(tradeFilter==='win') filtered=trades.filter(function(t){return t.pnl>0;});
-    else if(tradeFilter==='loss') filtered=trades.filter(function(t){return t.pnl<=0;});
+    var filtered=txns;
+    if(tradeFilter==='pnl') filtered=txns.filter(function(t){return t.type==='REALIZED_PNL'});
+    else if(tradeFilter==='fee') filtered=txns.filter(function(t){return t.type==='COMMISSION'});
+    else if(tradeFilter==='funding') filtered=txns.filter(function(t){return t.type==='FUNDING_FEE'});
 
     if(filtered.length===0){
-      $('tradesContent').innerHTML='<div class="empty-state">Bu filtrede islem yok</div>';
+      $('tradesContent').innerHTML='<div class="empty-state">Bu filtrede transaction yok</div>';
       return;
     }
 
-    // Cumulative PnL (kronolojik — eskiden yeniye)
+    // Cumulative (eskiden yeniye)
     var sorted=filtered.slice().reverse();
     var cum=0;var cums=[];
-    sorted.forEach(function(t){cum+=t.pnl;cums.push(cum);});
+    sorted.forEach(function(t){cum+=t.income;cums.push(cum)});
     cums.reverse();
 
-    var html='<div class="table-scroll"><table><thead><tr><th>Sembol</th><th>Yon</th><th>Tip</th><th>Giris</th><th>Cikis</th><th>Giris $</th><th>Cikis $</th><th>PnL</th><th>Kum.</th></tr></thead><tbody>';
+    var html='<div class="table-scroll"><table><thead><tr><th>Zaman</th><th>Sembol</th><th>Tip</th><th>Tutar</th><th>Asset</th><th>Kum.</th></tr></thead><tbody>';
     filtered.forEach(function(t,i){
-      var cls=t.pnl>=0?'pnl-positive':'pnl-negative';
+      var cls=t.income>=0?'pnl-positive':'pnl-negative';
       var cumCls=cums[i]>=0?'pnl-positive':'pnl-negative';
-      var sideBadge='--';
-      if(t.side==='LONG') sideBadge='<span class="badge badge-buy">L</span>';
-      else if(t.side==='SHORT') sideBadge='<span class="badge badge-sell">S</span>';
-      var exType=t.exit_type||'';
-      var exLabel=exType.indexOf('STOP')>=0?'<span style="color:#f85149">SL</span>':exType.indexOf('TAKE')>=0?'<span style="color:#3fb950">TP</span>':exType.indexOf('MARKET')>=0?'MKT':'—';
-      var dp=t.entry_price>=100?2:t.entry_price>=1?4:6;
-
+      var typeLabel=t.type;
+      if(t.type==='REALIZED_PNL') typeLabel='<span style="color:#F0B90B">PnL</span>';
+      else if(t.type==='COMMISSION') typeLabel='<span style="color:#f85149">Komisyon</span>';
+      else if(t.type==='FUNDING_FEE') typeLabel='<span style="color:#58a6ff">Funding</span>';
+      else if(t.type==='TRANSFER') typeLabel='<span style="color:#3fb950">Transfer</span>';
       html+='<tr>';
-      html+='<td><span class="badge-sym">'+(t.symbol||'--').replace('USDT','')+'</span></td>';
-      html+='<td>'+sideBadge+'</td>';
-      html+='<td style="font-size:10px">'+exLabel+'</td>';
-      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+(t.entry_time||'--')+'</td>';
-      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+(t.time||'--')+'</td>';
-      html+='<td style="font-size:11px">'+(t.entry_price?fmt(t.entry_price,dp):'--')+'</td>';
-      html+='<td style="font-size:11px">'+(t.exit_price?fmt(t.exit_price,dp):'--')+'</td>';
-      html+='<td class="'+cls+'" style="font-size:11px;font-weight:600">'+fmtUSD(t.pnl)+'</td>';
+      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+t.time+'</td>';
+      html+='<td><span class="badge-sym">'+(t.symbol||'').replace('USDT','')+'</span></td>';
+      html+='<td style="font-size:10px">'+typeLabel+'</td>';
+      html+='<td class="'+cls+'" style="font-size:11px;font-weight:600">'+fmtUSD(t.income)+'</td>';
+      html+='<td style="font-size:10px;color:#6e7681">'+t.asset+'</td>';
       html+='<td class="'+cumCls+'" style="font-size:11px;font-weight:600">'+fmtUSD(cums[i])+'</td>';
       html+='</tr>';
     });
     html+='</tbody></table></div>';
-    $('tradesContent').innerHTML=html;
+
+    // Ozet
+    var summary=incomeData.summary||{};
+    var total=incomeData.total||0;
+    var sumHtml='<div style="display:flex;gap:12px;padding:8px 0;font-size:11px;flex-wrap:wrap">';
+    sumHtml+='<span>Toplam: <strong class="'+(total>=0?'pnl-positive':'pnl-negative')+'">'+fmtUSD(total)+'</strong></span>';
+    for(var k in summary){
+      var v=summary[k];
+      var label=k==='REALIZED_PNL'?'PnL':k==='COMMISSION'?'Komisyon':k==='FUNDING_FEE'?'Funding':k;
+      sumHtml+='<span style="color:#6e7681">'+label+': <strong class="'+(v>=0?'pnl-positive':'pnl-negative')+'">'+fmtUSD(v)+'</strong></span>';
+    }
+    sumHtml+='</div>';
+
+    $('tradesContent').innerHTML=sumHtml+html;
   }
 
   // ── Tab Handling ──

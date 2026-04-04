@@ -262,6 +262,33 @@ class SignalEngine:
         """execute_trade cagrildi, fill bekleniyor."""
         self.trade_pending = True
 
+    async def check_position_closed(self) -> None:
+        """Pozisyon acikken kapanmis mi kontrol et. Kapandiysa eski emirleri temizle."""
+        try:
+            positions = await get_position_risk(self.symbol)
+            pos_amt = 0.0
+            for p in positions:
+                if p.get("symbol") == self.symbol:
+                    pos_amt = float(p.get("positionAmt", 0))
+                    break
+
+            if pos_amt != 0:
+                return  # pozisyon hala acik
+
+            # Pozisyon kapanmis! Eski emirleri temizle
+            from app.modules.binance_client import cancel_all_open_orders
+            try:
+                await cancel_all_open_orders(self.symbol)
+                await log.ainfo("position_closed_orders_cleaned", symbol=self.symbol)
+            except Exception:
+                pass
+
+            self.on_position_closed()
+            await log.ainfo("position_closed_detected", symbol=self.symbol)
+
+        except Exception as e:
+            await log.awarning("check_position_closed_error", symbol=self.symbol, error=str(e))
+
     async def check_pending_fill(self) -> None:
         """trade_pending ise: Binance'tan pozisyon kontrol et, fill olduysa TP/SL koy."""
         if not self.trade_pending or not self.pending_order:
@@ -843,12 +870,14 @@ async def _engine_loop() -> None:
 
             now = time.time()
 
-            # Fill takip (2sn) — pending order varsa Binance'tan kontrol + TP/SL koy
+            # Fill takip + pozisyon kapanma kontrolu (2sn)
             if now - last_fill_check > FILL_CHECK_INTERVAL:
                 last_fill_check = now
                 for engine in _engines.values():
                     if engine.trade_pending:
                         await engine.check_pending_fill()
+                    elif engine.has_position:
+                        await engine.check_position_closed()
 
             # Periyodik pozisyon sync (30sn)
             if now - last_pos_sync > POS_SYNC_INTERVAL:
