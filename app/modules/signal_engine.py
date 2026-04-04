@@ -394,6 +394,107 @@ class SignalEngine:
 # Engine lifecycle
 # ══════════════════════════════════════════════════════════
 
+async def _tpsl_watchdog() -> None:
+    """Acik pozisyonlar icin TP/SL emirlerini kontrol et — eksikse koy.
+
+    TEYITLI olana kadar her 20sn'de bir dener, ASLA vazgecmez.
+    """
+    from app.modules.binance_client import (
+        get_position_risk, get_all_orders,
+        place_take_profit_market_order, place_stop_market_order,
+        get_exchange_info,
+    )
+    from app.modules.indicator_settings_store import get_settings_or_defaults
+
+    for sym, engine in _engines.items():
+        if not engine.has_position:
+            continue
+
+        try:
+            # 1. Binance'tan pozisyon bilgisi
+            positions = await get_position_risk(sym)
+            pos_amt = 0.0
+            entry_price = 0.0
+            for p in positions:
+                if p.get("symbol") == sym:
+                    pos_amt = float(p.get("positionAmt", 0))
+                    entry_price = float(p.get("entryPrice", 0))
+                    break
+
+            if pos_amt == 0 or entry_price <= 0:
+                continue
+
+            qty = abs(pos_amt)
+            is_long = pos_amt > 0
+            exit_side = "SELL" if is_long else "BUY"
+
+            # 2. Mevcut açık emirleri kontrol et
+            recent_orders = await get_all_orders(sym, days=1)
+            has_tp = False
+            has_sl = False
+            for o in recent_orders:
+                if o.get("status") != "NEW":
+                    continue
+                otype = o.get("origType", o.get("type", ""))
+                if otype == "TAKE_PROFIT_MARKET":
+                    has_tp = True
+                elif otype == "STOP_MARKET":
+                    has_sl = True
+
+            if has_tp and has_sl:
+                continue  # ikisi de var, sorun yok
+
+            # 3. Settings'ten TP/SL fiyatlarını hesapla
+            settings = await get_settings_or_defaults(sym)
+            tp_pct = settings.get("tp_pct", 1.0) / 100.0
+            sl_pct = settings.get("sl_pct", 0.3) / 100.0
+            sl_enabled = bool(settings.get("sl_enabled", 1))
+
+            # tick_size al
+            try:
+                info = await get_exchange_info(sym)
+                tick_size = float(info.get("priceFilter", {}).get("tickSize", 0.0001))
+            except Exception:
+                tick_size = 0.0001
+
+            from app.modules.binance_client import round_price
+
+            if is_long:
+                tp_price = round_price(entry_price * (1 + tp_pct), tick_size)
+                sl_price = round_price(entry_price * (1 - sl_pct), tick_size)
+            else:
+                tp_price = round_price(entry_price * (1 - tp_pct), tick_size)
+                sl_price = round_price(entry_price * (1 + sl_pct), tick_size)
+
+            # 4. Eksik emirleri koy
+            if not has_tp:
+                try:
+                    await place_take_profit_market_order(sym, exit_side, qty, tp_price)
+                    await log.ainfo("watchdog_tp_placed", symbol=sym, tp_price=tp_price, qty=qty)
+                except Exception as e:
+                    await log.aerror("watchdog_tp_failed", symbol=sym, tp_price=tp_price, error=str(e))
+
+            if not has_sl and sl_enabled:
+                try:
+                    await place_stop_market_order(sym, exit_side, qty, sl_price)
+                    await log.ainfo("watchdog_sl_placed", symbol=sym, sl_price=sl_price, qty=qty)
+                except Exception as e:
+                    await log.aerror("watchdog_sl_failed", symbol=sym, sl_price=sl_price, error=str(e))
+
+            if not has_tp or (not has_sl and sl_enabled):
+                await log.awarning(
+                    "watchdog_tpsl_missing",
+                    symbol=sym,
+                    side=engine.position_side,
+                    entry=entry_price,
+                    tp_missing=not has_tp,
+                    sl_missing=not has_sl and sl_enabled,
+                )
+
+        except Exception as e:
+            await log.aerror("watchdog_error", symbol=sym, error=str(e))
+
+
 async def _engine_loop() -> None:
     """Ana dongu — tum aktif engine'leri fiyat tick'leriyle besler."""
     from app.modules.trade_executor import execute_trade
@@ -443,9 +544,17 @@ async def _engine_loop() -> None:
 
     await log.ainfo("signal_engine_started", symbols=list(_engines.keys()))
 
+    # Startup: hemen TP/SL watchdog calistir (deploy sonrasi koruma)
+    await _tpsl_watchdog()
+    await log.ainfo("signal_engine_startup_watchdog_done")
+
     # Pozisyon sync periyodik (30sn)
     last_pos_sync = time.time()
     POS_SYNC_INTERVAL = 30
+
+    # TP/SL watchdog periyodik (20sn)
+    last_tpsl_check = time.time()
+    TPSL_CHECK_INTERVAL = 20
 
     # Settings reload periyodik (60sn)
     last_settings_reload = time.time()
@@ -463,6 +572,11 @@ async def _engine_loop() -> None:
                 last_pos_sync = now
                 for engine in _engines.values():
                     await engine._sync_position()
+
+            # TP/SL watchdog (20sn) — TEYITLI olana kadar emir koy
+            if now - last_tpsl_check > TPSL_CHECK_INTERVAL:
+                last_tpsl_check = now
+                await _tpsl_watchdog()
 
             # Periyodik settings reload (60sn)
             if now - last_settings_reload > SETTINGS_RELOAD_INTERVAL:
