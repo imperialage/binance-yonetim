@@ -237,6 +237,15 @@ class SignalEngine:
         self.tp_confirmed = False
         self.sl_confirmed = False
         self.pending_order = None
+        # algo_ids.json temizle — eski TP/SL ID'leri kalmasin
+        try:
+            from app.modules.binance_client import _load_algo_ids, _save_algo_ids
+            data = _load_algo_ids()
+            if self.symbol in data:
+                data[self.symbol] = []
+                _save_algo_ids(data)
+        except Exception:
+            pass
 
     def on_position_opened(self, side: str) -> None:
         """Limit order fill → pozisyon acildi."""
