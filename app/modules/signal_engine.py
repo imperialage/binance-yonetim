@@ -78,6 +78,10 @@ class SignalEngine:
         self.warmed_up: bool = False
         self.last_signal_time: float = 0.0
 
+        # TP/SL teyit state
+        self.tp_confirmed: bool = False
+        self.sl_confirmed: bool = False
+
     # ── Warmup ──────────────────────────────────────────
     async def warmup(self) -> None:
         """Binance'tan 200 mum cek, RSI hesapla, closed_candles doldur."""
@@ -227,6 +231,8 @@ class SignalEngine:
         self.has_position = False
         self.position_side = ""
         self.trade_pending = False
+        self.tp_confirmed = False
+        self.sl_confirmed = False
 
     def on_position_opened(self, side: str) -> None:
         """Limit order fill → pozisyon acildi."""
@@ -437,6 +443,11 @@ async def _tpsl_watchdog() -> None:
         if not engine.has_position:
             continue
 
+        # Ikisi de teyitli ise kontrol etmeye gerek yok
+        sl_needed = bool(engine.settings.get("sl_enabled", 1))
+        if engine.tp_confirmed and (engine.sl_confirmed or not sl_needed):
+            continue
+
         try:
             # 1. Binance'tan pozisyon bilgisi
             positions = await get_position_risk(sym)
@@ -468,14 +479,17 @@ async def _tpsl_watchdog() -> None:
                 elif otype == "STOP_MARKET":
                     has_sl = True
 
-            if has_tp and has_sl:
-                continue  # ikisi de var, sorun yok
+            # Teyit flag'lerini guncelle
+            engine.tp_confirmed = has_tp
+            engine.sl_confirmed = has_sl
+
+            if has_tp and (has_sl or not sl_needed):
+                continue  # hepsi teyitli, sorun yok
 
             # 3. Settings'ten TP/SL fiyatlarını hesapla
             settings = await get_settings_or_defaults(sym)
             tp_pct = settings.get("tp_pct", 1.0) / 100.0
             sl_pct = settings.get("sl_pct", 0.3) / 100.0
-            sl_enabled = bool(settings.get("sl_enabled", 1))
 
             # tick_size al
             try:
@@ -505,7 +519,7 @@ async def _tpsl_watchdog() -> None:
                     if "-2021" in err_str:
                         await _watchdog_market_close(sym, exit_side, qty, "TP_PASSED")
 
-            if not has_sl and sl_enabled:
+            if not has_sl and sl_needed:
                 try:
                     await place_stop_market_order(sym, exit_side, qty, sl_price)
                     await log.ainfo("watchdog_sl_placed", symbol=sym, sl_price=sl_price, qty=qty)
@@ -516,14 +530,14 @@ async def _tpsl_watchdog() -> None:
                     if "-2021" in err_str:
                         await _watchdog_market_close(sym, exit_side, qty, "SL_PASSED")
 
-            if not has_tp or (not has_sl and sl_enabled):
+            if not has_tp or (not has_sl and sl_needed):
                 await log.awarning(
                     "watchdog_tpsl_missing",
                     symbol=sym,
                     side=engine.position_side,
                     entry=entry_price,
                     tp_missing=not has_tp,
-                    sl_missing=not has_sl and sl_enabled,
+                    sl_missing=not has_sl and sl_needed,
                 )
 
         except Exception as e:
@@ -587,9 +601,9 @@ async def _engine_loop() -> None:
     last_pos_sync = time.time()
     POS_SYNC_INTERVAL = 30
 
-    # TP/SL watchdog periyodik (20sn)
+    # TP/SL watchdog periyodik (5sn)
     last_tpsl_check = time.time()
-    TPSL_CHECK_INTERVAL = 20
+    TPSL_CHECK_INTERVAL = 5
 
     # Settings reload periyodik (60sn)
     last_settings_reload = time.time()

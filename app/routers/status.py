@@ -91,6 +91,8 @@ async def signal_engine_status() -> dict:
             "candle_low": eng.candle_low,
             "last_signal_time": eng.last_signal_time,
             "used_a_count": len(eng.used_a),
+            "tp_confirmed": eng.tp_confirmed,
+            "sl_confirmed": eng.sl_confirmed,
         })
     return {"status": "RUNNING", "task": task_status, "engines": result, "count": len(result)}
 
