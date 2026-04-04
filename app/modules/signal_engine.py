@@ -508,24 +508,43 @@ async def _tpsl_watchdog() -> None:
             is_long = pos_amt > 0
             exit_side = "SELL" if is_long else "BUY"
 
-            # 2. Mevcut açık emirleri kontrol et
-            recent_orders = await get_all_orders(sym, days=1)
+            # 2. Mevcut açık emirleri kontrol et — openOrders + algoOrder
             has_tp = False
             has_sl = False
-            for o in recent_orders:
-                if o.get("status") != "NEW":
-                    continue
-                otype = o.get("origType", o.get("type", ""))
-                if otype == "TAKE_PROFIT_MARKET":
-                    has_tp = True
-                elif otype == "STOP_MARKET":
-                    has_sl = True
+
+            # Normal open orders
+            try:
+                from app.modules.binance_client import get_client, _sign
+                client = await get_client()
+                params = _sign({"symbol": sym})
+                resp = await client.get("/fapi/v1/openOrders", params=params)
+                if resp.status_code == 200:
+                    for o in resp.json():
+                        otype = o.get("origType", o.get("type", ""))
+                        if otype == "TAKE_PROFIT_MARKET":
+                            has_tp = True
+                        elif otype == "STOP_MARKET":
+                            has_sl = True
+            except Exception:
+                pass
+
+            # Algo orders (algoOrder API ile konulanlar)
+            if not has_tp or not has_sl:
+                try:
+                    from app.modules.binance_client import _load_algo_ids
+                    algo_ids = _load_algo_ids()
+                    sym_algos = algo_ids.get(sym, [])
+                    if sym_algos:
+                        has_tp = True
+                        has_sl = True if len(sym_algos) >= 2 else has_sl
+                except Exception:
+                    pass
 
             # Teyit flag'lerini guncelle
             engine.tp_confirmed = has_tp
-            engine.sl_confirmed = has_sl
+            engine.sl_confirmed = has_sl or not sl_needed
 
-            if has_tp and (has_sl or not sl_needed):
+            if engine.tp_confirmed and engine.sl_confirmed:
                 continue  # hepsi teyitli, sorun yok
 
             # 3. Settings'ten TP/SL fiyatlarını hesapla
@@ -553,24 +572,26 @@ async def _tpsl_watchdog() -> None:
             if not has_tp:
                 try:
                     await place_take_profit_market_order(sym, exit_side, qty, tp_price)
+                    engine.tp_confirmed = True
                     await log.ainfo("watchdog_tp_placed", symbol=sym, tp_price=tp_price, qty=qty)
                 except Exception as e:
                     err_str = str(e)
                     await log.aerror("watchdog_tp_failed", symbol=sym, tp_price=tp_price, error=err_str)
-                    # "would immediately trigger" → fiyat TP'yi gecmis, market ile kapat
                     if "-2021" in err_str:
                         await _watchdog_market_close(sym, exit_side, qty, "TP_PASSED")
+                        continue
 
             if not has_sl and sl_needed:
                 try:
                     await place_stop_market_order(sym, exit_side, qty, sl_price)
+                    engine.sl_confirmed = True
                     await log.ainfo("watchdog_sl_placed", symbol=sym, sl_price=sl_price, qty=qty)
                 except Exception as e:
                     err_str = str(e)
                     await log.aerror("watchdog_sl_failed", symbol=sym, sl_price=sl_price, error=err_str)
-                    # "would immediately trigger" → fiyat SL'yi gecmis, market ile kapat
                     if "-2021" in err_str:
                         await _watchdog_market_close(sym, exit_side, qty, "SL_PASSED")
+                        continue
 
             if not has_tp or (not has_sl and sl_needed):
                 await log.awarning(

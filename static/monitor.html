@@ -181,7 +181,7 @@ tr.ob-row td:nth-child(8){color:#F6465D;font-weight:600}
 
 <script>
 var SYMS=['XAGUSDT','ETHUSDT','MYXUSDT','BTCUSDT','SOLUSDT','XRPUSDT','DOGEUSDT','AVAXUSDT'];
-var sym,tf,ws,prices={},lastPrice=0,chartData=null,adminToken='';
+var sym,tf,ws,prices={},lastPrice=0,chartData=null,adminToken='',skipMap={};
 
 function $(id){return document.getElementById(id)}
 function fmt(n,d){return n==null||isNaN(n)?'--':Number(n).toFixed(d!=null?d:4)}
@@ -258,13 +258,20 @@ async function loadData(){
         +'&start_date='+$('fStart').value+'&end_date='+$('fEnd').value;
     try{
         $('candleBody').innerHTML='<tr><td colspan="9" style="text-align:center;color:#F0B90B;padding:20px">Yukleniyor...</td></tr>';
-        // Paralel cek: chart data + binance trades
-        var [r1,r2]=await Promise.all([
+        // Paralel cek: chart data + binance trades + sinyal durumlari
+        var [r1,r2,r3]=await Promise.all([
             fetch(u),
-            fetch('/api/binance-trades?symbol='+sym+'&days=2')
+            fetch('/api/binance-trades?symbol='+sym+'&days=2'),
+            fetch('/api/st-signals?symbol='+sym+'&limit=50')
         ]);
         chartData=await r1.json();
         binanceTrades=await r2.json();
+        var stSignals=await r3.json();
+        // skip_reason map: sinyal fiyati → skip_reason
+        var skipMap={};
+        (stSignals.signals||stSignals||[]).forEach(function(s){
+            if(s.skip_reason&&s.price) skipMap[s.price]=s.skip_reason;
+        });
         if(!chartData.candles)return;
         renderAll();
     }catch(e){console.error(e)}
@@ -365,7 +372,8 @@ function renderAll(){
             var sBadge=sig.direction==='BUY'?'<span class="badge b-buy">▲ BUY</span>':'<span class="badge b-sell">▼ SELL</span>';
             var stp=sig.direction==='BUY'?sig.entry_price*(1+tpPct/100):sig.entry_price*(1-tpPct/100);
             var ssl=sig.direction==='BUY'?sig.entry_price*(1-slPct/100):sig.entry_price*(1+slPct/100);
-            html+='<tr class="sig-row"><td colspan="9" class="sig-detail">'+sBadge+' <span class="yellow">'+fmt(sig.entry_price,dec(sig.entry_price))+'</span> &nbsp; TP:<span class="green">'+fmt(stp,dec(stp))+'</span> SL:<span class="red">'+fmt(ssl,dec(ssl))+'</span> &nbsp; RSI:<span class="purple">'+fmt(sig.rsi_a,2)+'→'+fmt(sig.rsi_b,2)+'</span> ↕'+sig.gap+'</td></tr>';
+            var skipNote=skipMap[sig.entry_price]?' <span style="color:#F6465D;font-size:9px;font-weight:700">⚠ '+skipMap[sig.entry_price]+'</span>':'';
+            html+='<tr class="sig-row"><td colspan="9" class="sig-detail">'+sBadge+' <span class="yellow">'+fmt(sig.entry_price,dec(sig.entry_price))+'</span> &nbsp; TP:<span class="green">'+fmt(stp,dec(stp))+'</span> SL:<span class="red">'+fmt(ssl,dec(ssl))+'</span> &nbsp; RSI:<span class="purple">'+fmt(sig.rsi_a,2)+'→'+fmt(sig.rsi_b,2)+'</span> ↕'+sig.gap+skipNote+'</td></tr>';
             rowCls='sig-row';
         }
 

@@ -340,6 +340,23 @@ async def _timeout_watcher(symbol: str, order_id: str, timeout: int) -> None:
         reason=f"Limit order not filled in {timeout}s, cancelled",
     )
 
+    # Sinyal kaydini guncelle — "fiyat olusmadi" notu
+    try:
+        from app.modules.st_signal_logger import get_db as get_signal_db
+        db = await get_signal_db()
+        event_id = pending.get("event_id", "")
+        # event_id = "se-{row_id}-{timestamp}" formatinda
+        parts = event_id.split("-")
+        if len(parts) >= 2:
+            row_id = int(parts[1])
+            await db.execute(
+                "UPDATE signal_log SET skip_reason = ?, entered = 0 WHERE id = ?",
+                ("Fiyat olusmadi - 15dk timeout", row_id),
+            )
+            await db.commit()
+    except Exception:
+        pass
+
 
 async def _on_entry_fill(event_data: dict) -> None:
     """order_stream'den FILLED event geldi — HEMEN TP + SL koy."""
