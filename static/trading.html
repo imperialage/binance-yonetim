@@ -347,6 +347,24 @@ tr.clickable:hover{background:#1c212888}
 
   </div>
 
+  <div class="two-col">
+    <!-- Position History -->
+    <div class="panel">
+      <h2>Position History <span style="font-size:10px;color:#58a6ff;font-weight:400;text-transform:none;letter-spacing:0">(Binance)</span></h2>
+      <div class="scroll-list" id="posHistContent">
+        <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
+      </div>
+    </div>
+
+    <!-- Trade History (allOrders filled) -->
+    <div class="panel">
+      <h2>Trade History <span style="font-size:10px;color:#58a6ff;font-weight:400;text-transform:none;letter-spacing:0">(Binance)</span></h2>
+      <div class="scroll-list" id="tradeHistContent">
+        <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <!-- Signal Detail Modal -->
@@ -374,6 +392,12 @@ tr.clickable:hover{background:#1c212888}
   var allPrices = {};
   var ws = null;
   var reconnectTimer = null;
+  var orderSymFilter = 'all';
+  var txnSymFilter = 'all';
+  var posHistData = null;
+  var posHistSymFilter = 'all';
+  var tradeHistData = null;
+  var tradeHistSymFilter = 'all';
   var tradeFilter = 'all';
   var symFilter = 'all';
 
@@ -479,12 +503,30 @@ tr.clickable:hover{background:#1c212888}
     }).catch(function(){});
   }
 
+  function fetchPosHist(){
+    fetch('/api/binance-trades?days=7').then(function(r){return r.json();})
+    .then(function(data){
+      posHistData=data;
+      renderPosHist();
+    }).catch(function(){});
+  }
+
+  function fetchTradeHist(){
+    fetch('/api/order-history?days=7').then(function(r){return r.json();})
+    .then(function(data){
+      tradeHistData=data;
+      renderTradeHist();
+    }).catch(function(){});
+  }
+
   function fetchAll(){
     $('lastUpdate').textContent='Guncelleniyor...';
     fetchDiagnosis();
     fetchIncome();
     fetchSignals();
     fetchSymConfigs();
+    fetchPosHist();
+    fetchTradeHist();
   }
 
   // ── Summary Cards ──
@@ -880,6 +922,21 @@ tr.clickable:hover{background:#1c212888}
   // ── Signals Table ──
   var allSignals=[];
 
+  window.setOrderSymFilter=function(s){orderSymFilter=s;renderSignals()};
+  window.setTxnSymFilter=function(s){txnSymFilter=s;renderTrades()};
+
+  function _symFilterHtml(currentFilter, callback){
+    var syms=new Set();
+    (signalsData&&signalsData.orders||[]).forEach(function(o){if(o.symbol)syms.add(o.symbol)});
+    (incomeData&&incomeData.transactions||[]).forEach(function(t){if(t.symbol)syms.add(t.symbol)});
+    var html='<span style="cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;'+(currentFilter==='all'?'background:#F0B90B20;color:#F0B90B':'color:#6e7681')+'" onclick="'+callback+'(\'all\')">Tumu</span> ';
+    syms.forEach(function(s){
+      var active=currentFilter===s;
+      html+='<span style="cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;'+(active?'background:#F0B90B20;color:#F0B90B':'color:#6e7681')+'" onclick="'+callback+'(\''+s+'\')">'+s.replace('USDT','')+'</span> ';
+    });
+    return html;
+  }
+
   function renderSignals(){
     var orders=(signalsData&&signalsData.orders)||[];
     if(orders.length===0){
@@ -887,8 +944,12 @@ tr.clickable:hover{background:#1c212888}
       return;
     }
 
-    var html='<div class="table-scroll"><table><thead><tr><th>Zaman</th><th>Sembol</th><th>Tip</th><th>Yon</th><th>Fiyat</th><th>Ort.</th><th>Miktar</th><th>Dolum</th><th>RO</th><th>Durum</th></tr></thead><tbody>';
-    orders.forEach(function(o,idx){
+    // Sembol filtresi
+    var filtered=orderSymFilter==='all'?orders:orders.filter(function(o){return o.symbol===orderSymFilter});
+    var filterHtml='<div style="padding:4px 0;margin-bottom:4px">'+_symFilterHtml(orderSymFilter,'setOrderSymFilter')+'</div>';
+
+    var html=filterHtml+'<div class="table-scroll"><table><thead><tr><th>Zaman</th><th>Sembol</th><th>Tip</th><th>Yon</th><th>Fiyat</th><th>Ort.</th><th>Miktar</th><th>Dolum</th><th>RO</th><th>Durum</th></tr></thead><tbody>';
+    filtered.forEach(function(o,idx){
       var sideCls=o.side==='BUY'?'badge-buy':'badge-sell';
       var statusCls=o.status==='FILLED'?'color:#3fb950':o.status==='CANCELED'?'color:#6e7681':o.status==='NEW'?'color:#F0B90B':'color:#f85149';
       var dp=o.avg_price>=100?2:o.avg_price>=1?4:6;
@@ -960,11 +1021,14 @@ tr.clickable:hover{background:#1c212888}
       return;
     }
 
-    // Filter
+    // Tip filtresi
     var filtered=txns;
     if(tradeFilter==='pnl') filtered=txns.filter(function(t){return t.type==='REALIZED_PNL'});
     else if(tradeFilter==='fee') filtered=txns.filter(function(t){return t.type==='COMMISSION'});
     else if(tradeFilter==='funding') filtered=txns.filter(function(t){return t.type==='FUNDING_FEE'});
+
+    // Sembol filtresi
+    if(txnSymFilter!=='all') filtered=filtered.filter(function(t){return t.symbol===txnSymFilter});
 
     if(filtered.length===0){
       $('tradesContent').innerHTML='<div class="empty-state">Bu filtrede transaction yok</div>';
@@ -977,7 +1041,8 @@ tr.clickable:hover{background:#1c212888}
     sorted.forEach(function(t){cum+=t.income;cums.push(cum)});
     cums.reverse();
 
-    var html='<div class="table-scroll"><table><thead><tr><th>Zaman</th><th>Sembol</th><th>Tip</th><th>Tutar</th><th>Asset</th><th>Kum.</th></tr></thead><tbody>';
+    var filterHtml='<div style="padding:4px 0;margin-bottom:4px">'+_symFilterHtml(txnSymFilter,'setTxnSymFilter')+'</div>';
+    var html=filterHtml+'<div class="table-scroll"><table><thead><tr><th>Zaman</th><th>Sembol</th><th>Tip</th><th>Tutar</th><th>Asset</th><th>Kum.</th></tr></thead><tbody>';
     filtered.forEach(function(t,i){
       var cls=t.income>=0?'pnl-positive':'pnl-negative';
       var cumCls=cums[i]>=0?'pnl-positive':'pnl-negative';
@@ -1010,6 +1075,104 @@ tr.clickable:hover{background:#1c212888}
     sumHtml+='</div>';
 
     $('tradesContent').innerHTML=sumHtml+html;
+  }
+
+  // ── Position History Render ──
+  window.setPosHistSymFilter=function(s){posHistSymFilter=s;renderPosHist()};
+
+  function renderPosHist(){
+    var trades=(posHistData&&posHistData.trades)||[];
+    if(trades.length===0){
+      $('posHistContent').innerHTML='<div class="empty-state">Pozisyon gecmisi yok</div>';
+      return;
+    }
+    var filtered=posHistSymFilter==='all'?trades:trades.filter(function(t){return t.symbol===posHistSymFilter});
+
+    // Sembol filtre butonlari
+    var syms=new Set();trades.forEach(function(t){if(t.symbol)syms.add(t.symbol)});
+    var fHtml='<div style="padding:4px 0;margin-bottom:4px"><span style="cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;'+(posHistSymFilter==='all'?'background:#F0B90B20;color:#F0B90B':'color:#6e7681')+'" onclick="setPosHistSymFilter(\'all\')">Tumu</span> ';
+    syms.forEach(function(s){fHtml+='<span style="cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;'+(posHistSymFilter===s?'background:#F0B90B20;color:#F0B90B':'color:#6e7681')+'" onclick="setPosHistSymFilter(\''+s+'\')">'+s.replace('USDT','')+'</span> '});
+    fHtml+='</div>';
+
+    // Kumulatif
+    var sorted=filtered.slice().reverse();var cum=0;var cums=[];
+    sorted.forEach(function(t){cum+=t.pnl;cums.push(cum)});cums.reverse();
+
+    var totalPnl=filtered.reduce(function(s,t){return s+t.pnl},0);
+    var wins=filtered.filter(function(t){return t.pnl>0}).length;
+    var losses=filtered.filter(function(t){return t.pnl<0}).length;
+    var wr=filtered.length>0?Math.round(wins/filtered.length*100):0;
+
+    var sumHtml='<div style="display:flex;gap:12px;padding:4px 0;font-size:11px;flex-wrap:wrap">'
+      +'<span>Toplam: <strong class="'+(totalPnl>=0?'pnl-positive':'pnl-negative')+'">'+fmtUSD(totalPnl)+'</strong></span>'
+      +'<span style="color:#6e7681">'+filtered.length+' islem | W:'+wins+' L:'+losses+' | %'+wr+'</span>'
+      +'</div>';
+
+    var html=fHtml+sumHtml+'<div class="table-scroll"><table><thead><tr><th>Sembol</th><th>Yon</th><th>Giris</th><th>Cikis</th><th>Giris $</th><th>Cikis $</th><th>Tip</th><th>PnL</th><th>Kum.</th></tr></thead><tbody>';
+    filtered.forEach(function(t,i){
+      var cls=t.pnl>=0?'pnl-positive':'pnl-negative';
+      var cumCls=cums[i]>=0?'pnl-positive':'pnl-negative';
+      var sideBadge=t.side==='LONG'?'<span class="badge badge-buy">L</span>':'<span class="badge badge-sell">S</span>';
+      var exType=t.exit_type||'';
+      var exLabel=exType.indexOf('STOP')>=0?'<span style="color:#f85149">SL</span>':exType.indexOf('TAKE')>=0?'<span style="color:#3fb950">TP</span>':exType.indexOf('MARKET')>=0?'MKT':'—';
+      var dp=t.entry_price>=100?2:t.entry_price>=1?4:6;
+      html+='<tr>';
+      html+='<td><span class="badge-sym">'+(t.symbol||'').replace('USDT','')+'</span></td>';
+      html+='<td>'+sideBadge+'</td>';
+      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+(t.entry_str||'--')+'</td>';
+      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+(t.exit_str||'--')+'</td>';
+      html+='<td style="font-size:11px">'+(t.entry_price?fmt(t.entry_price,dp):'--')+'</td>';
+      html+='<td style="font-size:11px">'+(t.exit_price?fmt(t.exit_price,dp):'--')+'</td>';
+      html+='<td style="font-size:10px">'+exLabel+'</td>';
+      html+='<td class="'+cls+'" style="font-size:11px;font-weight:600">'+fmtUSD(t.pnl)+'</td>';
+      html+='<td class="'+cumCls+'" style="font-size:11px;font-weight:600">'+fmtUSD(cums[i])+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    $('posHistContent').innerHTML=html;
+  }
+
+  // ── Trade History Render (allOrders filled only) ──
+  window.setTradeHistSymFilter=function(s){tradeHistSymFilter=s;renderTradeHist()};
+
+  function renderTradeHist(){
+    var orders=(tradeHistData&&tradeHistData.orders)||[];
+    // Sadece FILLED goster
+    var filled=orders.filter(function(o){return o.status==='FILLED'});
+    if(filled.length===0){
+      $('tradeHistContent').innerHTML='<div class="empty-state">Trade gecmisi yok</div>';
+      return;
+    }
+    var filtered=tradeHistSymFilter==='all'?filled:filled.filter(function(o){return o.symbol===tradeHistSymFilter});
+
+    // Sembol filtre
+    var syms=new Set();filled.forEach(function(o){if(o.symbol)syms.add(o.symbol)});
+    var fHtml='<div style="padding:4px 0;margin-bottom:4px"><span style="cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;'+(tradeHistSymFilter==='all'?'background:#F0B90B20;color:#F0B90B':'color:#6e7681')+'" onclick="setTradeHistSymFilter(\'all\')">Tumu</span> ';
+    syms.forEach(function(s){fHtml+='<span style="cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;'+(tradeHistSymFilter===s?'background:#F0B90B20;color:#F0B90B':'color:#6e7681')+'" onclick="setTradeHistSymFilter(\''+s+'\')">'+s.replace('USDT','')+'</span> '});
+    fHtml+='</div>';
+
+    var html=fHtml+'<div class="table-scroll"><table><thead><tr><th>Zaman</th><th>Sembol</th><th>Tip</th><th>Yon</th><th>Fiyat</th><th>Ort.</th><th>Miktar</th><th>RO</th></tr></thead><tbody>';
+    filtered.forEach(function(o){
+      var sideCls=o.side==='BUY'?'badge-buy':'badge-sell';
+      var dp=o.avg_price>=100?2:o.avg_price>=1?4:6;
+      var typeLabel=o.type;
+      if(o.type==='TAKE_PROFIT_MARKET') typeLabel='TP Market';
+      else if(o.type==='STOP_MARKET') typeLabel='SL Market';
+      else if(o.type==='LIMIT') typeLabel='Limit';
+      else if(o.type==='MARKET') typeLabel='Market';
+      html+='<tr>';
+      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+o.time+'</td>';
+      html+='<td><span class="badge-sym">'+(o.symbol||'').replace('USDT','')+'</span></td>';
+      html+='<td style="font-size:10px">'+typeLabel+'</td>';
+      html+='<td><span class="badge '+sideCls+'">'+o.side+'</span></td>';
+      html+='<td style="font-size:11px">'+(o.price>0?fmt(o.price,dp):'Market')+'</td>';
+      html+='<td style="font-size:11px">'+(o.avg_price>0?fmt(o.avg_price,dp):'—')+'</td>';
+      html+='<td style="font-size:11px">'+fmt(o.filled,o.filled>=10?0:4)+'</td>';
+      html+='<td style="font-size:10px">'+(o.reduce_only?'<span style="color:#F0B90B">Yes</span>':'No')+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    $('tradeHistContent').innerHTML=html;
   }
 
   // ── Tab Handling ──

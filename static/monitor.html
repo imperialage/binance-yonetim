@@ -476,16 +476,43 @@ function renderAll(){
     $('bnTradeBody').innerHTML=bnHtml;
     $('bnTradeCnt').textContent=bnTrades.length+(bnTrades.length>0?' | Toplam: $'+fmt(bnTotalPnl,2):'');
 
-    // Position — Binance acik pozisyon varsa onu kullan
+    // Position — Binance acik pozisyon veya bekleyen emir
     var bnPos=binanceTrades&&binanceTrades.position?binanceTrades.position:null;
     if(bnPos&&bnPos.entry_price>0){
         renderBinancePosition(bnPos);
     }else{
-        renderPosition(pos);
+        // Bekleyen emir var mi kontrol et
+        renderPendingOrPosition(pos);
     }
 
     // Live candle — son mum
     if(candles.length>0) updateLiveCandleDisplay(candles[candles.length-1]);
+}
+
+// ── Bekleyen emir veya pozisyon goster ──
+async function renderPendingOrPosition(pos){
+    try{
+        var resp=await fetch('/api/signal-engine-status');
+        var data=await resp.json();
+        var engines=data.engines||[];
+        var eng=engines.find(function(e){return e.symbol===sym});
+        if(eng&&eng.pending_order&&eng.trade_pending){
+            var elapsed=eng.pending_elapsed||0;
+            var min=Math.floor(elapsed/60);var sec=elapsed%60;
+            var remaining=Math.max(0,900-elapsed);
+            var rMin=Math.floor(remaining/60);var rSec=remaining%60;
+            $('posInfo').innerHTML=
+                '<div style="text-align:center;padding:6px 0">'
+                +'<span style="color:#F0B90B;font-weight:700;font-size:12px">EMIR BEKLENIYOR</span><br>'
+                +'<span style="color:#6e7681;font-size:11px">'+sym+' | Limit emir verildi</span><br>'
+                +'<span style="font-size:13px;font-weight:600">'+min+':'+('0'+sec).slice(-2)+' gecti</span>'
+                +' <span style="color:#6e7681;font-size:10px">(kalan '+rMin+':'+('0'+rSec).slice(-2)+')</span>'
+                +'</div>';
+            $('closeBtn').style.display='none';
+            return;
+        }
+    }catch(e){}
+    renderPosition(pos);
 }
 
 // ── Position ──
@@ -890,6 +917,20 @@ function startRSIPolling(){
         }catch(e){}
     },1000);
 }
+
+// ── Pozisyon karti periyodik guncelleme (5sn) ──
+setInterval(async function(){
+    try{
+        var r=await fetch('/api/binance-trades?symbol='+sym+'&days=1');
+        var d=await r.json();
+        var bnPos=d.position;
+        if(bnPos&&bnPos.entry_price>0){
+            renderBinancePosition(bnPos);
+        }else{
+            renderPendingOrPosition(null);
+        }
+    }catch(e){}
+},5000);
 
 // ── Init ──
 sym='XAGUSDT';tf='15m';

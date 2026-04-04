@@ -81,6 +81,8 @@ class SignalEngine:
         # TP/SL teyit state
         self.tp_confirmed: bool = False
         self.sl_confirmed: bool = False
+        self.tp_price: float = 0.0
+        self.sl_price: float = 0.0
 
         # Pending order — fill takibi icin (trade_executor'dan gelir)
         self.pending_order: dict | None = None
@@ -238,6 +240,8 @@ class SignalEngine:
         self.trade_pending = False
         self.tp_confirmed = False
         self.sl_confirmed = False
+        self.tp_price = 0.0
+        self.sl_price = 0.0
         self.pending_order = None
         # algo_ids.json temizle — eski TP/SL ID'leri kalmasin
         try:
@@ -385,6 +389,7 @@ class SignalEngine:
             try:
                 await place_take_profit_market_order(self.symbol, exit_side, qty, tp_price)
                 self.tp_confirmed = True
+                self.tp_price = tp_price
                 await log.ainfo("tp_placed", symbol=self.symbol, tp_price=tp_price)
             except Exception as e:
                 err = str(e)
@@ -405,6 +410,7 @@ class SignalEngine:
                 try:
                     await place_stop_market_order(self.symbol, exit_side, qty, sl_price)
                     self.sl_confirmed = True
+                    self.sl_price = sl_price
                     await log.ainfo("sl_placed", symbol=self.symbol, sl_price=sl_price)
                 except Exception as e:
                     err = str(e)
