@@ -36,6 +36,18 @@ def _get_lock(symbol: str) -> asyncio.Lock:
     return _locks[symbol]
 
 
+def _clear_trade_pending(symbol: str) -> None:
+    """trade_pending kilidini ac — islem acilamadi, yeni sinyal aranabilir."""
+    try:
+        from app.modules.signal_engine import get_engine
+        eng = get_engine(symbol)
+        if eng:
+            eng.trade_pending = False
+            eng.pending_order = None
+    except Exception:
+        pass
+
+
 async def execute_trade(
     symbol: str,
     signal: str,
@@ -145,6 +157,7 @@ async def _execute_trade_inner(
     if (side == "BUY" and pos_amt > 0) or (side == "SELL" and pos_amt < 0):
         duration = (time.monotonic_ns() // 1_000_000) - start_ms
         log.info("same_direction_position_exists", symbol=symbol, side=side, pos_amt=pos_amt)
+        _clear_trade_pending(symbol)
         await log_trade(
             event_id=event_id,
             ts=ts,
@@ -162,6 +175,7 @@ async def _execute_trade_inner(
             # reverse_signal kapali → ters sinyal skip, TP/SL ile kapanmasini bekle
             duration = (time.monotonic_ns() // 1_000_000) - start_ms
             log.info("opposite_position_exists_skip", symbol=symbol, side=side, pos_amt=pos_amt)
+            _clear_trade_pending(symbol)
             await log_trade(
                 event_id=event_id,
                 ts=ts,
@@ -208,6 +222,7 @@ async def _execute_trade_inner(
     balance = await get_usdt_balance()
     if balance <= 0:
         duration = (time.monotonic_ns() // 1_000_000) - start_ms
+        _clear_trade_pending(symbol)
         await log_trade(
             event_id=event_id,
             ts=ts,
@@ -222,6 +237,7 @@ async def _execute_trade_inner(
     # ── 7. Calculate quantity ────────────────────────
     if price <= 0:
         duration = (time.monotonic_ns() // 1_000_000) - start_ms
+        _clear_trade_pending(symbol)
         await log_trade(
             event_id=event_id,
             ts=ts,
@@ -241,6 +257,7 @@ async def _execute_trade_inner(
 
     if quantity < min_qty:
         duration = (time.monotonic_ns() // 1_000_000) - start_ms
+        _clear_trade_pending(symbol)
         await log_trade(
             event_id=event_id,
             ts=ts,
