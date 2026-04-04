@@ -400,6 +400,48 @@ class SignalEngine:
 # Engine lifecycle
 # ══════════════════════════════════════════════════════════
 
+async def _cleanup_orphan_limit_orders() -> None:
+    """Startup: pozisyon yokken acik kalmis LIMIT emirlerini iptal et."""
+    from app.modules.binance_client import get_position_risk, get_all_orders, cancel_order
+
+    for sym, engine in _engines.items():
+        try:
+            # Pozisyon var mi?
+            positions = await get_position_risk(sym)
+            pos_amt = 0.0
+            for p in positions:
+                if p.get("symbol") == sym:
+                    pos_amt = float(p.get("positionAmt", 0))
+                    break
+
+            # Acik emirleri kontrol et
+            orders = await get_all_orders(sym, days=1)
+            for o in orders:
+                if o.get("status") != "NEW":
+                    continue
+                otype = o.get("origType", o.get("type", ""))
+                oid = o.get("orderId")
+
+                # Pozisyon yokken LIMIT emri duruyorsa → orphan, iptal et
+                if otype == "LIMIT" and pos_amt == 0:
+                    try:
+                        await cancel_order(sym, int(oid))
+                        await log.ainfo("orphan_limit_cancelled", symbol=sym, order_id=oid)
+                    except Exception as e:
+                        await log.awarning("orphan_limit_cancel_error", symbol=sym, order_id=oid, error=str(e))
+
+                # Pozisyon varken reduceOnly olmayan LIMIT emri → yeni pozisyon acma girişimi, iptal
+                elif otype == "LIMIT" and pos_amt != 0 and not o.get("reduceOnly"):
+                    try:
+                        await cancel_order(sym, int(oid))
+                        await log.ainfo("orphan_entry_limit_cancelled", symbol=sym, order_id=oid)
+                    except Exception as e:
+                        await log.awarning("orphan_entry_cancel_error", symbol=sym, order_id=oid, error=str(e))
+
+        except Exception as e:
+            await log.awarning("orphan_cleanup_error", symbol=sym, error=str(e))
+
+
 async def _watchdog_market_close(symbol: str, side: str, qty: float, reason: str) -> None:
     """Fiyat TP/SL'yi asmis — pozisyonu market ile kapat."""
     from app.modules.binance_client import place_market_order, cancel_all_open_orders
@@ -593,7 +635,8 @@ async def _engine_loop() -> None:
 
     await log.ainfo("signal_engine_started", symbols=list(_engines.keys()))
 
-    # Startup: hemen TP/SL watchdog calistir (deploy sonrasi koruma)
+    # Startup: orphan limit emirleri temizle + TP/SL watchdog
+    await _cleanup_orphan_limit_orders()
     await _tpsl_watchdog()
     await log.ainfo("signal_engine_startup_watchdog_done")
 
@@ -654,6 +697,8 @@ async def _engine_loop() -> None:
                         if sym not in active_syms:
                             del _engines[sym]
                             await log.ainfo("signal_engine_removed", symbol=sym)
+                    # Periyodik orphan limit temizligi (settings reload ile birlikte, 60sn)
+                    await _cleanup_orphan_limit_orders()
                 except Exception as e:
                     await log.awarning("signal_engine_settings_reload_error", error=str(e))
 
