@@ -82,6 +82,9 @@ class SignalEngine:
         self.tp_confirmed: bool = False
         self.sl_confirmed: bool = False
 
+        # Pending order — fill takibi icin (trade_executor'dan gelir)
+        self.pending_order: dict | None = None
+
     # ── Warmup ──────────────────────────────────────────
     async def warmup(self) -> None:
         """Binance'tan 200 mum cek, RSI hesapla, closed_candles doldur."""
@@ -233,6 +236,7 @@ class SignalEngine:
         self.trade_pending = False
         self.tp_confirmed = False
         self.sl_confirmed = False
+        self.pending_order = None
 
     def on_position_opened(self, side: str) -> None:
         """Limit order fill → pozisyon acildi."""
@@ -243,6 +247,158 @@ class SignalEngine:
     def on_trade_pending(self) -> None:
         """execute_trade cagrildi, fill bekleniyor."""
         self.trade_pending = True
+
+    async def check_pending_fill(self) -> None:
+        """trade_pending ise: Binance'tan pozisyon kontrol et, fill olduysa TP/SL koy."""
+        if not self.trade_pending or not self.pending_order:
+            return
+
+        po = self.pending_order
+
+        # Timeout kontrolu (15dk)
+        elapsed = time.time() - po["start_time"]
+        if elapsed > po["timeout"]:
+            # Limit order'i iptal et
+            try:
+                from app.modules.binance_client import cancel_order
+                await cancel_order(self.symbol, int(po["order_id"]))
+                await log.ainfo("pending_timeout_cancelled", symbol=self.symbol, order_id=po["order_id"])
+            except Exception:
+                pass
+            # Sinyal kaydini guncelle
+            try:
+                from app.modules.st_signal_logger import get_db as get_signal_db
+                db = await get_signal_db()
+                parts = po.get("event_id", "").split("-")
+                if len(parts) >= 2:
+                    row_id = int(parts[1])
+                    await db.execute(
+                        "UPDATE signal_log SET skip_reason = ?, entered = 0 WHERE id = ?",
+                        ("Fiyat olusmadi - 15dk timeout", row_id),
+                    )
+                    await db.commit()
+            except Exception:
+                pass
+            self.trade_pending = False
+            self.pending_order = None
+            await log.ainfo("pending_timeout", symbol=self.symbol, elapsed=int(elapsed))
+            return
+
+        # Binance'tan gercek pozisyon kontrol (tek API call)
+        try:
+            from app.modules.binance_client import get_position_risk
+            positions = await get_position_risk(self.symbol)
+            pos_amt = 0.0
+            entry_price = 0.0
+            for p in positions:
+                if p.get("symbol") == self.symbol:
+                    pos_amt = float(p.get("positionAmt", 0))
+                    entry_price = float(p.get("entryPrice", 0))
+                    break
+
+            if pos_amt == 0:
+                return  # henuz dolmamis, beklemeye devam
+
+            # FILL OLMUS! Gercek bilgiler:
+            qty = abs(pos_amt)
+            side = po["side"]
+            is_long = pos_amt > 0
+            tick_size = po["tick_size"]
+            sl_enabled = po["sl_enabled"]
+
+            await log.ainfo(
+                "pending_fill_detected",
+                symbol=self.symbol,
+                side=side,
+                entry_price=entry_price,
+                qty=qty,
+            )
+
+            # Pozisyon state guncelle
+            self.has_position = True
+            self.position_side = "LONG" if is_long else "SHORT"
+            self.trade_pending = False
+            self.pending_order = None
+
+            # TP/SL hesapla
+            from app.modules.indicator_settings_store import get_settings_or_defaults
+            from app.modules.binance_client import (
+                round_price, place_take_profit_market_order,
+                place_stop_market_order, place_market_order,
+                cancel_all_open_orders,
+            )
+            sym_cfg = await get_settings_or_defaults(self.symbol)
+            tp_pct = sym_cfg.get("tp_pct", 1.0) / 100.0
+            sl_pct = sym_cfg.get("sl_pct", 0.3) / 100.0
+
+            if is_long:
+                tp_price = round_price(entry_price * (1 + tp_pct), tick_size)
+                sl_price = round_price(entry_price * (1 - sl_pct), tick_size)
+                exit_side = "SELL"
+            else:
+                tp_price = round_price(entry_price * (1 - tp_pct), tick_size)
+                sl_price = round_price(entry_price * (1 + sl_pct), tick_size)
+                exit_side = "BUY"
+
+            # TP koy
+            try:
+                await place_take_profit_market_order(self.symbol, exit_side, qty, tp_price)
+                self.tp_confirmed = True
+                await log.ainfo("tp_placed", symbol=self.symbol, tp_price=tp_price)
+            except Exception as e:
+                err = str(e)
+                await log.aerror("tp_place_failed", symbol=self.symbol, error=err)
+                if "-2021" in err:
+                    # Fiyat TP'yi asmis — market ile kapat (karda)
+                    try:
+                        await cancel_all_open_orders(self.symbol)
+                        await place_market_order(self.symbol, exit_side, qty, reduce_only=True)
+                        self.on_position_closed()
+                        await log.ainfo("tp_passed_market_close", symbol=self.symbol)
+                    except Exception as e2:
+                        await log.aerror("tp_passed_close_failed", symbol=self.symbol, error=str(e2))
+                    return
+
+            # SL koy
+            if sl_enabled:
+                try:
+                    await place_stop_market_order(self.symbol, exit_side, qty, sl_price)
+                    self.sl_confirmed = True
+                    await log.ainfo("sl_placed", symbol=self.symbol, sl_price=sl_price)
+                except Exception as e:
+                    err = str(e)
+                    await log.aerror("sl_place_failed", symbol=self.symbol, error=err)
+                    if "-2021" in err:
+                        # Fiyat SL'yi asmis — market ile kapat (zararda)
+                        try:
+                            await cancel_all_open_orders(self.symbol)
+                            await place_market_order(self.symbol, exit_side, qty, reduce_only=True)
+                            self.on_position_closed()
+                            await log.ainfo("sl_passed_market_close", symbol=self.symbol)
+                        except Exception as e2:
+                            await log.aerror("sl_passed_close_failed", symbol=self.symbol, error=str(e2))
+                        return
+            else:
+                self.sl_confirmed = True
+
+            # Trade log
+            from app.modules.trade_store import log_trade
+            await log_trade(
+                event_id=po.get("event_id", ""),
+                ts=int(time.time()),
+                symbol=self.symbol,
+                side=side,
+                quantity=qty,
+                entry_price=entry_price,
+                stop_price=sl_price if sl_enabled else None,
+                order_id=po.get("order_id", ""),
+                status="FILLED",
+                closed_previous=po.get("closed_previous", False),
+                balance_used=po.get("balance", 0),
+            )
+
+        except Exception as e:
+            await log.aerror("check_pending_fill_error", symbol=self.symbol, error=str(e))
 
     # ── Ana tick handler ─────────────────────────────────
     async def on_price_tick(self, price: float) -> dict | None:
@@ -665,9 +821,13 @@ async def _engine_loop() -> None:
     last_pos_sync = time.time()
     POS_SYNC_INTERVAL = 30
 
-    # TP/SL watchdog periyodik (5sn)
+    # Fill takip periyodik (2sn) — pending order varsa Binance'tan kontrol
+    last_fill_check = time.time()
+    FILL_CHECK_INTERVAL = 2
+
+    # TP/SL watchdog periyodik (10sn) — yedek guevenlik
     last_tpsl_check = time.time()
-    TPSL_CHECK_INTERVAL = 5
+    TPSL_CHECK_INTERVAL = 10
 
     # Settings reload periyodik (60sn)
     last_settings_reload = time.time()
@@ -680,13 +840,20 @@ async def _engine_loop() -> None:
 
             now = time.time()
 
+            # Fill takip (2sn) — pending order varsa Binance'tan kontrol + TP/SL koy
+            if now - last_fill_check > FILL_CHECK_INTERVAL:
+                last_fill_check = now
+                for engine in _engines.values():
+                    if engine.trade_pending:
+                        await engine.check_pending_fill()
+
             # Periyodik pozisyon sync (30sn)
             if now - last_pos_sync > POS_SYNC_INTERVAL:
                 last_pos_sync = now
                 for engine in _engines.values():
                     await engine._sync_position()
 
-            # TP/SL watchdog (20sn) — TEYITLI olana kadar emir koy
+            # TP/SL watchdog (10sn) — yedek guevenlik
             if now - last_tpsl_check > TPSL_CHECK_INTERVAL:
                 last_tpsl_check = now
                 await _tpsl_watchdog()

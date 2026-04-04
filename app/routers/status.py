@@ -93,6 +93,8 @@ async def signal_engine_status() -> dict:
             "used_a_count": len(eng.used_a),
             "tp_confirmed": eng.tp_confirmed,
             "sl_confirmed": eng.sl_confirmed,
+            "pending_order": bool(eng.pending_order),
+            "pending_elapsed": int(time.time() - eng.pending_order["start_time"]) if eng.pending_order else 0,
         })
     return {"status": "RUNNING", "task": task_status, "engines": result, "count": len(result)}
 
