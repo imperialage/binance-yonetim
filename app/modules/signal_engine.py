@@ -394,6 +394,33 @@ class SignalEngine:
 # Engine lifecycle
 # ══════════════════════════════════════════════════════════
 
+async def _watchdog_market_close(symbol: str, side: str, qty: float, reason: str) -> None:
+    """Fiyat TP/SL'yi asmis — pozisyonu market ile kapat."""
+    from app.modules.binance_client import place_market_order, cancel_all_open_orders
+    try:
+        # Once mevcut emirleri temizle
+        try:
+            await cancel_all_open_orders(symbol)
+        except Exception:
+            pass
+        # Market ile kapat
+        result = await place_market_order(symbol, side, qty, reduce_only=True)
+        await log.ainfo(
+            "watchdog_market_close",
+            symbol=symbol,
+            side=side,
+            qty=qty,
+            reason=reason,
+            order_id=result.get("orderId", ""),
+        )
+        # Engine state guncelle
+        engine = _engines.get(symbol)
+        if engine:
+            engine.on_position_closed()
+    except Exception as e:
+        await log.aerror("watchdog_market_close_failed", symbol=symbol, reason=reason, error=str(e))
+
+
 async def _tpsl_watchdog() -> None:
     """Acik pozisyonlar icin TP/SL emirlerini kontrol et — eksikse koy.
 
@@ -472,14 +499,22 @@ async def _tpsl_watchdog() -> None:
                     await place_take_profit_market_order(sym, exit_side, qty, tp_price)
                     await log.ainfo("watchdog_tp_placed", symbol=sym, tp_price=tp_price, qty=qty)
                 except Exception as e:
-                    await log.aerror("watchdog_tp_failed", symbol=sym, tp_price=tp_price, error=str(e))
+                    err_str = str(e)
+                    await log.aerror("watchdog_tp_failed", symbol=sym, tp_price=tp_price, error=err_str)
+                    # "would immediately trigger" → fiyat TP'yi gecmis, market ile kapat
+                    if "-2021" in err_str:
+                        await _watchdog_market_close(sym, exit_side, qty, "TP_PASSED")
 
             if not has_sl and sl_enabled:
                 try:
                     await place_stop_market_order(sym, exit_side, qty, sl_price)
                     await log.ainfo("watchdog_sl_placed", symbol=sym, sl_price=sl_price, qty=qty)
                 except Exception as e:
-                    await log.aerror("watchdog_sl_failed", symbol=sym, sl_price=sl_price, error=str(e))
+                    err_str = str(e)
+                    await log.aerror("watchdog_sl_failed", symbol=sym, sl_price=sl_price, error=err_str)
+                    # "would immediately trigger" → fiyat SL'yi gecmis, market ile kapat
+                    if "-2021" in err_str:
+                        await _watchdog_market_close(sym, exit_side, qty, "SL_PASSED")
 
             if not has_tp or (not has_sl and sl_enabled):
                 await log.awarning(
