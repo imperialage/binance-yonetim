@@ -571,10 +571,14 @@ class SignalEngine:
 # ══════════════════════════════════════════════════════════
 
 async def _cleanup_orphan_limit_orders() -> None:
-    """Startup: pozisyon yokken acik kalmis LIMIT emirlerini iptal et."""
+    """Startup: pozisyon yokken VE pending_order yokken acik kalmis LIMIT emirlerini iptal et."""
     from app.modules.binance_client import get_position_risk, get_all_orders, cancel_order
 
     for sym, engine in _engines.items():
+        # trade_pending veya pending_order varsa → bu emir bizim, dokunma
+        if engine.trade_pending or engine.pending_order:
+            continue
+
         try:
             # Pozisyon var mi?
             positions = await get_position_risk(sym)

@@ -61,10 +61,10 @@ async def server_ip() -> dict:
         return {"ip": resp.text.strip()}
 
 
-@router.get("/api/order-history")
-async def api_order_history(symbol: str = "", days: int = 1) -> dict:
-    """Binance order history — Binance ekranindaki gibi raw emir listesi."""
-    from app.modules.binance_client import get_all_orders
+@router.get("/api/transaction-history")
+async def api_transaction_history(symbol: str = "", days: int = 1) -> dict:
+    """Binance Transaction History — tum hareketler (PnL, commission, funding, transfer)."""
+    from app.modules.binance_client import get_client, _sign
     from app.modules.indicator_settings_store import get_all_settings
     from datetime import datetime, timezone, timedelta
 
@@ -79,34 +79,50 @@ async def api_order_history(symbol: str = "", days: int = 1) -> dict:
         except Exception:
             symbols = ["ETHUSDT", "MYXUSDT", "XAGUSDT"]
 
-    all_orders = []
+    all_records = []
+    client = await get_client()
+    start_time = int((time.time() - days * 86400) * 1000)
+
     for sym in symbols:
         try:
-            orders = await get_all_orders(sym, days=days)
-            for o in orders:
-                status = o.get("status", "")
-                if status not in ("FILLED", "CANCELED", "EXPIRED", "NEW"):
-                    continue
-                update_time = int(o.get("updateTime", 0))
-                all_orders.append({
-                    "time": datetime.fromtimestamp(update_time / 1000, tz=tz_ist).strftime("%Y-%m-%d %H:%M:%S") if update_time else "",
-                    "symbol": sym,
-                    "type": o.get("origType", o.get("type", "")),
-                    "side": o.get("side", ""),
-                    "price": float(o.get("price", 0)),
-                    "avg_price": float(o.get("avgPrice", 0)),
-                    "quantity": float(o.get("origQty", 0)),
-                    "filled": float(o.get("executedQty", 0)),
-                    "reduce_only": o.get("reduceOnly", False),
-                    "stop_price": float(o.get("stopPrice", 0)),
-                    "status": status,
-                    "update_time": update_time,
-                })
+            # incomeType bos = tum tipler (REALIZED_PNL, COMMISSION, FUNDING_FEE, TRANSFER, vb.)
+            cursor = start_time
+            for _ in range(10):
+                params = _sign({"symbol": sym, "startTime": cursor, "limit": 1000})
+                resp = await client.get("/fapi/v1/income", params=params)
+                if resp.status_code != 200:
+                    break
+                batch = resp.json()
+                if not batch:
+                    break
+                for r in batch:
+                    t = int(r.get("time", 0))
+                    all_records.append({
+                        "time": datetime.fromtimestamp(t / 1000, tz=tz_ist).strftime("%Y-%m-%d %H:%M:%S") if t else "",
+                        "symbol": r.get("symbol", sym),
+                        "type": r.get("incomeType", ""),
+                        "income": float(r.get("income", 0)),
+                        "asset": r.get("asset", "USDT"),
+                        "info": r.get("info", ""),
+                        "time_ms": t,
+                    })
+                if len(batch) < 1000:
+                    break
+                cursor = int(batch[-1].get("time", 0)) + 1
         except Exception:
             continue
 
-    all_orders.sort(key=lambda x: x.get("update_time", 0), reverse=True)
-    return {"orders": all_orders, "count": len(all_orders)}
+    all_records.sort(key=lambda x: x.get("time_ms", 0), reverse=True)
+
+    # Ozet
+    summary = {}
+    total = 0.0
+    for r in all_records:
+        typ = r["type"]
+        summary[typ] = summary.get(typ, 0) + r["income"]
+        total += r["income"]
+
+    return {"transactions": all_records, "count": len(all_records), "summary": summary, "total": round(total, 6)}
 
 
 @router.get("/api/signal-engine-status")
