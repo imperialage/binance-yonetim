@@ -125,6 +125,54 @@ async def api_transaction_history(symbol: str = "", days: int = 1) -> dict:
     return {"transactions": all_records, "count": len(all_records), "summary": summary, "total": round(total, 6)}
 
 
+@router.get("/api/order-history")
+async def api_order_history(symbol: str = "", days: int = 1) -> dict:
+    """Binance order history — tum emirler (filled, cancelled, new)."""
+    from app.modules.binance_client import get_all_orders
+    from app.modules.indicator_settings_store import get_all_settings
+    from datetime import datetime, timezone, timedelta
+
+    tz_ist = timezone(timedelta(hours=3))
+
+    if symbol:
+        symbols = [symbol.upper()]
+    else:
+        try:
+            all_s = await get_all_settings()
+            symbols = [s["symbol"] for s in all_s if s.get("active")]
+        except Exception:
+            symbols = ["ETHUSDT", "MYXUSDT", "XAGUSDT"]
+
+    all_orders = []
+    for sym in symbols:
+        try:
+            orders = await get_all_orders(sym, days=days)
+            for o in orders:
+                status = o.get("status", "")
+                if status not in ("FILLED", "CANCELED", "EXPIRED", "NEW"):
+                    continue
+                update_time = int(o.get("updateTime", 0))
+                all_orders.append({
+                    "time": datetime.fromtimestamp(update_time / 1000, tz=tz_ist).strftime("%Y-%m-%d %H:%M:%S") if update_time else "",
+                    "symbol": sym,
+                    "type": o.get("origType", o.get("type", "")),
+                    "side": o.get("side", ""),
+                    "price": float(o.get("price", 0)),
+                    "avg_price": float(o.get("avgPrice", 0)),
+                    "quantity": float(o.get("origQty", 0)),
+                    "filled": float(o.get("executedQty", 0)),
+                    "reduce_only": o.get("reduceOnly", False),
+                    "stop_price": float(o.get("stopPrice", 0)),
+                    "status": status,
+                    "update_time": update_time,
+                })
+        except Exception:
+            continue
+
+    all_orders.sort(key=lambda x: x.get("update_time", 0), reverse=True)
+    return {"orders": all_orders, "count": len(all_orders)}
+
+
 @router.get("/api/signal-engine-status")
 async def signal_engine_status() -> dict:
     """Signal engine durumu — debug icin."""
