@@ -268,149 +268,183 @@ async def _execute_trade_inner(
         timeout=LIMIT_TIMEOUT,
     )
 
-    # Polling — fill bekle (max 15dk)
-    filled = False
-    entry_price = limit_price
-    elapsed = 0
+    # ── 8b. Fill callback kaydet — order_stream FILLED event'inde TP/SL konacak ──
+    _pending_trades[symbol] = {
+        "symbol": symbol,
+        "side": side,
+        "quantity": quantity,
+        "limit_price": limit_price,
+        "order_id": order_id,
+        "event_id": event_id,
+        "tf": tf,
+        "tick_size": tick_size,
+        "sl_enabled": sl_enabled,
+        "reverse_signal": reverse_signal,
+        "start_ms": start_ms,
+        "closed_previous": closed_previous,
+        "balance": balance,
+        "signal_price": price,
+    }
 
-    while elapsed < LIMIT_TIMEOUT:
-        await asyncio.sleep(POLL_INTERVAL)
-        elapsed += POLL_INTERVAL
+    from app.modules.order_stream import register_fill_callback
+    register_fill_callback(symbol, _on_entry_fill)
 
-        try:
-            status = await get_order_status(symbol, int(order_id))
-            order_status = status.get("status", "")
+    # ── 8c. Timeout gorevi — 15dk sonra dolmadiysa iptal ──
+    asyncio.create_task(_timeout_watcher(symbol, order_id, LIMIT_TIMEOUT))
 
-            if order_status == "FILLED":
-                filled = True
-                entry_price = float(status.get("avgPrice", 0)) or limit_price
-                log.info("limit_order_filled", symbol=symbol, price=entry_price, elapsed=elapsed)
-                break
-            elif order_status in ("CANCELED", "CANCELLED", "EXPIRED", "REJECTED"):
-                log.info("limit_order_cancelled_external", symbol=symbol, status=order_status)
-                break
-        except Exception as e:
-            log.warning("limit_poll_error", symbol=symbol, error=str(e))
+    # execute_trade burada BITER — TP/SL callback'te konacak
+    return
 
-    # Fill olmadiysa → iptal et, signal_engine'e bildir, yeni sinyal bekle
-    if not filled:
-        try:
-            await cancel_order(symbol, int(order_id))
-            log.info("limit_order_timeout_cancelled", symbol=symbol, order_id=order_id, elapsed=elapsed)
-        except Exception as e:
-            log.warning("limit_cancel_error", symbol=symbol, error=str(e))
 
-        # signal_engine'e trade_pending temizle
-        try:
-            from app.modules.signal_engine import get_engine
-            engine = get_engine(symbol)
-            if engine:
-                engine.trade_pending = False
-        except Exception:
-            pass
+# ── Pending trades — fill callback icin bilgi deposu ──
+_pending_trades: dict[str, dict] = {}
 
-        duration = (time.monotonic_ns() // 1_000_000) - start_ms
-        await log_trade(
-            event_id=event_id,
-            ts=ts,
-            symbol=symbol,
-            side=side,
-            quantity=quantity,
-            entry_price=limit_price,
-            order_id=order_id,
-            status="TIMEOUT",
-            reason=f"Limit order not filled in {LIMIT_TIMEOUT}s, cancelled",
-            duration_ms=duration,
-        )
+
+async def _timeout_watcher(symbol: str, order_id: str, timeout: int) -> None:
+    """Limit order timeout — dolmadiysa iptal et."""
+    await asyncio.sleep(timeout)
+
+    # Hala pending mi?
+    pending = _pending_trades.pop(symbol, None)
+    if not pending:
+        return  # callback zaten isledi, sorun yok
+
+    from app.modules.order_stream import unregister_fill_callback
+    unregister_fill_callback(symbol)
+
+    # Emri iptal et
+    try:
+        await cancel_order(symbol, int(order_id))
+        log.info("limit_order_timeout_cancelled", symbol=symbol, order_id=order_id)
+    except Exception as e:
+        log.warning("limit_cancel_error", symbol=symbol, error=str(e))
+
+    # signal_engine'e trade_pending temizle
+    try:
+        from app.modules.signal_engine import get_engine
+        engine = get_engine(symbol)
+        if engine:
+            engine.trade_pending = False
+    except Exception:
+        pass
+
+    await log_trade(
+        event_id=pending.get("event_id", ""),
+        ts=int(time.time()),
+        symbol=symbol,
+        side=pending.get("side", ""),
+        quantity=pending.get("quantity", 0),
+        entry_price=pending.get("limit_price", 0),
+        order_id=order_id,
+        status="TIMEOUT",
+        reason=f"Limit order not filled in {timeout}s, cancelled",
+    )
+
+
+async def _on_entry_fill(event_data: dict) -> None:
+    """order_stream'den FILLED event geldi — HEMEN TP + SL koy."""
+    symbol = event_data.get("symbol", "")
+    pending = _pending_trades.pop(symbol, None)
+    if not pending:
         return
 
+    from app.modules.order_stream import unregister_fill_callback
+    unregister_fill_callback(symbol)
+
+    avg_price = float(event_data.get("avg_price", 0))
+    filled_qty = float(event_data.get("qty", 0)) or pending["quantity"]
+    side = pending["side"]
+    tick_size = pending["tick_size"]
+    sl_enabled = pending["sl_enabled"]
+    event_id = pending["event_id"]
+    tf = pending["tf"]
+    start_ms = pending["start_ms"]
+
     # Gercek giris fiyatini pozisyondan dogrula
-    await asyncio.sleep(0.3)
-    pos_data = await get_position_risk(symbol)
-    for p in pos_data:
-        if p.get("symbol") == symbol:
-            real_entry = float(p.get("entryPrice", 0))
-            if real_entry > 0:
-                entry_price = real_entry
-            break
+    entry_price = avg_price or pending["limit_price"]
+    try:
+        await asyncio.sleep(0.2)
+        pos_data = await get_position_risk(symbol)
+        for p in pos_data:
+            if p.get("symbol") == symbol:
+                real_entry = float(p.get("entryPrice", 0))
+                if real_entry > 0:
+                    entry_price = real_entry
+                filled_qty = abs(float(p.get("positionAmt", 0))) or filled_qty
+                break
+    except Exception:
+        pass
 
     log.info(
         "trade_entry_confirmed",
         symbol=symbol,
         side=side,
         tf=tf,
-        quantity=quantity,
+        quantity=filled_qty,
         entry_price=entry_price,
-        signal_price=price,
-        limit_price=limit_price,
-        order_id=order_id,
+        signal_price=pending["signal_price"],
+        limit_price=pending["limit_price"],
+        order_id=pending["order_id"],
     )
 
-    # ── 9. Place TP + SL ────────────────────────────────
-    # TP/SL indicator_settings'ten gelir (yuzde olarak: 1.0 = %1)
-    # execute_trade'e oran olarak gonderilir (0.01 = %1)
-    if tp_pct is None:
-        tp_pct = sym_cfg.get("tp_pct", 1.0) / 100.0
-    if sl_pct is None and sl_enabled:
-        sl_pct = sym_cfg.get("sl_pct", 0.3) / 100.0
-    elif sl_pct is None:
-        sl_pct = 0.0
+    # ── TP/SL hesapla ──
+    from app.modules.indicator_settings_store import get_settings_or_defaults
+    sym_cfg = await get_settings_or_defaults(symbol)
+    tp_pct = sym_cfg.get("tp_pct", 1.0) / 100.0
+    sl_pct = sym_cfg.get("sl_pct", 0.3) / 100.0
 
     if side == "BUY":
-        raw_tp = entry_price * (1 + tp_pct)
-        raw_sl = entry_price * (1 - sl_pct)
+        tp_price = round_price(entry_price * (1 + tp_pct), tick_size)
+        sl_price = round_price(entry_price * (1 - sl_pct), tick_size)
         exit_side = "SELL"
     else:
-        raw_tp = entry_price * (1 - tp_pct)
-        raw_sl = entry_price * (1 + sl_pct)
+        tp_price = round_price(entry_price * (1 - tp_pct), tick_size)
+        sl_price = round_price(entry_price * (1 + sl_pct), tick_size)
         exit_side = "BUY"
 
-    tp_price = round_price(raw_tp, tick_size)
-    sl_price = round_price(raw_sl, tick_size)
-
-    # TP her zaman konur
+    # ── TP koy (retry ile) ──
     tp_order_id = None
-    try:
-        tp_result = await place_take_profit_market_order(symbol, exit_side, quantity, tp_price)
-        tp_order_id = str(tp_result.get("algoId", tp_result.get("orderId", "")))
-        log.info("take_profit_placed", symbol=symbol, tp_price=tp_price)
-    except Exception as e:
-        log.error("take_profit_failed", symbol=symbol, error=str(e))
-
-    # SL sadece sl_enabled ise konur (reverse_signal acikken sl_enabled=False)
-    sl_order_id = None
-    log.info(
-        "sl_decision",
-        symbol=symbol,
-        sl_enabled=sl_enabled,
-        reverse_signal=reverse_signal,
-        will_place_sl=sl_enabled,
-    )
-    if sl_enabled:
+    for attempt in range(3):
         try:
-            sl_result = await place_stop_market_order(symbol, exit_side, quantity, sl_price)
-            sl_order_id = str(sl_result.get("algoId", sl_result.get("orderId", "")))
-            log.info("stop_loss_placed", symbol=symbol, sl_price=sl_price)
+            tp_result = await place_take_profit_market_order(symbol, exit_side, filled_qty, tp_price)
+            tp_order_id = str(tp_result.get("algoId", tp_result.get("orderId", "")))
+            log.info("take_profit_placed", symbol=symbol, tp_price=tp_price, attempt=attempt)
+            break
         except Exception as e:
-            log.error("stop_loss_failed", symbol=symbol, error=str(e))
+            log.error("take_profit_failed", symbol=symbol, tp_price=tp_price, attempt=attempt, error=str(e))
+            if attempt < 2:
+                await asyncio.sleep(1)
+
+    # ── SL koy (retry ile) ──
+    sl_order_id = None
+    if sl_enabled:
+        for attempt in range(3):
+            try:
+                sl_result = await place_stop_market_order(symbol, exit_side, filled_qty, sl_price)
+                sl_order_id = str(sl_result.get("algoId", sl_result.get("orderId", "")))
+                log.info("stop_loss_placed", symbol=symbol, sl_price=sl_price, attempt=attempt)
+                break
+            except Exception as e:
+                log.error("stop_loss_failed", symbol=symbol, sl_price=sl_price, attempt=attempt, error=str(e))
+                if attempt < 2:
+                    await asyncio.sleep(1)
     else:
-        log.info("stop_loss_skipped", symbol=symbol, sl_enabled=False, reverse_signal=reverse_signal)
         sl_price = 0.0
 
-    # ── 10. Log trade ────────────────────────────────
+    # ── Log trade ──
     duration = (time.monotonic_ns() // 1_000_000) - start_ms
     await log_trade(
         event_id=event_id,
-        ts=ts,
+        ts=int(time.time()),
         symbol=symbol,
         side=side,
-        quantity=quantity,
+        quantity=filled_qty,
         entry_price=entry_price,
         stop_price=sl_price if sl_enabled else None,
-        order_id=order_id,
+        order_id=pending["order_id"],
         stop_order_id=sl_order_id,
         status="FILLED",
-        closed_previous=closed_previous,
-        balance_used=balance,
+        closed_previous=pending["closed_previous"],
+        balance_used=pending["balance"],
         duration_ms=duration,
     )
