@@ -61,6 +61,40 @@ async def server_ip() -> dict:
         return {"ip": resp.text.strip()}
 
 
+@router.get("/api/signal-engine-status")
+async def signal_engine_status() -> dict:
+    """Signal engine durumu — debug icin."""
+    from app.modules.signal_engine import get_all_engines, _engine_task
+    engines = get_all_engines()
+    task_status = "NO_TASK"
+    if _engine_task is not None:
+        if _engine_task.done():
+            exc = _engine_task.exception() if not _engine_task.cancelled() else None
+            task_status = f"DONE_ERROR: {exc}" if exc else "DONE_OK"
+        else:
+            task_status = "RUNNING"
+    if not engines:
+        return {"status": "NOT_RUNNING", "task": task_status, "engines": [], "count": 0}
+    result = []
+    for sym, eng in engines.items():
+        result.append({
+            "symbol": sym,
+            "warmed_up": eng.warmed_up,
+            "has_position": eng.has_position,
+            "position_side": eng.position_side,
+            "trade_pending": eng.trade_pending,
+            "signal_fired_this_bar": eng.signal_fired_this_bar,
+            "interval": eng.interval,
+            "closed_candles": len(eng.closed_candles),
+            "rsi_warmed_up": eng.rsi_warmed_up,
+            "candle_high": eng.candle_high,
+            "candle_low": eng.candle_low,
+            "last_signal_time": eng.last_signal_time,
+            "used_a_count": len(eng.used_a),
+        })
+    return {"status": "RUNNING", "task": task_status, "engines": result, "count": len(result)}
+
+
 @router.get("/debug/proxy")
 async def debug_proxy() -> dict:
     """Test Binance API connection through proxy."""

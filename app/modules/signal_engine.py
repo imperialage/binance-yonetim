@@ -402,17 +402,24 @@ async def _engine_loop() -> None:
 
     tz_ist = timezone(timedelta(hours=3))
 
+    await log.ainfo("signal_engine_loop_starting")
+
     # Warmup bekle — price_stream hazir olsun
-    await asyncio.sleep(5)
+    await asyncio.sleep(8)
 
     # Engine'leri olustur
     try:
         all_settings = await get_all_settings()
+        await log.ainfo("signal_engine_settings_loaded", count=len(all_settings),
+                        symbols=[s.get("symbol") for s in all_settings])
     except Exception as e:
         await log.aerror("signal_engine_settings_error", error=str(e))
         return
 
     active_symbols = [s for s in all_settings if s.get("active") and s.get("listening")]
+    await log.ainfo("signal_engine_active_symbols",
+                     count=len(active_symbols),
+                     symbols=[s.get("symbol") for s in active_symbols])
     if not active_symbols:
         await log.ainfo("signal_engine_no_active_symbols")
         return
