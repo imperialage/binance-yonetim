@@ -664,37 +664,22 @@ async def _tpsl_watchdog() -> None:
             is_long = pos_amt > 0
             exit_side = "SELL" if is_long else "BUY"
 
-            # 2. Mevcut açık emirleri kontrol et — openOrders + algoOrder
+            # 2. Mevcut açık emirleri kontrol et — algo_ids.json (kalici, deploy-safe)
             has_tp = False
             has_sl = False
 
-            # Normal open orders
             try:
-                from app.modules.binance_client import get_client, _sign
-                client = await get_client()
-                params = _sign({"symbol": sym})
-                resp = await client.get("/fapi/v1/openOrders", params=params)
-                if resp.status_code == 200:
-                    for o in resp.json():
-                        otype = o.get("origType", o.get("type", ""))
-                        if otype == "TAKE_PROFIT_MARKET":
-                            has_tp = True
-                        elif otype == "STOP_MARKET":
-                            has_sl = True
+                from app.modules.binance_client import _load_algo_ids
+                algo_data = _load_algo_ids()
+                sym_algo_count = len(algo_data.get(sym, []))
+                # 2+ algo ID = TP + SL konmus
+                if sym_algo_count >= 2:
+                    has_tp = True
+                    has_sl = True
+                elif sym_algo_count == 1:
+                    has_tp = True  # en az TP konmus
             except Exception:
                 pass
-
-            # Algo orders (algoOrder API ile konulanlar)
-            if not has_tp or not has_sl:
-                try:
-                    from app.modules.binance_client import _load_algo_ids
-                    algo_ids = _load_algo_ids()
-                    sym_algos = algo_ids.get(sym, [])
-                    if sym_algos:
-                        has_tp = True
-                        has_sl = True if len(sym_algos) >= 2 else has_sl
-                except Exception:
-                    pass
 
             # Teyit flag'lerini guncelle
             engine.tp_confirmed = has_tp

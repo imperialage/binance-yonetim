@@ -582,27 +582,35 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
             entry_price = float(p.get("entryPrice", 0))
             pos_side = "LONG" if amt > 0 else "SHORT"
 
-            # TP/SL fiyatlari — Binance'tan gercek acik emirleri cek (teyitli)
+            # TP/SL fiyatlari — signal_engine teyit + algo_ids kalici dosya
             tp_price = 0.0
             sl_price = 0.0
             tp_confirmed = False
             sl_confirmed = False
+
+            # Signal engine flag'lerinden kontrol
             try:
-                from app.modules.binance_client import get_all_orders
-                recent_orders = await get_all_orders(sym, days=1)
-                for o in recent_orders:
-                    if o.get("status") != "NEW":
-                        continue
-                    otype = o.get("origType", o.get("type", ""))
-                    stop_px = float(o.get("stopPrice", 0))
-                    if otype == "TAKE_PROFIT_MARKET" and stop_px > 0:
-                        tp_price = stop_px
-                        tp_confirmed = True
-                    elif otype == "STOP_MARKET" and stop_px > 0:
-                        sl_price = stop_px
-                        sl_confirmed = True
+                from app.modules.signal_engine import get_engine
+                eng = get_engine(sym)
+                if eng:
+                    tp_confirmed = eng.tp_confirmed
+                    sl_confirmed = eng.sl_confirmed
             except Exception:
                 pass
+
+            # Engine yoksa veya flag false ise, algo_ids.json'dan kontrol
+            if not tp_confirmed or not sl_confirmed:
+                try:
+                    from app.modules.binance_client import _load_algo_ids
+                    algo_data = _load_algo_ids()
+                    sym_algo_count = len(algo_data.get(sym, []))
+                    if sym_algo_count >= 2:
+                        tp_confirmed = True
+                        sl_confirmed = True
+                    elif sym_algo_count >= 1:
+                        tp_confirmed = True
+                except Exception:
+                    pass
             # Binance'ta bulunamadiysa hesaplanmis degerler
             if not tp_confirmed or not sl_confirmed:
                 try:

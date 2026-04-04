@@ -292,7 +292,5 @@ async def _execute_trade_inner(
         pass
 
     # execute_trade burada BITER
-    # Fill takibi + TP/SL koyma signal_engine._check_pending_fill() tarafindan yapilir
+    # Fill takibi + TP/SL koyma signal_engine.check_pending_fill() tarafindan yapilir
     return
-        duration_ms=duration,
-    )
