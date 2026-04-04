@@ -317,9 +317,9 @@ function renderAll(){
         });
     }
 
-    // Filter
-    var fStart=new Date($('fStart').value).getTime()/1000;
-    var fEnd=new Date($('fEnd').value+'T23:59:59').getTime()/1000;
+    // Filter — Istanbul saati (UTC+3) ile
+    var fStart=new Date($('fStart').value+'T00:00:00+03:00').getTime()/1000;
+    var fEnd=new Date($('fEnd').value+'T23:59:59+03:00').getTime()/1000;
     var fSig=$('fSig').checked;
     var fOSOB=$('fOSOB').checked;
 
