@@ -843,10 +843,12 @@ async def api_chart_data(
     iv_ms = INTERVAL_MS.get(interval, 900000)
 
     # Tarih araligi hesapla
+    # Istanbul timezone (UTC+3) ile tarih hesapla
+    _tz_ist = timezone(timedelta(hours=3))
     if start_date:
         try:
-            start_ms = int(datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
-            # RSI warmup icin 200 mum oncesinden basla
+            start_ms = int(datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=_tz_ist).timestamp() * 1000)
+            # RSI warmup icin 1000 mum oncesinden basla
             warmup_ms = start_ms - (1000 * iv_ms)
         except Exception:
             warmup_ms = int(_time.time() * 1000) - (1500 * iv_ms)
@@ -855,7 +857,13 @@ async def api_chart_data(
         warmup_ms = int(_time.time() * 1000) - (1500 * iv_ms)
         start_ms = warmup_ms
 
-    end_ms = int(datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000) + 86400000 if end_date else int(_time.time() * 1000)
+    if end_date:
+        try:
+            end_ms = int(datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=_tz_ist).timestamp() * 1000) + 86400000
+        except Exception:
+            end_ms = int(_time.time() * 1000)
+    else:
+        end_ms = int(_time.time() * 1000)
 
     try:
         raw_klines = []
