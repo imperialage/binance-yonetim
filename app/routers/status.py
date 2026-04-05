@@ -1000,7 +1000,6 @@ async def api_chart_data(
 
     tz_ist = timezone(timedelta(hours=3))
     sym = symbol.upper()
-    buf = entry_buffer / 100
 
     cfg = get_symbol_config(sym)
     tp_pct = tp_pct_param / 100 if tp_pct_param > 0 else cfg.get("tp_pct", 0.01)
@@ -1097,115 +1096,6 @@ async def api_chart_data(
             "rsi": rsi_values[i] if i < len(rsi_values) else None,
         })
 
-    # Hidden Divergence sinyal tespiti (server-side)
-    signals = []
-    trades = []
-    used_a = set()
-    state = 0  # 0=flat, 1=long, -1=short
-    entry = 0.0
-    tp_price = 0.0
-    sl_price = 0.0
-    entry_idx = 0
-    entry_time = 0
-
-    n = len(candles)
-    for b_idx in range(max_gap + 1, n):
-        rsi_b = candles[b_idx].get("rsi")
-        if rsi_b is None:
-            continue
-
-        # TP/SL kontrol (acik pozisyon)
-        if state == 1 and b_idx > entry_idx:
-            if candles[b_idx]["low"] <= sl_price:
-                pnl = (sl_price - entry) / entry * 100 - 0.08
-                trades.append({"entry_time": entry_time, "exit_time": candles[b_idx]["time"],
-                    "entry_date": datetime.fromtimestamp(entry_time, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time > 0 else "",
-                    "exit_date": datetime.fromtimestamp(candles[b_idx]["time"], tz=tz_ist).strftime("%d.%m %H:%M"),
-                    "direction": "BUY", "entry_price": entry, "exit_price": sl_price,
-                    "reason": "SL", "pnl_pct": round(pnl, 3)})
-                state = 0
-            elif candles[b_idx]["high"] >= tp_price:
-                pnl = (tp_price - entry) / entry * 100 - 0.08
-                trades.append({"entry_time": entry_time, "exit_time": candles[b_idx]["time"],
-                    "entry_date": datetime.fromtimestamp(entry_time, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time > 0 else "",
-                    "exit_date": datetime.fromtimestamp(candles[b_idx]["time"], tz=tz_ist).strftime("%d.%m %H:%M"),
-                    "direction": "BUY", "entry_price": entry, "exit_price": tp_price,
-                    "reason": "TP", "pnl_pct": round(pnl, 3)})
-                state = 0
-
-        elif state == -1 and b_idx > entry_idx:
-            if candles[b_idx]["high"] >= sl_price:
-                pnl = (entry - sl_price) / entry * 100 - 0.08
-                trades.append({"entry_time": entry_time, "exit_time": candles[b_idx]["time"],
-                    "entry_date": datetime.fromtimestamp(entry_time, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time > 0 else "",
-                    "exit_date": datetime.fromtimestamp(candles[b_idx]["time"], tz=tz_ist).strftime("%d.%m %H:%M"),
-                    "direction": "SELL", "entry_price": entry, "exit_price": sl_price,
-                    "reason": "SL", "pnl_pct": round(pnl, 3)})
-                state = 0
-            elif candles[b_idx]["low"] <= tp_price:
-                pnl = (entry - tp_price) / entry * 100 - 0.08
-                trades.append({"entry_time": entry_time, "exit_time": candles[b_idx]["time"],
-                    "entry_date": datetime.fromtimestamp(entry_time, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time > 0 else "",
-                    "exit_date": datetime.fromtimestamp(candles[b_idx]["time"], tz=tz_ist).strftime("%d.%m %H:%M"),
-                    "direction": "SELL", "entry_price": entry, "exit_price": tp_price,
-                    "reason": "TP", "pnl_pct": round(pnl, 3)})
-                state = 0
-
-        # Sinyal tespiti (sadece flat iken)
-        if state != 0:
-            continue
-
-        found = False
-        # SHORT ara
-        for gap in range(1, min(max_gap + 1, b_idx)):
-            a_idx = b_idx - gap
-            if a_idx in used_a:
-                continue
-            rsi_a = candles[a_idx].get("rsi")
-            if rsi_a is None:
-                continue
-            if rsi_a >= short_thresh and candles[b_idx]["high"] > candles[a_idx]["high"] and rsi_b < rsi_a:
-                ep = round(candles[b_idx]["high"] * (1 - buf), 6)
-                sig = {"time": candles[b_idx]["time"], "direction": "SELL", "entry_price": ep,
-                    "rsi_a": rsi_a, "rsi_b": rsi_b, "gap": gap,
-                    "date": datetime.fromtimestamp(candles[b_idx]["time"], tz=tz_ist).strftime("%d.%m %H:%M")}
-                signals.append(sig)
-                used_a.add(a_idx)
-                state = -1
-                entry = ep
-                tp_price = ep * (1 - tp_pct)
-                sl_price = ep * (1 + sl_pct)
-                entry_idx = b_idx
-                entry_time = candles[b_idx]["time"]
-                found = True
-                break
-
-        if found:
-            continue
-
-        # LONG ara
-        for gap in range(1, min(max_gap + 1, b_idx)):
-            a_idx = b_idx - gap
-            if a_idx in used_a:
-                continue
-            rsi_a = candles[a_idx].get("rsi")
-            if rsi_a is None:
-                continue
-            if rsi_a <= long_thresh and candles[b_idx]["low"] < candles[a_idx]["low"] and rsi_b > rsi_a:
-                ep = round(candles[b_idx]["low"] * (1 + buf), 6)
-                sig = {"time": candles[b_idx]["time"], "direction": "BUY", "entry_price": ep,
-                    "rsi_a": rsi_a, "rsi_b": rsi_b, "gap": gap,
-                    "date": datetime.fromtimestamp(candles[b_idx]["time"], tz=tz_ist).strftime("%d.%m %H:%M")}
-                signals.append(sig)
-                used_a.add(a_idx)
-                state = 1
-                entry = ep
-                tp_price = ep * (1 + tp_pct)
-                sl_price = ep * (1 - sl_pct)
-                entry_idx = b_idx
-                entry_time = candles[b_idx]["time"]
-                break
-
     # Binance acik pozisyon
     position = None
     try:
@@ -1231,23 +1121,19 @@ async def api_chart_data(
     # Tarih filtresi — sadece start_date sonrasi verileri dondur (warmup haric)
     if start_date:
         filtered_candles = [c for c in candles if c["time"] >= start_ms // 1000]
-        filtered_signals = [s for s in signals if s["time"] >= start_ms // 1000]
-        filtered_trades = [t for t in trades if t.get("entry_time", 0) >= start_ms // 1000]
     else:
         filtered_candles = candles
-        filtered_signals = signals
-        filtered_trades = trades
 
     return {
         "candles": filtered_candles,
-        "signals": filtered_signals,
-        "trades": filtered_trades,
+        "signals": [],
+        "trades": [],
         "position": position,
         "symbol": sym,
         "interval": interval,
         "total_candles": len(filtered_candles),
-        "total_signals": len(filtered_signals),
-        "total_trades": len(filtered_trades),
+        "total_signals": 0,
+        "total_trades": 0,
         "rsi_state": rsi_state,
         "params": {"rsi_len": rsi_len, "long_thresh": long_thresh, "short_thresh": short_thresh,
                    "max_gap": max_gap, "entry_buffer": entry_buffer, "tp_pct": round(tp_pct*100,2), "sl_pct": round(sl_pct*100,2)},
@@ -1255,27 +1141,36 @@ async def api_chart_data(
 
 
 @router.get("/api/st-signals")
-async def api_st_signals(limit: int = 80, symbols: str | None = None) -> dict:
-    """Get recent SuperTrend signals — only TradingView webhook signals (entered=1).
+async def api_st_signals(
+    limit: int = 80,
+    symbols: str | None = None,
+    entered_only: bool = False,
+) -> dict:
+    """Get recent signals from signal_log DB.
 
+    entered_only=true: sadece isleme giren sinyaller (eski davranis).
+    entered_only=false (varsayilan): tum sinyaller (entered + skipped).
     Optional: symbols=BTCUSDT,ETHUSDT to filter by specific symbols.
     """
     from app.modules.st_signal_logger import get_db
 
     db = await get_db()
     try:
+        conditions = []
+        params: list = []
+        if entered_only:
+            conditions.append("entered = 1")
         if symbols:
             sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
             placeholders = ",".join("?" for _ in sym_list)
-            cursor = await db.execute(
-                f"SELECT * FROM signal_log WHERE entered = 1 AND symbol IN ({placeholders}) ORDER BY id DESC LIMIT ?",  # noqa: S608
-                [*sym_list, limit],
-            )
-        else:
-            cursor = await db.execute(
-                "SELECT * FROM signal_log WHERE entered = 1 ORDER BY id DESC LIMIT ?",
-                [limit],
-            )
+            conditions.append(f"symbol IN ({placeholders})")  # noqa: S608
+            params.extend(sym_list)
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        params.append(limit)
+        cursor = await db.execute(
+            f"SELECT * FROM signal_log{where} ORDER BY id DESC LIMIT ?",  # noqa: S608
+            params,
+        )
         rows = await cursor.fetchall()
         signals = [dict(r) for r in rows]
     except Exception:
