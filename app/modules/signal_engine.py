@@ -74,9 +74,11 @@ class SignalEngine:
         # Sinyal state
         self.signal_fired_this_bar: bool = False
         self.trade_pending: bool = False  # execute_trade cagrildi, fill bekleniyor
-        self.used_a: set[int] = set()  # kullanilmis A mum zamanlari
+        self.used_a: set[int] = set()  # sadece isleme girildiginde eklenir
         self.warmed_up: bool = False
         self.last_signal_time: float = 0.0
+        self.last_signal: dict | None = None  # son uretilen sinyal
+        self.last_signal_bar: int = 0  # hangi mumda uretildi
 
         # TP/SL teyit state
         self.tp_confirmed: bool = False
@@ -278,6 +280,23 @@ class SignalEngine:
         """execute_trade cagrildi, fill bekleniyor."""
         self.trade_pending = True
 
+    async def try_execute_signal(self, signal: dict) -> bool:
+        """Sinyal geldi — pozisyon yoksa isleme gir, varsa skip. Returns True if executed."""
+        if self.has_position:
+            await log.ainfo("signal_skipped_has_position", symbol=self.symbol, direction=signal["direction"])
+            return False
+        if self.trade_pending:
+            await log.ainfo("signal_skipped_trade_pending", symbol=self.symbol, direction=signal["direction"])
+            return False
+
+        # Isleme gir — used_a'ya SIMDI ekle
+        a_time = signal.get("candle_a_time")
+        if a_time:
+            self.used_a.add(a_time)
+            self._save_used_a()
+
+        return True  # _engine_loop execute_trade cagirsin
+
     async def check_position_closed(self) -> None:
         """Pozisyon acikken kapanmis mi kontrol et. Kapandiysa eski emirleri temizle."""
         try:
@@ -301,6 +320,25 @@ class SignalEngine:
 
             self.on_position_closed()
             await log.ainfo("position_closed_detected", symbol=self.symbol)
+
+            # Son sinyal hala bu mumda mi? Hemen isleme gir
+            if self.last_signal and self.last_signal_bar == self.candle_start:
+                sig = self.last_signal
+                should = await self.try_execute_signal(sig)
+                if should:
+                    from app.config import settings as app_cfg
+                    if app_cfg.trading_enabled:
+                        from app.modules.trade_executor import execute_trade
+                        self.on_trade_pending()
+                        event_id = f"se-close-{int(time.time())}"
+                        asyncio.create_task(execute_trade(
+                            symbol=self.symbol,
+                            signal=sig["direction"],
+                            price=sig["entry_price"],
+                            event_id=event_id,
+                            tf=self.interval,
+                        ))
+                        await log.ainfo("last_signal_executed_after_close", symbol=self.symbol, direction=sig["direction"])
 
         except Exception as e:
             await log.awarning("check_position_closed_error", symbol=self.symbol, error=str(e))
@@ -550,9 +588,7 @@ class SignalEngine:
         if self.signal_fired_this_bar:
             return None
 
-        # ── 4. Pozisyon varsa veya emir bekliyorsa sinyal arama ──
-        if self.has_position or self.trade_pending:
-            return None
+        # ── 4. Pozisyon kontrolu YOK — her zaman sinyal ara (Pine Script uyumlu) ──
 
         # ── 5. Anlik RSI hesapla ──
         live_rsi = self._calc_live_rsi(price)
@@ -569,7 +605,8 @@ class SignalEngine:
         if signal:
             self.signal_fired_this_bar = True
             self.last_signal_time = time.time()
-            self._save_used_a()
+            self.last_signal = signal
+            self.last_signal_bar = self.candle_start
             return signal
 
         return None
@@ -595,7 +632,7 @@ class SignalEngine:
                         and self.candle_high > a["high"]
                         and live_rsi < a["rsi"]):
                     entry_price = round(self.candle_high * (1 - self.entry_buffer), 6)
-                    self.used_a.add(a["time"])
+                    # used_a'ya EKLENMEZ — sadece isleme girildiginde eklenir
                     return {
                         "symbol": self.symbol,
                         "direction": "SELL",
@@ -619,7 +656,7 @@ class SignalEngine:
                         and self.candle_low < a["low"]
                         and live_rsi > a["rsi"]):
                     entry_price = round(self.candle_low * (1 + self.entry_buffer), 6)
-                    self.used_a.add(a["time"])
+                    # used_a'ya EKLENMEZ — sadece isleme girildiginde eklenir
                     return {
                         "symbol": self.symbol,
                         "direction": "BUY",
@@ -993,8 +1030,11 @@ async def _engine_loop() -> None:
 
                 signal = await engine.on_price_tick(price)
                 if signal:
-                    # Sinyal bulundu!
+                    # Sinyal bulundu — HER ZAMAN logla (pozisyon olsa bile)
                     dt_str = datetime.now(tz_ist).strftime("%Y-%m-%d %H:%M:%S")
+
+                    # Isleme girilecek mi kontrol et
+                    should_trade = await engine.try_execute_signal(signal)
 
                     await log.ainfo(
                         "signal_engine_signal",
@@ -1004,38 +1044,46 @@ async def _engine_loop() -> None:
                         rsi_a=signal["rsi_a"],
                         rsi_b=signal["rsi_b"],
                         gap=signal["gap"],
+                        traded=should_trade,
+                        has_position=engine.has_position,
                     )
 
-                    # Signal log — tum detaylar DB'ye
+                    # Signal log — DB'ye yaz (traded=True ise entered=1, degilse entered=0)
+                    skip_reason = None
+                    if not should_trade:
+                        if engine.has_position:
+                            skip_reason = "pozisyon_acik"
+                        elif engine.trade_pending:
+                            skip_reason = "emir_bekliyor"
+
                     row_id = await log_st_signal(
                         dt=dt_str,
                         symbol=sym,
                         direction=signal["direction"],
                         band=engine.interval,
                         price=signal["entry_price"],
-                        entered=True,
+                        entered=should_trade,
                         source="server",
                         rsi_a=signal["rsi_a"],
                         rsi_b=signal["rsi_b"],
                         gap=signal["gap"],
                         candle_a_time=signal.get("candle_a_time"),
+                        skip_reason=skip_reason,
                     )
 
-                    # Trade execute
-                    # NOT: on_position_opened burada CAGRILMAZ.
-                    # Pozisyon acilmasini order_stream callback'inden ogreniyoruz.
-                    # Boylece execute_trade basarisiz olursa state yanlis kalmaz.
-                    from app.config import settings as app_settings
-                    if app_settings.trading_enabled:
-                        engine.on_trade_pending()
-                        event_id = f"se-{row_id}-{int(time.time())}"
-                        asyncio.create_task(execute_trade(
-                            symbol=sym,
-                            signal=signal["direction"],
-                            price=signal["entry_price"],
-                            event_id=event_id,
-                            tf=engine.interval,
-                        ))
+                    # Isleme gir (pozisyon yoksa)
+                    if should_trade:
+                        from app.config import settings as app_settings
+                        if app_settings.trading_enabled:
+                            engine.on_trade_pending()
+                            event_id = f"se-{row_id}-{int(time.time())}"
+                            asyncio.create_task(execute_trade(
+                                symbol=sym,
+                                signal=signal["direction"],
+                                price=signal["entry_price"],
+                                event_id=event_id,
+                                tf=engine.interval,
+                            ))
 
         except asyncio.CancelledError:
             break
