@@ -49,6 +49,8 @@ async def get_trade_db() -> aiosqlite.Connection:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         _db = await aiosqlite.connect(str(DB_PATH))
         _db.row_factory = aiosqlite.Row
+        await _db.execute("PRAGMA journal_mode=WAL;")
+        await _db.execute("PRAGMA synchronous=NORMAL;")
     return _db
 
 
