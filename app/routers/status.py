@@ -874,6 +874,10 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
                 if eng:
                     tp_confirmed = eng.tp_confirmed
                     sl_confirmed = eng.sl_confirmed
+                    if eng.tp_price > 0:
+                        tp_price = eng.tp_price
+                    if eng.sl_price > 0:
+                        sl_price = eng.sl_price
             except Exception:
                 pass
 
@@ -890,16 +894,17 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
                         tp_confirmed = True
                 except Exception:
                     pass
-            # Binance'ta bulunamadiysa hesaplanmis degerler
-            if not tp_confirmed or not sl_confirmed:
+
+            # Fiyat yoksa hesapla
+            if tp_price <= 0 or sl_price <= 0:
                 try:
                     from app.modules.indicator_settings_store import get_settings_or_defaults
                     sym_settings = await get_settings_or_defaults(sym)
                     tp_pct_val = sym_settings.get("tp_pct", 1.0) / 100.0
                     sl_pct_val = sym_settings.get("sl_pct", 0.3) / 100.0
-                    if not tp_confirmed:
+                    if tp_price <= 0:
                         tp_price = round(entry_price * (1 + tp_pct_val), 6) if pos_side == "LONG" else round(entry_price * (1 - tp_pct_val), 6)
-                    if not sl_confirmed:
+                    if sl_price <= 0:
                         sl_price = round(entry_price * (1 - sl_pct_val), 6) if pos_side == "LONG" else round(entry_price * (1 + sl_pct_val), 6)
                 except Exception:
                     pass

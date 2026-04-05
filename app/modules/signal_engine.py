@@ -401,12 +401,15 @@ class SignalEngine:
                 pass
 
             # Yeni SL'yi tekrar koy (cancel_all ile silindi)
-            if self.sl_confirmed and sl_enabled:
+            if sl_enabled:
                 try:
                     from app.modules.binance_client import place_stop_market_instant
                     await place_stop_market_instant(self.symbol, exit_side, qty, sl_price)
+                    self.sl_confirmed = True
+                    self.sl_price = sl_price
                     await log.ainfo("sl_re_placed_after_cleanup", symbol=self.symbol, sl_price=sl_price)
                 except Exception as e:
+                    self.sl_confirmed = False
                     await log.aerror("sl_re_place_failed", symbol=self.symbol, error=str(e))
 
             # TP koy
