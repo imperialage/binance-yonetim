@@ -385,6 +385,13 @@ class SignalEngine:
                 sl_price = round_price(entry_price * (1 + sl_pct), tick_size)
                 exit_side = "BUY"
 
+            # Eski emirleri temizle — sadece bu sembolun gecmisten kalan TP/SL'leri
+            try:
+                await cancel_all_open_orders(self.symbol)
+                await log.ainfo("old_orders_cleaned_before_tpsl", symbol=self.symbol)
+            except Exception:
+                pass
+
             # TP koy
             try:
                 await place_take_profit_market_order(self.symbol, exit_side, qty, tp_price)
