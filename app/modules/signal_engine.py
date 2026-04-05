@@ -207,6 +207,8 @@ class SignalEngine:
     async def _sync_position(self) -> None:
         """Binance'tan gercek pozisyon durumunu al."""
         try:
+            old_pos = self.has_position
+            old_side = self.position_side
             positions = await get_position_risk(self.symbol)
             for p in positions:
                 if p.get("symbol") == self.symbol:
@@ -220,15 +222,25 @@ class SignalEngine:
                     else:
                         self.has_position = False
                         self.position_side = ""
-                        # pending_order yoksa trade_pending temizle
-                        # pending_order varsa dokunma — check_pending_fill halledecek
                         if not self.pending_order:
                             self.trade_pending = False
+                    # State degisti mi logla
+                    if old_pos != self.has_position or old_side != self.position_side:
+                        await log.ainfo(
+                            "position_state_changed",
+                            symbol=self.symbol,
+                            old_pos=old_pos,
+                            old_side=old_side,
+                            new_pos=self.has_position,
+                            new_side=self.position_side,
+                        )
                     return
             self.has_position = False
             self.position_side = ""
             if not self.pending_order:
                 self.trade_pending = False
+            if old_pos != self.has_position:
+                await log.ainfo("position_state_changed", symbol=self.symbol, old_pos=old_pos, new_pos=False)
         except Exception as e:
             await log.awarning("signal_engine_position_check_error", symbol=self.symbol, error=str(e))
 
@@ -506,6 +518,25 @@ class SignalEngine:
             # Son max_gap + 5 mum yeterli
             if len(self.closed_candles) > self.max_gap + 20:
                 self.closed_candles = self.closed_candles[-(self.max_gap + 20):]
+
+            # Mum kapanisi logu — potansiyel A mumlarini say
+            ob_count = sum(1 for c in self.closed_candles[-self.max_gap:] if c.get("rsi") and c["rsi"] >= self.short_thresh and c["time"] not in self.used_a)
+            os_count = sum(1 for c in self.closed_candles[-self.max_gap:] if c.get("rsi") and c["rsi"] <= self.long_thresh and c["time"] not in self.used_a)
+            await log.ainfo(
+                "candle_closed",
+                symbol=self.symbol,
+                close=round(self.candle_close, 4),
+                high=round(closed["high"], 4),
+                low=round(closed["low"], 4),
+                rsi=round(closed_rsi, 2) if closed_rsi else None,
+                has_position=self.has_position,
+                trade_pending=self.trade_pending,
+                position_side=self.position_side,
+                signal_fired=self.signal_fired_this_bar,
+                ob_candidates=ob_count,
+                os_candidates=os_count,
+                used_a=len(self.used_a),
+            )
 
             # Yeni mum baslat
             self.candle_start = new_candle_start
