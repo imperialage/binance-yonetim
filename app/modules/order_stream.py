@@ -128,6 +128,13 @@ async def _handle_event(data: dict[str, Any]) -> None:
                     reduce_only = order.get("R", False)  # reduceOnly flag
                     close_pos = order.get("cp", False)    # closePosition flag
                     if reduce_only or close_pos:
+                        # Pozisyon kapandi — ONCE eski emirleri temizle, SONRA state sifirla
+                        try:
+                            from app.modules.binance_client import cancel_all_open_orders
+                            await cancel_all_open_orders(symbol)
+                            await log.ainfo("position_closed_orders_cleaned_instant", symbol=symbol)
+                        except Exception:
+                            pass
                         engine.on_position_closed()
                         await log.ainfo("signal_engine_position_closed", symbol=symbol, side=side)
                     else:
