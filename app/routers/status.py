@@ -1143,6 +1143,7 @@ async def api_chart_data(
 @router.get("/api/st-signals")
 async def api_st_signals(
     limit: int = 80,
+    symbol: str | None = None,
     symbols: str | None = None,
     entered_only: bool = False,
 ) -> dict:
@@ -1160,8 +1161,10 @@ async def api_st_signals(
         params: list = []
         if entered_only:
             conditions.append("entered = 1")
-        if symbols:
-            sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        # symbol (tekil) veya symbols (virgüllü) parametresi
+        _sym_filter = symbol or symbols
+        if _sym_filter:
+            sym_list = [s.strip().upper() for s in _sym_filter.split(",") if s.strip()]
             placeholders = ",".join("?" for _ in sym_list)
             conditions.append(f"symbol IN ({placeholders})")  # noqa: S608
             params.extend(sym_list)
