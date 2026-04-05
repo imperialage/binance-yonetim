@@ -347,7 +347,6 @@ function renderAll(){
     for(var i=filtered.length-1;i>=0;i--){
         var c=filtered[i];
         var sig=sigMap[c.time];
-        var tExit=tradeExitMap[c.time];
         var bnEntries=bnEntryMap[c.time]||[];
         var bnExits=bnExitMap[c.time]||[];
         var rsiZone='';var rowCls='';
