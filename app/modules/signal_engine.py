@@ -393,7 +393,23 @@ class SignalEngine:
                 sl_price = round_price(entry_price * (1 + sl_pct), tick_size)
                 exit_side = "BUY"
 
-            # TP koy (SL zaten giris emriyle birlikte kondu)
+            # Eski TP/SL emirlerini temizle (yeni SL zaten giris emriyle kondu)
+            try:
+                await cancel_all_open_orders(self.symbol)
+                await log.ainfo("old_orders_cleaned", symbol=self.symbol)
+            except Exception:
+                pass
+
+            # Yeni SL'yi tekrar koy (cancel_all ile silindi)
+            if self.sl_confirmed and sl_enabled:
+                try:
+                    from app.modules.binance_client import place_stop_market_instant
+                    await place_stop_market_instant(self.symbol, exit_side, qty, sl_price)
+                    await log.ainfo("sl_re_placed_after_cleanup", symbol=self.symbol, sl_price=sl_price)
+                except Exception as e:
+                    await log.aerror("sl_re_place_failed", symbol=self.symbol, error=str(e))
+
+            # TP koy
             try:
                 await place_take_profit_market_order(self.symbol, exit_side, qty, tp_price)
                 self.tp_confirmed = True

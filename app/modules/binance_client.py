@@ -298,22 +298,22 @@ async def place_stop_market_instant(
     """Place STOP_MARKET order — giris emriyle ayni anda konur.
 
     reduceOnly YOK — pozisyon olmadan da konabilir.
-    Normal /fapi/v1/order API kullanir (algoOrder degil).
-    One-way modda giris dolduktan sonra tetiklenince pozisyonu kapatir.
+    algoOrder API kullanir (normal order API STOP_MARKET desteklemiyor).
     """
     client = await get_client()
     params = _sign({
         "symbol": symbol,
         "side": side,
         "type": "STOP_MARKET",
+        "algoType": "CONDITIONAL",
         "quantity": quantity,
-        "stopPrice": stop_price,
-        "newOrderRespType": "RESULT",
+        "triggerPrice": stop_price,
     })
-    resp = await client.post("/fapi/v1/order", params=params)
+    resp = await client.post("/fapi/v1/algoOrder", params=params)
     _raise_for_binance(resp)
     result = resp.json()
-    log.info("sl_instant_placed", symbol=symbol, side=side, stop_price=stop_price, order_id=result.get("orderId"))
+    _track_algo_id(symbol, result.get("algoId"))
+    log.info("sl_instant_placed", symbol=symbol, side=side, stop_price=stop_price, algo_id=result.get("algoId"))
     return result
 
 
