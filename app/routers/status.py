@@ -62,7 +62,7 @@ async def server_ip() -> dict:
 
 
 @router.get("/api/trade-pnl")
-async def api_trade_pnl(symbol: str = "", days: int = 30) -> dict:
+async def api_trade_pnl(symbol: str = "", days: int = 7) -> dict:
     """Her islemin komisyon dahil tam kar/zarar tablosu."""
     from app.modules.binance_client import get_all_orders, get_client, _sign
     from app.modules.indicator_settings_store import get_all_settings

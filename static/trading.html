@@ -367,7 +367,7 @@ tr.clickable:hover{background:#1c212888}
 
   <!-- Kar/Zarar Tablosu (komisyon dahil) -->
   <div class="panel" style="margin-top:16px">
-    <h2>Kar / Zarar Tablosu <span style="font-size:10px;color:#58a6ff;font-weight:400;text-transform:none;letter-spacing:0">(Komisyon Dahil, 30 Gun)</span></h2>
+    <h2>Kar / Zarar Tablosu <span style="font-size:10px;color:#58a6ff;font-weight:400;text-transform:none;letter-spacing:0">(Komisyon Dahil, 7 Gun)</span></h2>
     <div class="scroll-list" id="pnlTableContent">
       <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
     </div>
@@ -514,7 +514,7 @@ tr.clickable:hover{background:#1c212888}
   }
 
   function fetchPnlTable(){
-    fetch('/api/trade-pnl?days=30').then(function(r){return r.json()})
+    fetch('/api/trade-pnl?days=7').then(function(r){return r.json()})
     .then(function(data){
       pnlData=data;
       renderPnlTable();
