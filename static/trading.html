@@ -365,6 +365,14 @@ tr.clickable:hover{background:#1c212888}
     </div>
   </div>
 
+  <!-- Kar/Zarar Tablosu (komisyon dahil) -->
+  <div class="panel" style="margin-top:16px">
+    <h2>Kar / Zarar Tablosu <span style="font-size:10px;color:#58a6ff;font-weight:400;text-transform:none;letter-spacing:0">(Komisyon Dahil, 30 Gun)</span></h2>
+    <div class="scroll-list" id="pnlTableContent">
+      <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
+    </div>
+  </div>
+
 </div>
 
 <!-- Signal Detail Modal -->
@@ -398,6 +406,8 @@ tr.clickable:hover{background:#1c212888}
   var posHistSymFilter = 'all';
   var tradeHistData = null;
   var tradeHistSymFilter = 'all';
+  var pnlData = null;
+  var pnlSymFilter = 'all';
   var tradeFilter = 'all';
   var symFilter = 'all';
 
@@ -503,6 +513,14 @@ tr.clickable:hover{background:#1c212888}
     }).catch(function(){});
   }
 
+  function fetchPnlTable(){
+    fetch('/api/trade-pnl?days=30').then(function(r){return r.json()})
+    .then(function(data){
+      pnlData=data;
+      renderPnlTable();
+    }).catch(function(){});
+  }
+
   function fetchPosHist(){
     fetch('/api/binance-trades?days=7').then(function(r){return r.json();})
     .then(function(data){
@@ -527,6 +545,7 @@ tr.clickable:hover{background:#1c212888}
     fetchSymConfigs();
     fetchPosHist();
     fetchTradeHist();
+    fetchPnlTable();
   }
 
   // ── Summary Cards ──
@@ -1173,6 +1192,67 @@ tr.clickable:hover{background:#1c212888}
     });
     html+='</tbody></table></div>';
     $('tradeHistContent').innerHTML=html;
+  }
+
+  // ── Kar/Zarar Tablosu (komisyon dahil) ──
+  window.setPnlSymFilter=function(s){pnlSymFilter=s;renderPnlTable()};
+
+  function renderPnlTable(){
+    var trades=(pnlData&&pnlData.trades)||[];
+    if(trades.length===0){
+      $('pnlTableContent').innerHTML='<div class="empty-state">Islem bulunamadi</div>';
+      return;
+    }
+    var filtered=pnlSymFilter==='all'?trades:trades.filter(function(t){return t.symbol===pnlSymFilter});
+
+    // Sembol filtre
+    var syms=new Set();trades.forEach(function(t){if(t.symbol)syms.add(t.symbol)});
+    var fHtml='<div style="padding:4px 0;margin-bottom:4px"><span style="cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;'+(pnlSymFilter==='all'?'background:#F0B90B20;color:#F0B90B':'color:#6e7681')+'" onclick="setPnlSymFilter(\'all\')">Tumu</span> ';
+    syms.forEach(function(s){fHtml+='<span style="cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;'+(pnlSymFilter===s?'background:#F0B90B20;color:#F0B90B':'color:#6e7681')+'" onclick="setPnlSymFilter(\''+s+'\')">'+s.replace('USDT','')+'</span> '});
+    fHtml+='</div>';
+
+    // Kumulatif net
+    var sorted=filtered.slice().reverse();var cum=0;var cums=[];
+    sorted.forEach(function(t){cum+=t.net;cums.push(cum)});cums.reverse();
+
+    // Ozet
+    var totalPnl=filtered.reduce(function(s,t){return s+t.pnl},0);
+    var totalComm=filtered.reduce(function(s,t){return s+t.commission},0);
+    var totalNet=filtered.reduce(function(s,t){return s+t.net},0);
+    var wins=filtered.filter(function(t){return t.net>0}).length;
+    var losses=filtered.filter(function(t){return t.net<=0}).length;
+    var wr=filtered.length>0?Math.round(wins/filtered.length*100):0;
+
+    var sumHtml='<div style="display:flex;gap:14px;padding:6px 0;font-size:11px;flex-wrap:wrap;border-bottom:1px solid #1b2130;margin-bottom:6px">'
+      +'<span>PnL: <strong class="'+(totalPnl>=0?'pnl-positive':'pnl-negative')+'">'+fmtUSD(totalPnl)+'</strong></span>'
+      +'<span>Komisyon: <strong class="pnl-negative">'+fmtUSD(totalComm)+'</strong></span>'
+      +'<span>Net: <strong class="'+(totalNet>=0?'pnl-positive':'pnl-negative')+'">'+fmtUSD(totalNet)+'</strong></span>'
+      +'<span style="color:#6e7681">'+filtered.length+' islem | W:'+wins+' L:'+losses+' | %'+wr+'</span>'
+      +'</div>';
+
+    var html=fHtml+sumHtml+'<div class="table-scroll"><table><thead><tr><th>Sembol</th><th>Yon</th><th>Giris</th><th>Cikis</th><th>Giris $</th><th>Cikis $</th><th>Miktar</th><th>PnL</th><th>Komis.</th><th>Net</th><th>Kum.</th></tr></thead><tbody>';
+    filtered.forEach(function(t,i){
+      var netCls=t.net>=0?'pnl-positive':'pnl-negative';
+      var pnlCls=t.pnl>=0?'pnl-positive':'pnl-negative';
+      var cumCls=cums[i]>=0?'pnl-positive':'pnl-negative';
+      var sideBadge=t.side==='LONG'?'<span class="badge badge-buy">L</span>':'<span class="badge badge-sell">S</span>';
+      var dp=t.entry_price>=100?2:t.entry_price>=1?4:6;
+      html+='<tr>';
+      html+='<td><span class="badge-sym">'+(t.symbol||'').replace('USDT','')+'</span></td>';
+      html+='<td>'+sideBadge+'</td>';
+      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+(t.entry_str||'--')+'</td>';
+      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+(t.exit_str||'--')+'</td>';
+      html+='<td style="font-size:11px">'+(t.entry_price?fmt(t.entry_price,dp):'--')+'</td>';
+      html+='<td style="font-size:11px">'+(t.exit_price?fmt(t.exit_price,dp):'--')+'</td>';
+      html+='<td style="font-size:10px;color:#6e7681">'+fmt(t.qty,t.qty>=10?0:4)+'</td>';
+      html+='<td class="'+pnlCls+'" style="font-size:11px">'+fmtUSD(t.pnl)+'</td>';
+      html+='<td style="font-size:11px;color:#f85149">'+fmtUSD(t.commission)+'</td>';
+      html+='<td class="'+netCls+'" style="font-size:11px;font-weight:700">'+fmtUSD(t.net)+'</td>';
+      html+='<td class="'+cumCls+'" style="font-size:11px;font-weight:600">'+fmtUSD(cums[i])+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    $('pnlTableContent').innerHTML=html;
   }
 
   // ── Tab Handling ──

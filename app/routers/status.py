@@ -61,6 +61,163 @@ async def server_ip() -> dict:
         return {"ip": resp.text.strip()}
 
 
+@router.get("/api/trade-pnl")
+async def api_trade_pnl(symbol: str = "", days: int = 30) -> dict:
+    """Her islemin komisyon dahil tam kar/zarar tablosu."""
+    from app.modules.binance_client import get_all_orders, get_client, _sign
+    from app.modules.indicator_settings_store import get_all_settings
+    from datetime import datetime, timezone, timedelta
+    import asyncio
+
+    tz_ist = timezone(timedelta(hours=3))
+
+    if symbol:
+        symbols = [symbol.upper()]
+    else:
+        try:
+            all_s = await get_all_settings()
+            symbols = [s["symbol"] for s in all_s if s.get("active")]
+        except Exception:
+            symbols = ["ETHUSDT", "MYXUSDT", "XAGUSDT"]
+
+    client = await get_client()
+    start_time = int((time.time() - days * 86400) * 1000)
+    all_trades = []
+    grand_pnl = 0.0
+    grand_commission = 0.0
+    grand_net = 0.0
+
+    for sym in symbols:
+        try:
+            # 1. Tum income kayitlari (PnL + commission)
+            income_records = []
+            cursor = start_time
+            for _ in range(10):
+                params = _sign({"symbol": sym, "startTime": cursor, "limit": 1000})
+                resp = await client.get("/fapi/v1/income", params=params)
+                if resp.status_code != 200:
+                    break
+                batch = resp.json()
+                if not batch:
+                    break
+                income_records.extend(batch)
+                if len(batch) < 1000:
+                    break
+                cursor = int(batch[-1].get("time", 0)) + 1
+
+            # 2. Filled orders (giris/cikis eslestirmesi)
+            orders = await get_all_orders(sym, days=days)
+            entries = []
+            exits = []
+            for o in orders:
+                if o.get("status") != "FILLED":
+                    continue
+                qty = float(o.get("executedQty", 0))
+                avg = float(o.get("avgPrice", 0))
+                if qty <= 0 or avg <= 0:
+                    continue
+                rec = {
+                    "order_id": str(o.get("orderId", "")),
+                    "side": o.get("side", ""),
+                    "type": o.get("origType", o.get("type", "")),
+                    "avg_price": avg,
+                    "qty": qty,
+                    "time_ms": int(o.get("updateTime", 0)) or int(o.get("time", 0)),
+                    "reduce_only": o.get("reduceOnly", False),
+                }
+                if rec["reduce_only"] or o.get("closePosition"):
+                    exits.append(rec)
+                else:
+                    entries.append(rec)
+
+            entries.sort(key=lambda x: x["time_ms"])
+            exits.sort(key=lambda x: x["time_ms"])
+
+            # 3. Exit → Entry eslestir
+            used = set()
+            for ex in exits:
+                exit_side = ex["side"]
+                entry_side = "SELL" if exit_side == "BUY" else "BUY"
+                best = None
+                for en in reversed(entries):
+                    if en["order_id"] in used:
+                        continue
+                    if en["side"] == entry_side and en["time_ms"] <= ex["time_ms"]:
+                        best = en
+                        break
+                if best:
+                    used.add(best["order_id"])
+
+                entry_price = best["avg_price"] if best else 0
+                entry_time = best["time_ms"] if best else 0
+                exit_price = ex["avg_price"]
+                exit_time = ex["time_ms"]
+                qty = ex["qty"]
+                pos_side = "LONG" if exit_side == "SELL" else "SHORT"
+
+                # PnL hesapla
+                if pos_side == "LONG" and entry_price > 0:
+                    pnl = round((exit_price - entry_price) * qty, 6)
+                elif pos_side == "SHORT" and entry_price > 0:
+                    pnl = round((entry_price - exit_price) * qty, 6)
+                else:
+                    pnl = 0.0
+
+                # Komisyon bul — giris ve cikis zamanina yakin COMMISSION kayitlari
+                commission = 0.0
+                for r in income_records:
+                    if r.get("incomeType") != "COMMISSION":
+                        continue
+                    t = int(r.get("time", 0))
+                    # Giris veya cikis zamanina 5sn yakinsa bu islemin komisyonu
+                    if (entry_time > 0 and abs(t - entry_time) < 5000) or abs(t - exit_time) < 5000:
+                        commission += float(r.get("income", 0))
+
+                net = round(pnl + commission, 6)
+                pnl_pct = round(pnl / (entry_price * qty) * 100, 2) if entry_price > 0 and qty > 0 else 0
+
+                grand_pnl += pnl
+                grand_commission += commission
+                grand_net += net
+
+                all_trades.append({
+                    "symbol": sym,
+                    "side": pos_side,
+                    "entry_time": entry_time // 1000,
+                    "exit_time": exit_time // 1000,
+                    "entry_str": datetime.fromtimestamp(entry_time / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time else "",
+                    "exit_str": datetime.fromtimestamp(exit_time / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if exit_time else "",
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "qty": qty,
+                    "exit_type": ex["type"],
+                    "pnl": round(pnl, 6),
+                    "pnl_pct": pnl_pct,
+                    "commission": round(commission, 6),
+                    "net": net,
+                })
+        except Exception:
+            continue
+
+    all_trades.sort(key=lambda x: x.get("exit_time", 0), reverse=True)
+
+    wins = sum(1 for t in all_trades if t["net"] > 0)
+    losses = sum(1 for t in all_trades if t["net"] < 0)
+
+    return {
+        "trades": all_trades,
+        "count": len(all_trades),
+        "summary": {
+            "total_pnl": round(grand_pnl, 6),
+            "total_commission": round(grand_commission, 6),
+            "total_net": round(grand_net, 6),
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round(wins / len(all_trades) * 100, 1) if all_trades else 0,
+        },
+    }
+
+
 @router.get("/api/transaction-history")
 async def api_transaction_history(symbol: str = "", days: int = 1) -> dict:
     """Binance Transaction History — tum hareketler (PnL, commission, funding, transfer)."""
