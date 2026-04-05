@@ -498,15 +498,23 @@ async function renderPendingOrPosition(pos){
         var eng=engines.find(function(e){return e.symbol===sym});
         if(eng&&eng.pending_order&&eng.trade_pending){
             var elapsed=eng.pending_elapsed||0;
+            var pd=eng.pending_detail||{};
+            var timeout=pd.timeout||900;
             var min=Math.floor(elapsed/60);var sec=elapsed%60;
-            var remaining=Math.max(0,900-elapsed);
+            var remaining=Math.max(0,timeout-elapsed);
             var rMin=Math.floor(remaining/60);var rSec=remaining%60;
+            var isBuy=pd.side==='BUY';
+            var sideBadge=isBuy?'<span class="pos-badge pos-long">LONG</span>':'<span class="pos-badge pos-short">SHORT</span>';
+            var dp=pd.limit_price>=100?2:pd.limit_price>=1?4:6;
             $('posInfo').innerHTML=
-                '<div style="text-align:center;padding:6px 0">'
-                +'<span style="color:#F0B90B;font-weight:700;font-size:12px">EMIR BEKLENIYOR</span><br>'
-                +'<span style="color:#6e7681;font-size:11px">'+sym+' | Limit emir verildi</span><br>'
-                +'<span style="font-size:13px;font-weight:600">'+min+':'+('0'+sec).slice(-2)+' gecti</span>'
-                +' <span style="color:#6e7681;font-size:10px">(kalan '+rMin+':'+('0'+rSec).slice(-2)+')</span>'
+                '<div style="padding:4px 0">'
+                +'<div style="text-align:center;margin-bottom:6px"><span style="color:#F0B90B;font-weight:700;font-size:12px">EMIR BEKLENIYOR</span></div>'
+                +'<div class="cr"><span class="k">Yon</span><span class="v">'+sideBadge+'</span></div>'
+                +'<div class="cr"><span class="k">Emir Fiyat</span><span class="v yellow">'+fmt(pd.limit_price,dp)+'</span></div>'
+                +'<div class="cr"><span class="k">Sinyal Fiyat</span><span class="v">'+fmt(pd.signal_price,dp)+'</span></div>'
+                +'<div class="cr"><span class="k">Miktar</span><span class="v">'+fmt(pd.quantity,pd.quantity>=10?0:4)+'</span></div>'
+                +'<div class="cr"><span class="k">SL</span><span class="v red">'+(pd.sl_price>0?fmt(pd.sl_price,dp):'—')+'</span></div>'
+                +'<div class="cr"><span class="k">Sure</span><span class="v">'+min+':'+('0'+sec).slice(-2)+' <span style="color:#6e7681;font-size:9px">kalan '+rMin+':'+('0'+rSec).slice(-2)+'</span></span></div>'
                 +'</div>';
             $('closeBtn').style.display='none';
             return;

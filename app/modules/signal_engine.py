@@ -303,13 +303,21 @@ class SignalEngine:
         # Timeout kontrolu (15dk)
         elapsed = time.time() - po["start_time"]
         if elapsed > po["timeout"]:
-            # Limit order'i iptal et
+            # Limit order + SL emrini iptal et
             try:
                 from app.modules.binance_client import cancel_order
                 await cancel_order(self.symbol, int(po["order_id"]))
-                await log.ainfo("pending_timeout_cancelled", symbol=self.symbol, order_id=po["order_id"])
+                await log.ainfo("pending_timeout_entry_cancelled", symbol=self.symbol, order_id=po["order_id"])
             except Exception:
                 pass
+            # SL emrini de iptal et
+            sl_oid = po.get("sl_order_id", "")
+            if sl_oid:
+                try:
+                    await cancel_order(self.symbol, int(sl_oid))
+                    await log.ainfo("pending_timeout_sl_cancelled", symbol=self.symbol, sl_order_id=sl_oid)
+                except Exception:
+                    pass
             # Sinyal kaydini guncelle
             try:
                 from app.modules.st_signal_logger import get_db as get_signal_db
@@ -385,14 +393,7 @@ class SignalEngine:
                 sl_price = round_price(entry_price * (1 + sl_pct), tick_size)
                 exit_side = "BUY"
 
-            # Eski emirleri temizle — sadece bu sembolun gecmisten kalan TP/SL'leri
-            try:
-                await cancel_all_open_orders(self.symbol)
-                await log.ainfo("old_orders_cleaned_before_tpsl", symbol=self.symbol)
-            except Exception:
-                pass
-
-            # TP koy
+            # TP koy (SL zaten giris emriyle birlikte kondu)
             try:
                 await place_take_profit_market_order(self.symbol, exit_side, qty, tp_price)
                 self.tp_confirmed = True
@@ -412,18 +413,17 @@ class SignalEngine:
                         await log.aerror("tp_passed_close_failed", symbol=self.symbol, error=str(e2))
                     return
 
-            # SL koy
-            if sl_enabled:
+            # SL — zaten giris emriyle birlikte konulduysa atla, konmadiysa yedek olarak koy
+            if not self.sl_confirmed and sl_enabled:
                 try:
                     await place_stop_market_order(self.symbol, exit_side, qty, sl_price)
                     self.sl_confirmed = True
                     self.sl_price = sl_price
-                    await log.ainfo("sl_placed", symbol=self.symbol, sl_price=sl_price)
+                    await log.ainfo("sl_placed_backup", symbol=self.symbol, sl_price=sl_price)
                 except Exception as e:
                     err = str(e)
                     await log.aerror("sl_place_failed", symbol=self.symbol, error=err)
                     if "-2021" in err:
-                        # Fiyat SL'yi asmis — market ile kapat (zararda)
                         try:
                             await cancel_all_open_orders(self.symbol)
                             await place_market_order(self.symbol, exit_side, qty, reduce_only=True)
@@ -432,7 +432,7 @@ class SignalEngine:
                         except Exception as e2:
                             await log.aerror("sl_passed_close_failed", symbol=self.symbol, error=str(e2))
                         return
-            else:
+            elif not sl_enabled:
                 self.sl_confirmed = True
 
             # Trade log

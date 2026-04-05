@@ -366,6 +366,14 @@ async def signal_engine_status() -> dict:
             "sl_price": eng.sl_price,
             "pending_order": bool(eng.pending_order),
             "pending_elapsed": int(time.time() - eng.pending_order["start_time"]) if eng.pending_order else 0,
+            "pending_detail": {
+                "side": eng.pending_order.get("side", ""),
+                "limit_price": eng.pending_order.get("limit_price", 0),
+                "sl_price": eng.pending_order.get("sl_price", 0),
+                "quantity": eng.pending_order.get("quantity", 0),
+                "signal_price": eng.pending_order.get("signal_price", 0),
+                "timeout": eng.pending_order.get("timeout", 900),
+            } if eng.pending_order else None,
         })
     return {"status": "RUNNING", "task": task_status, "engines": result, "count": len(result)}
 

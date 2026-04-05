@@ -270,16 +270,25 @@ async def _execute_trade_inner(
         )
         return
 
-    # ── 8. Limit order ile giriş (binde 1 buffer, 15dk timeout) ──
+    # ── 8. Limit order ile giriş + anında SL ──
     ENTRY_BUFFER = 0.001  # binde 1
     LIMIT_TIMEOUT = 900   # 15 dakika (saniye)
-    POLL_INTERVAL = 5     # 5 saniye polling
 
     if side == "BUY":
         limit_price = round_price(price * (1 - ENTRY_BUFFER), tick_size)
     else:
         limit_price = round_price(price * (1 + ENTRY_BUFFER), tick_size)
 
+    # SL fiyatını hesapla (indicator_settings'ten)
+    ind_sl_pct = sym_cfg.get("sl_pct", 0.1) / 100.0  # yuzde → oran
+    if side == "BUY":
+        sl_price = round_price(limit_price * (1 - ind_sl_pct), tick_size)
+        sl_side = "SELL"
+    else:
+        sl_price = round_price(limit_price * (1 + ind_sl_pct), tick_size)
+        sl_side = "BUY"
+
+    # Giriş emri ver
     order_result = await place_limit_order(symbol, side, quantity, limit_price)
     order_id = str(order_result.get("orderId", ""))
 
@@ -294,7 +303,24 @@ async def _execute_trade_inner(
         timeout=LIMIT_TIMEOUT,
     )
 
-    # ── 8b. Signal engine'e bilgi ver — fill takibi + TP/SL oradan yapilacak ──
+    # HEMEN SL emri ver — giriş emriyle birlikte Binance'ta bekler
+    sl_order_id = ""
+    if sl_enabled:
+        try:
+            from app.modules.binance_client import place_stop_market_instant
+            sl_result = await place_stop_market_instant(symbol, sl_side, quantity, sl_price)
+            sl_order_id = str(sl_result.get("orderId", ""))
+            log.info(
+                "sl_instant_with_entry",
+                symbol=symbol,
+                sl_price=sl_price,
+                sl_side=sl_side,
+                sl_order_id=sl_order_id,
+            )
+        except Exception as e:
+            log.error("sl_instant_failed", symbol=symbol, sl_price=sl_price, error=str(e))
+
+    # ── 8b. Signal engine'e bilgi ver — fill takibi + TP oradan yapilacak ──
     try:
         from app.modules.signal_engine import get_engine
         engine = get_engine(symbol)
@@ -307,6 +333,8 @@ async def _execute_trade_inner(
                 "event_id": event_id,
                 "tick_size": tick_size,
                 "sl_enabled": sl_enabled,
+                "sl_order_id": sl_order_id,
+                "sl_price": sl_price,
                 "start_time": time.time(),
                 "timeout": LIMIT_TIMEOUT,
                 "signal_price": price,
@@ -314,9 +342,12 @@ async def _execute_trade_inner(
                 "closed_previous": closed_previous,
             }
             engine.trade_pending = True
+            if sl_order_id:
+                engine.sl_confirmed = True
+                engine.sl_price = sl_price
     except Exception:
         pass
 
     # execute_trade burada BITER
-    # Fill takibi + TP/SL koyma signal_engine.check_pending_fill() tarafindan yapilir
+    # Fill takibi + TP koyma signal_engine.check_pending_fill() tarafindan yapilir
     return
