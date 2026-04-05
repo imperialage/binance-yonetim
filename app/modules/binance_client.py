@@ -154,6 +154,9 @@ from pathlib import Path as _Path
 
 _ALGO_IDS_PATH = _Path(_os.getenv("DATA_DIR", "data")) / "algo_ids.json"
 
+import asyncio as _asyncio
+_algo_lock = _asyncio.Lock()
+
 
 def _load_algo_ids() -> dict[str, list[int]]:
     """Load tracked algo IDs from disk."""
@@ -174,8 +177,22 @@ def _save_algo_ids(data: dict[str, list[int]]) -> None:
         log.warning("algo_ids_save_failed", error=str(e))
 
 
+async def _track_algo_id_async(symbol: str, algo_id: int | str | None) -> None:
+    """Track an algo order ID for later cancellation (persistent, thread-safe)."""
+    if algo_id is None:
+        return
+    aid = int(algo_id)
+    async with _algo_lock:
+        data = _load_algo_ids()
+        if symbol not in data:
+            data[symbol] = []
+        if aid not in data[symbol]:
+            data[symbol].append(aid)
+        _save_algo_ids(data)
+
+
 def _track_algo_id(symbol: str, algo_id: int | str | None) -> None:
-    """Track an algo order ID for later cancellation (persistent)."""
+    """Sync wrapper — eski cagirilari kirma. Yeni kodda _track_algo_id_async kullan."""
     if algo_id is None:
         return
     aid = int(algo_id)
@@ -207,9 +224,12 @@ async def cancel_all_open_orders(symbol: str) -> dict:
     except Exception as e:
         log.warning("bulk_cancel_failed", symbol=symbol, error=str(e))
 
-    # ── 2. Tracked algo emirlerini sil (persistent file) ──
-    data = _load_algo_ids()
-    algo_ids = data.pop(symbol, [])
+    # ── 2. Tracked algo emirlerini sil (persistent file, lock altinda) ──
+    async with _algo_lock:
+        data = _load_algo_ids()
+        algo_ids = data.pop(symbol, [])
+        _save_algo_ids(data)  # once dosyadan temizle
+
     for aid in algo_ids:
         try:
             del_params = _sign({"algoId": aid})
@@ -219,9 +239,6 @@ async def cancel_all_open_orders(symbol: str) -> dict:
             log.info("algo_order_cancelled", symbol=symbol, algo_id=aid)
         except Exception as e:
             log.info("algo_cancel_skip", symbol=symbol, algo_id=aid, error=str(e))
-
-    # Dosyayi guncelle (bu symbol'un ID'leri silindi)
-    _save_algo_ids(data)
 
     total = cancelled_regular + cancelled_algo
     log.info("all_orders_cancelled", symbol=symbol, regular=cancelled_regular, algo=cancelled_algo, total=total)
@@ -312,7 +329,7 @@ async def place_stop_market_instant(
     resp = await client.post("/fapi/v1/algoOrder", params=params)
     _raise_for_binance(resp)
     result = resp.json()
-    _track_algo_id(symbol, result.get("algoId"))
+    await _track_algo_id_async(symbol, result.get("algoId"))
     log.info("sl_instant_placed", symbol=symbol, side=side, stop_price=stop_price, algo_id=result.get("algoId"))
     return result
 
@@ -337,7 +354,7 @@ async def place_stop_market_order(
     resp = await client.post("/fapi/v1/algoOrder", params=params)
     _raise_for_binance(resp)
     result = resp.json()
-    _track_algo_id(symbol, result.get("algoId"))
+    await _track_algo_id_async(symbol, result.get("algoId"))
     log.info("sl_order_placed", symbol=symbol, side=side, trigger=stop_price, algo_id=result.get("algoId"))
     return result
 
@@ -362,7 +379,7 @@ async def place_take_profit_market_order(
     resp = await client.post("/fapi/v1/algoOrder", params=params)
     _raise_for_binance(resp)
     result = resp.json()
-    _track_algo_id(symbol, result.get("algoId"))
+    await _track_algo_id_async(symbol, result.get("algoId"))
     log.info("tp_order_placed", symbol=symbol, side=side, trigger=trigger_price, algo_id=result.get("algoId"))
     return result
 

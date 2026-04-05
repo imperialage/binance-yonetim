@@ -265,5 +265,4 @@ async def st_webhook(request: Request) -> JSONResponse:
         "indicator": indicator,
         "trade_dispatched": trade_dispatched,
         "trading_enabled": settings.trading_enabled,
-        "skip_reason": skip_reason,
     })

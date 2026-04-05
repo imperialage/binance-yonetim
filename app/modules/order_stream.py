@@ -128,38 +128,42 @@ async def _handle_event(data: dict[str, Any]) -> None:
                     reduce_only = order.get("R", False)  # reduceOnly flag
                     close_pos = order.get("cp", False)    # closePosition flag
                     if reduce_only or close_pos:
-                        # Pozisyon kapandi — ONCE eski emirleri temizle, SONRA state sifirla
-                        try:
-                            from app.modules.binance_client import cancel_all_open_orders
-                            await cancel_all_open_orders(symbol)
-                            await log.ainfo("position_closed_orders_cleaned_instant", symbol=symbol)
-                        except Exception:
-                            pass
-                        engine.on_position_closed()
-                        await log.ainfo("signal_engine_position_closed", symbol=symbol, side=side)
-                        # Son sinyal hala gecerli mi? Hemen isleme gir
-                        if engine.last_signal and engine.last_signal_bar == engine.candle_start:
-                            sig = engine.last_signal
-                            should = await engine.try_execute_signal(sig)
-                            if should:
-                                from app.config import settings as app_cfg
-                                if app_cfg.trading_enabled:
-                                    from app.modules.trade_executor import execute_trade
-                                    import asyncio as _aio
-                                    engine.on_trade_pending()
-                                    event_id = f"se-instant-{int(time.time())}"
-                                    _aio.create_task(execute_trade(
-                                        symbol=symbol,
-                                        signal=sig["direction"],
-                                        price=sig["entry_price"],
-                                        event_id=event_id,
-                                        tf=engine.interval,
-                                    ))
-                                    await log.ainfo("last_signal_executed_instant", symbol=symbol, direction=sig["direction"])
+                        async with engine._state_lock:
+                            if not engine.has_position:
+                                return  # zaten kapali — polling halletmis
+                            # Pozisyon kapandi — ONCE eski emirleri temizle, SONRA state sifirla
+                            try:
+                                from app.modules.binance_client import cancel_all_open_orders
+                                await cancel_all_open_orders(symbol)
+                                await log.ainfo("position_closed_orders_cleaned_instant", symbol=symbol)
+                            except Exception:
+                                pass
+                            engine.on_position_closed()
+                            await log.ainfo("signal_engine_position_closed", symbol=symbol, side=side)
+                            # Son sinyal hala gecerli mi? Hemen isleme gir
+                            if engine.last_signal and engine.last_signal_bar == engine.candle_start:
+                                sig = engine.last_signal
+                                should = await engine.try_execute_signal(sig)
+                                if should:
+                                    from app.config import settings as app_cfg
+                                    if app_cfg.trading_enabled:
+                                        from app.modules.trade_executor import execute_trade
+                                        import asyncio as _aio
+                                        engine.on_trade_pending()
+                                        event_id = f"se-instant-{int(time.time())}"
+                                        _aio.create_task(execute_trade(
+                                            symbol=symbol,
+                                            signal=sig["direction"],
+                                            price=sig["entry_price"],
+                                            event_id=event_id,
+                                            tf=engine.interval,
+                                        ))
+                                        await log.ainfo("last_signal_executed_instant", symbol=symbol, direction=sig["direction"])
                     else:
-                        pos_side = "LONG" if side == "BUY" else "SHORT"
-                        engine.on_position_opened(pos_side)
-                        await log.ainfo("signal_engine_position_opened", symbol=symbol, side=pos_side)
+                        async with engine._state_lock:
+                            pos_side = "LONG" if side == "BUY" else "SHORT"
+                            engine.on_position_opened(pos_side)
+                            await log.ainfo("signal_engine_position_opened", symbol=symbol, side=pos_side)
             except Exception as e:
                 await log.awarning("signal_engine_notify_error", symbol=symbol, error=str(e))
 

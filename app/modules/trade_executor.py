@@ -7,6 +7,7 @@ import time
 
 from app.config import settings
 from app.modules.binance_client import (
+    BinanceAPIError,
     cancel_all_open_orders,
     cancel_order,
     get_exchange_info,
@@ -44,8 +45,8 @@ def _clear_trade_pending(symbol: str) -> None:
         if eng:
             eng.trade_pending = False
             eng.pending_order = None
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("clear_trade_pending_failed", symbol=symbol, error=str(e))
 
 
 async def execute_trade(
@@ -91,8 +92,8 @@ async def execute_trade(
                 if eng:
                     eng.trade_pending = False
                     eng.pending_order = None
-            except Exception:
-                pass
+            except Exception as exc:
+                log.warning("clear_trade_pending_in_error_handler_failed", symbol=symbol, error=str(exc))
             await log_trade(
                 event_id=event_id,
                 ts=ts,
@@ -120,10 +121,12 @@ async def _execute_trade_inner(
     # ── 1. Set leverage to 1x ────────────────────────
     try:
         await set_leverage(symbol, leverage=1)
-    except Exception as e:
+    except BinanceAPIError as e:
         # -4028: leverage not changed — that's fine
-        if "-4028" not in str(e):
+        if e.code != -4028:
             raise
+    except Exception:
+        raise
 
     # ── 2. Check current position ────────────────────
     positions = await get_position_risk(symbol)
@@ -194,9 +197,23 @@ async def _execute_trade_inner(
                 close_side = "SELL" if pos_amt > 0 else "BUY"
                 close_qty = abs(pos_amt)
                 await place_market_order(symbol, close_side, close_qty, reduce_only=True)
-                closed_previous = True
                 log.info("reverse_signal_closed", symbol=symbol, closed_side=close_side, qty=close_qty)
                 await asyncio.sleep(0.5)  # Pozisyon guncellenmesi icin bekle
+                # Fill dogrulamasi — pozisyon gercekten kapandi mi?
+                verify_positions = await get_position_risk(symbol)
+                for vp in verify_positions:
+                    if vp.get("symbol") == symbol:
+                        if float(vp.get("positionAmt", 0)) != 0:
+                            log.error("reverse_close_not_filled", symbol=symbol, pos_amt=vp.get("positionAmt"))
+                            duration = (time.monotonic_ns() // 1_000_000) - start_ms
+                            await log_trade(
+                                event_id=event_id, ts=ts, symbol=symbol, side=side,
+                                status="FAILED", reason="Reverse close not filled",
+                                duration_ms=duration,
+                            )
+                            return
+                        break
+                closed_previous = True
             except Exception as e:
                 duration = (time.monotonic_ns() // 1_000_000) - start_ms
                 log.error("reverse_signal_close_failed", symbol=symbol, error=str(e))
@@ -309,7 +326,7 @@ async def _execute_trade_inner(
         try:
             from app.modules.binance_client import place_stop_market_instant
             sl_result = await place_stop_market_instant(symbol, sl_side, quantity, sl_price)
-            sl_order_id = str(sl_result.get("orderId", ""))
+            sl_order_id = str(sl_result.get("algoId", ""))
             log.info(
                 "sl_instant_with_entry",
                 symbol=symbol,

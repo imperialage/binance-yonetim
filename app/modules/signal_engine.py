@@ -86,6 +86,9 @@ class SignalEngine:
         self.tp_price: float = 0.0
         self.sl_price: float = 0.0
 
+        # Per-engine lock — pozisyon kapanisi + fill islemleri icin
+        self._state_lock: asyncio.Lock = asyncio.Lock()
+
         # Pending order — fill takibi icin (trade_executor'dan gelir)
         self.pending_order: dict | None = None
 
@@ -299,75 +302,77 @@ class SignalEngine:
 
     async def check_position_closed(self) -> None:
         """Pozisyon acikken kapanmis mi kontrol et. Kapandiysa eski emirleri temizle."""
-        try:
-            positions = await get_position_risk(self.symbol)
-            pos_amt = 0.0
-            for p in positions:
-                if p.get("symbol") == self.symbol:
-                    pos_amt = float(p.get("positionAmt", 0))
-                    break
-
-            if pos_amt != 0:
-                return  # pozisyon hala acik
-
-            # Pozisyon kapanmis! Eski emirleri temizle
-            from app.modules.binance_client import cancel_all_open_orders
+        async with self._state_lock:
+            if not self.has_position:
+                return  # zaten kapali — order_stream halletmis olabilir
             try:
-                await cancel_all_open_orders(self.symbol)
-                await log.ainfo("position_closed_orders_cleaned", symbol=self.symbol)
-            except Exception:
-                pass
+                positions = await get_position_risk(self.symbol)
+                pos_amt = 0.0
+                for p in positions:
+                    if p.get("symbol") == self.symbol:
+                        pos_amt = float(p.get("positionAmt", 0))
+                        break
 
-            self.on_position_closed()
-            await log.ainfo("position_closed_detected", symbol=self.symbol)
+                if pos_amt != 0:
+                    return  # pozisyon hala acik
 
-            # Son sinyal hala bu mumda mi? Hemen isleme gir
-            if self.last_signal and self.last_signal_bar == self.candle_start:
-                sig = self.last_signal
-                should = await self.try_execute_signal(sig)
-                if should:
-                    from app.config import settings as app_cfg
-                    if app_cfg.trading_enabled:
-                        from app.modules.trade_executor import execute_trade
-                        self.on_trade_pending()
-                        event_id = f"se-close-{int(time.time())}"
-                        asyncio.create_task(execute_trade(
-                            symbol=self.symbol,
-                            signal=sig["direction"],
-                            price=sig["entry_price"],
-                            event_id=event_id,
-                            tf=self.interval,
-                        ))
-                        await log.ainfo("last_signal_executed_after_close", symbol=self.symbol, direction=sig["direction"])
+                # Pozisyon kapanmis! Eski emirleri temizle
+                from app.modules.binance_client import cancel_all_open_orders
+                try:
+                    await cancel_all_open_orders(self.symbol)
+                    await log.ainfo("position_closed_orders_cleaned", symbol=self.symbol)
+                except Exception:
+                    pass
 
-        except Exception as e:
-            await log.awarning("check_position_closed_error", symbol=self.symbol, error=str(e))
+                self.on_position_closed()
+                await log.ainfo("position_closed_detected", symbol=self.symbol)
+
+                # Son sinyal hala bu mumda mi? Hemen isleme gir
+                if self.last_signal and self.last_signal_bar == self.candle_start:
+                    sig = self.last_signal
+                    should = await self.try_execute_signal(sig)
+                    if should:
+                        from app.config import settings as app_cfg
+                        if app_cfg.trading_enabled:
+                            from app.modules.trade_executor import execute_trade
+                            self.on_trade_pending()
+                            event_id = f"se-close-{int(time.time())}"
+                            asyncio.create_task(execute_trade(
+                                symbol=self.symbol,
+                                signal=sig["direction"],
+                                price=sig["entry_price"],
+                                event_id=event_id,
+                                tf=self.interval,
+                            ))
+                            await log.ainfo("last_signal_executed_after_close", symbol=self.symbol, direction=sig["direction"])
+
+            except Exception as e:
+                await log.awarning("check_position_closed_error", symbol=self.symbol, error=str(e))
 
     async def check_pending_fill(self) -> None:
         """trade_pending ise: Binance'tan pozisyon kontrol et, fill olduysa TP/SL koy."""
         if not self.trade_pending or not self.pending_order:
             return
 
+        async with self._state_lock:
+            if not self.trade_pending or not self.pending_order:
+                return  # lock beklerken order_stream halletmis olabilir
+            await self._check_pending_fill_inner()
+
+    async def _check_pending_fill_inner(self) -> None:
+        """check_pending_fill ic mantigi — _state_lock altinda cagirilir."""
         po = self.pending_order
 
         # Timeout kontrolu (15dk)
         elapsed = time.time() - po["start_time"]
         if elapsed > po["timeout"]:
-            # Limit order + SL emrini iptal et
+            # Tum emirleri iptal et (limit entry + algo SL dahil)
             try:
-                from app.modules.binance_client import cancel_order
-                await cancel_order(self.symbol, int(po["order_id"]))
-                await log.ainfo("pending_timeout_entry_cancelled", symbol=self.symbol, order_id=po["order_id"])
-            except Exception:
-                pass
-            # SL emrini de iptal et
-            sl_oid = po.get("sl_order_id", "")
-            if sl_oid:
-                try:
-                    await cancel_order(self.symbol, int(sl_oid))
-                    await log.ainfo("pending_timeout_sl_cancelled", symbol=self.symbol, sl_order_id=sl_oid)
-                except Exception:
-                    pass
+                from app.modules.binance_client import cancel_all_open_orders
+                result = await cancel_all_open_orders(self.symbol)
+                await log.ainfo("pending_timeout_all_cancelled", symbol=self.symbol, result=result)
+            except Exception as e:
+                await log.awarning("pending_timeout_cancel_failed", symbol=self.symbol, error=str(e))
             # Sinyal kaydini guncelle
             try:
                 from app.modules.st_signal_logger import get_db as get_signal_db
@@ -501,6 +506,21 @@ class SignalEngine:
                         except Exception as e2:
                             await log.aerror("sl_passed_close_failed", symbol=self.symbol, error=str(e2))
                         return
+                    # SL hicbir sekilde konamadi — pozisyonu market ile kapat
+                    await log.aerror(
+                        "sl_all_attempts_failed_closing_position",
+                        symbol=self.symbol,
+                        sl_price=sl_price,
+                        error=err,
+                    )
+                    try:
+                        await cancel_all_open_orders(self.symbol)
+                        await place_market_order(self.symbol, exit_side, qty, reduce_only=True)
+                        self.on_position_closed()
+                        await log.ainfo("sl_failed_emergency_close", symbol=self.symbol)
+                    except Exception as e3:
+                        await log.aerror("sl_failed_emergency_close_failed", symbol=self.symbol, error=str(e3))
+                    return
             elif not sl_enabled:
                 self.sl_confirmed = True
 

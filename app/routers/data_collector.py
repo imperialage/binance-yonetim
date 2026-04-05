@@ -5,8 +5,10 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+
+from app.dependencies import require_admin
 
 from app.modules.candle_store import (
     get_candle_stats,
@@ -44,7 +46,7 @@ class FetchHistoryRequest(BaseModel):
 
 
 @router.post("/start")
-async def start_collector(req: CollectionRequest):
+async def start_collector(req: CollectionRequest, _=Depends(require_admin)):
     """Sürekli veri toplama başlat."""
     symbol = req.symbol.upper()
     interval = req.interval
@@ -56,7 +58,7 @@ async def start_collector(req: CollectionRequest):
 
 
 @router.post("/stop")
-async def stop_collector(req: CollectionRequest):
+async def stop_collector(req: CollectionRequest, _=Depends(require_admin)):
     """Veri toplamayı durdur."""
     symbol = req.symbol.upper()
     result = stop_collection(symbol, req.interval)
@@ -74,7 +76,7 @@ async def collector_status():
 
 
 @router.post("/fetch-history")
-async def fetch_history(req: FetchHistoryRequest):
+async def fetch_history(req: FetchHistoryRequest, _=Depends(require_admin)):
     """Geçmiş veriyi çek, SuperTrend hesapla, DB'ye kaydet.
 
     DB'de zaten veri varsa sadece eksik kısmı çeker.

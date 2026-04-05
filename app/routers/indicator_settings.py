@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from app.dependencies import require_admin
 
 from app.modules.indicator_settings_store import (
     delete_settings,
@@ -52,7 +54,7 @@ async def api_get_one(symbol: str) -> dict:
 
 
 @router.put("/api/indicator-settings/{symbol}")
-async def api_upsert(symbol: str, body: IndicatorSettingsBody) -> dict:
+async def api_upsert(symbol: str, body: IndicatorSettingsBody, _=Depends(require_admin)) -> dict:
     """Sembol ayarini kaydet veya guncelle."""
     data = {k: v for k, v in body.model_dump().items() if v is not None}
     result = await upsert_settings(symbol, data)
@@ -60,7 +62,7 @@ async def api_upsert(symbol: str, body: IndicatorSettingsBody) -> dict:
 
 
 @router.delete("/api/indicator-settings/{symbol}")
-async def api_delete(symbol: str) -> dict:
+async def api_delete(symbol: str, _=Depends(require_admin)) -> dict:
     """Sembol ayarini sil."""
     deleted = await delete_settings(symbol)
     return {"deleted": deleted, "symbol": symbol.upper()}
