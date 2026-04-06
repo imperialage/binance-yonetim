@@ -816,29 +816,27 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
                 "exit_type": ex["type"], "pnl": pnl, "pnl_pct": pnl_pct,
             }
 
-        # Strateji: Her LIMIT FILLED'in hemen sonrasindaki ters-yon MARKET FILLED = cikis
+        # Strateji: Ters-yon ciftleri eslestir
+        # Bir emir (entry) + sonraki ters-yon emir (exit) = 1 trade
+        # Entry: genellikle LIMIT ama reverse_signal'da MARKET da olabilir
+        # Exit: genellikle MARKET (TP/SL/reverse) ama LIMIT da olabilir
         for i, f in enumerate(filled):
             if i in used:
                 continue
-            # LIMIT entry ara
-            if "LIMIT" in f["type"] and f["side"] in ("BUY", "SELL"):
-                entry = f
-                entry_side = f["side"]
-                exit_side = "SELL" if entry_side == "BUY" else "BUY"
-                pos_side = "LONG" if entry_side == "BUY" else "SHORT"
-                # Sonraki emirlerde cikis ara
-                for j in range(i + 1, len(filled)):
-                    if j in used:
-                        continue
-                    nxt = filled[j]
-                    if nxt["side"] == exit_side:
-                        used.add(i)
-                        used.add(j)
-                        sym_trades.append(_make_trade(entry, nxt, pos_side, min(entry["qty"], nxt["qty"])))
-                        break
-                    # Ayni yon emir gelirse (ek entry) atla
-                    if nxt["side"] == entry_side and "LIMIT" in nxt["type"]:
-                        break  # bu baska bir trade'in entry'si
+            entry = f
+            entry_side = f["side"]
+            exit_side = "SELL" if entry_side == "BUY" else "BUY"
+            pos_side = "LONG" if entry_side == "BUY" else "SHORT"
+            # Sonraki emirlerde ters-yon cikis ara
+            for j in range(i + 1, len(filled)):
+                if j in used:
+                    continue
+                nxt = filled[j]
+                if nxt["side"] == exit_side:
+                    used.add(i)
+                    used.add(j)
+                    sym_trades.append(_make_trade(entry, nxt, pos_side, min(entry["qty"], nxt["qty"])))
+                    break
 
         used_entries = set()
         all_result_trades.extend(sym_trades)
