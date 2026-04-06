@@ -172,6 +172,7 @@
 <script>
 var days=30,data=null;
 var SYMS=['XAGUSDT','ETHUSDT','MYXUSDT','BTCUSDT','SOLUSDT','XRPUSDT','DOGEUSDT','AVAXUSDT'];
+var ADMIN_TOKEN=localStorage.getItem('admin_token')||'';
 
 function $(id){return document.getElementById(id)}
 function fmt(n,d){return n==null||isNaN(n)?'--':Number(n).toFixed(d!=null?d:2)}
@@ -189,12 +190,23 @@ function setDays(d){
   SYMS.forEach(function(s){var o=document.createElement('option');o.value=s;o.textContent=s.replace('USDT','');sel.appendChild(o)});
 })();
 
+function ensureToken(){
+  if(!ADMIN_TOKEN){
+    ADMIN_TOKEN=prompt('Admin Token girin:')||'';
+    if(ADMIN_TOKEN) localStorage.setItem('admin_token',ADMIN_TOKEN);
+  }
+  return ADMIN_TOKEN;
+}
+
 async function loadData(){
+  var token=ensureToken();
+  if(!token) return;
   var sym=$('symFilter').value;
   var u='/api/strategy-report?days='+days;
   if(sym) u+='&symbol='+sym;
   try{
-    var r=await fetch(u);
+    var r=await fetch(u,{headers:{'X-Admin-Token':token}});
+    if(r.status===401){ADMIN_TOKEN='';localStorage.removeItem('admin_token');alert('Gecersiz token');return}
     data=await r.json();
     render();
     $('lastUpdate').textContent=new Date().toLocaleTimeString('tr-TR');
