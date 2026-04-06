@@ -763,9 +763,10 @@ class SignalEngine:
                 "rsi": closed_rsi,
             }
             self.closed_candles.append(closed)
-            # Son max_gap + 5 mum yeterli
-            if len(self.closed_candles) > self.max_gap + 20:
-                self.closed_candles = self.closed_candles[-(self.max_gap + 20):]
+            # Diverjans icin max_gap yeterli, debug icin biraz fazla tut
+            max_keep = max(self.max_gap + 20, 100)
+            if len(self.closed_candles) > max_keep:
+                self.closed_candles = self.closed_candles[-max_keep:]
 
             # Mum kapanisi logu — potansiyel A mumlarini say
             ob_count = sum(1 for c in self.closed_candles[-self.max_gap:] if c.get("rsi") and c["rsi"] >= self.short_thresh and c["time"] not in self.used_a)
@@ -892,6 +893,17 @@ class SignalEngine:
                 self.used_a = set(data[-500:])
         except Exception:
             self.used_a = set()
+        # Yukleme sirasinda eski kayitlari temizle
+        self._cleanup_used_a()
+
+    def _cleanup_used_a(self) -> None:
+        """24 saatten eski used_a kayitlarini temizle."""
+        cutoff = int(time.time()) - 86400  # 24 saat
+        before = len(self.used_a)
+        self.used_a = {ts for ts in self.used_a if ts > cutoff}
+        removed = before - len(self.used_a)
+        if removed > 0:
+            self._save_used_a()
 
     def _save_used_a(self) -> None:
         try:
@@ -1229,6 +1241,9 @@ async def _engine_loop() -> None:
                             await log.ainfo("signal_engine_removed", symbol=sym)
                     # Periyodik orphan limit temizligi (settings reload ile birlikte, 60sn)
                     await _cleanup_orphan_limit_orders()
+                    # used_a eski kayitlari temizle (24 saatten eski)
+                    for eng in _engines.values():
+                        eng._cleanup_used_a()
                 except Exception as e:
                     await log.awarning("signal_engine_settings_reload_error", error=str(e))
 
