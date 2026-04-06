@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trading Dashboard</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0B0E11">
+<link rel="manifest" href="/static/manifest.json">
 <link rel="stylesheet" href="/static/styles.css">
 <style>
 /* Page-specific: Trading Dashboard — uses styles.css design system */
@@ -67,12 +71,21 @@
 .scroll-list{position:relative}
 .scroll-hint{display:none;position:absolute;right:0;top:0;bottom:0;width:20px;background:linear-gradient(90deg,transparent,rgba(11,14,17,0.8));pointer-events:none;z-index:2}
 
-/* Toast container (uses toast-wrap from styles.css but trading.html uses its own ID) */
-.toast-container{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:var(--z-toast);display:flex;flex-direction:column;align-items:center;gap:8px}
+/* Toast — bottom nav uzerinde */
+.toast-container{position:fixed;bottom:calc(var(--bottom-nav-height) + 16px);left:50%;transform:translateX(-50%);z-index:var(--z-toast);display:flex;flex-direction:column;align-items:center;gap:8px}
 .toast.success{background:rgba(35,134,54,0.92)}.toast.error{background:rgba(218,54,51,0.92)}
 
 /* Two-column layout */
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-lg);margin-bottom:var(--space-xl)}
+
+/* Mobile tables: gizle/goster */
+.mobile-tables{display:none}
+.mobile-panel{display:none}
+.mobile-panel.active{display:block}
+
+/* Sym filter chip */
+.sym-filter-chip{cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;color:var(--text-dim);display:inline-block;margin:0 1px}
+.sym-filter-chip.active{background:var(--accent-gold-bg);color:var(--accent-gold)}
 /* Modal detail items */
 .modal-header{margin-bottom:20px;position:relative}
 .modal-header h3{font-size:16px;font-weight:700;color:var(--text-primary);margin-bottom:4px}
@@ -149,31 +162,48 @@ tr.clickable:hover{background:#1c212888}
 
 @media(max-width:768px){
   .container{padding:var(--space-md) var(--space-md) calc(var(--bottom-nav-height) + 20px)}
-  .top-row{grid-template-columns:1fr 1fr;gap:var(--space-sm);margin-bottom:var(--space-lg)}
+  .top-row{grid-template-columns:1fr 1fr;gap:var(--space-sm);margin-bottom:var(--space-md)}
+  .stat-card{padding:12px 14px}
+  .stat-label{font-size:9px;letter-spacing:0.8px;margin-bottom:4px}
+  .stat-value{font-size:18px}
+  .stat-sub{font-size:10px;margin-top:2px}
   .filter-icons{margin-top:4px;margin-left:0;width:100%}
   .sym-grid{grid-template-columns:1fr;gap:10px;margin-bottom:var(--space-lg)}
-  .two-col{grid-template-columns:1fr;gap:var(--space-md);margin-bottom:var(--space-lg)}
-  .panel{padding:14px;border-radius:var(--radius-lg)}
-  .scroll-list{max-height:400px;margin:0 -14px;padding:0 14px}
-  .scroll-list table{min-width:480px}
-  .modal{padding:20px;width:95%;max-width:none;border-radius:var(--radius-xl)}
+
+  /* Desktop tabloları gizle, mobil tabloları goster */
+  .desktop-tables{display:none !important}
+  .mobile-tables{display:block}
+
+  .panel{padding:12px;border-radius:var(--radius-lg)}
+  .scroll-list{max-height:60vh;margin:0 -12px;padding:0 12px}
+  .scroll-list table{min-width:auto}
+
+  /* Tablo: scroll indicator */
+  .scroll-list{position:relative}
+  .scroll-list::after{content:'';position:absolute;right:0;top:0;bottom:0;width:16px;background:linear-gradient(90deg,transparent,var(--bg-secondary));pointer-events:none;opacity:0.7;border-radius:0 var(--radius-md) var(--radius-md) 0}
+
+  .modal{padding:16px;width:95%;max-width:none;border-radius:var(--radius-xl)}
   .detail-grid{gap:var(--space-sm)}
   .mod-label{font-size:9px}
   .mod-input{padding:8px 10px;font-size:13px}
+
+  /* Mobile tab panel scrollable icerik */
+  .mobile-data-tabs{overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch}
+  .mobile-data-tabs .tab{flex-shrink:0}
 }
 
 @media(max-width:400px){
   .top-row{gap:6px}
+  .stat-value{font-size:16px}
   .sym-name{font-size:14px}
   .sym-price{font-size:13px}
-  .table-scroll{margin:0 -12px;padding:0 12px}
 }
 </style>
 </head>
 <body>
 
 <header class="app-header">
-  <h1>Trading Dashboard</h1>
+  <h1>Trading</h1>
   <nav class="nav-links">
     <a href="/">Piyasa</a>
     <a href="/chart">Grafik</a>
@@ -182,12 +212,12 @@ tr.clickable:hover{background:#1c212888}
     <a href="/settings">Ayarlar</a>
     <a href="/collector">Veri</a>
   </nav>
-  <div class="status-badge" id="wsBadge">
-    <span class="dot"></span>
-    <span id="wsText">Baglaniyor...</span>
-  </div>
   <div class="header-right">
-    <span class="last-update" id="lastUpdate"></span>
+    <div class="status-badge" id="wsBadge">
+      <span class="dot"></span>
+      <span id="wsText">Baglaniyor...</span>
+    </div>
+    <span class="last-update hide-sm" id="lastUpdate"></span>
     <button class="btn-refresh" onclick="fetchAll()">Yenile</button>
   </div>
 </header>
@@ -197,54 +227,52 @@ tr.clickable:hover{background:#1c212888}
   <!-- Top Summary Row -->
   <div class="top-row">
     <div class="stat-card">
-      <div class="stat-label">Bakiye (USDT)</div>
+      <div class="stat-label">Bakiye</div>
       <div class="stat-value" id="balanceVal">--</div>
-      <div class="stat-sub" id="balanceSub"></div>
+      <div class="stat-sub" id="balanceSub">USDT</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Acik Pozisyonlar</div>
+      <div class="stat-label">Pozisyonlar</div>
       <div class="stat-value" id="openPosCount">0</div>
-      <div class="stat-sub" id="openPosSub">6 sembol izleniyor</div>
+      <div class="stat-sub" id="openPosSub">6 sembol</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Toplam Unrealized PnL</div>
+      <div class="stat-label">Acik PnL</div>
       <div class="stat-value" id="totalUpnl">--</div>
       <div class="stat-sub" id="totalUpnlSub"></div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">7 Gunluk PnL</div>
+      <div class="stat-label">7G PnL</div>
       <div class="stat-value" id="weekPnl">--</div>
       <div class="stat-sub" id="weekPnlSub"></div>
     </div>
   </div>
 
   <!-- Symbol Position Grid -->
-  <div class="section-title">Sembol Pozisyonlari <span class="count" id="posCount">0 / 6</span>
+  <div class="section-title" style="flex-wrap:wrap">Pozisyonlar <span class="count" id="posCount">0 / 6</span>
     <div class="filter-icons" id="symFilters">
-      <button class="filter-btn active" data-filter="all" onclick="setSymFilter('all')" title="Tumu"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v2.382a1.5 1.5 0 01-.44 1.06L10 10.5V14a1 1 0 01-1.447.894L6.763 13.8A1 1 0 016 12.894V10.5L1.44 5.94A1.5 1.5 0 011 4.882V2.5z"/></svg></button>
-      <button class="filter-btn" data-filter="enabled" onclick="setSymFilter('enabled')" title="Islem Aktif"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 110 14A7 7 0 018 1zm3.354 4.646a.5.5 0 00-.708 0L7 9.293 5.354 7.646a.5.5 0 10-.708.708l2 2a.5.5 0 00.708 0l4-4a.5.5 0 000-.708z"/></svg></button>
-      <button class="filter-btn" data-filter="haspos" onclick="setSymFilter('haspos')" title="Acik Pozisyon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5a.5.5 0 01.5-.5h7a.5.5 0 01.5.5v3a.5.5 0 01-.5.5h-7a.5.5 0 01-.5-.5v-3zm0 5a.5.5 0 01.5-.5h7a.5.5 0 01.5.5v3a.5.5 0 01-.5.5h-7a.5.5 0 01-.5-.5v-3z"/><path d="M2 1a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V2a1 1 0 00-1-1H2z"/></svg></button>
-      <button class="filter-btn" data-filter="listening" onclick="setSymFilter('listening')" title="Sinyal Dinleyen"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a5 5 0 00-5 5v4.5a.5.5 0 00.5.5H5a1 1 0 001 1h4a1 1 0 001-1h1.5a.5.5 0 00.5-.5V6a5 5 0 00-5-5zM5 6a3 3 0 116 0v4H5V6z"/></svg></button>
+      <button class="filter-btn active" data-filter="all" onclick="setSymFilter('all')" title="Tumu" aria-label="Tum semboller"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v2.382a1.5 1.5 0 01-.44 1.06L10 10.5V14a1 1 0 01-1.447.894L6.763 13.8A1 1 0 016 12.894V10.5L1.44 5.94A1.5 1.5 0 011 4.882V2.5z"/></svg></button>
+      <button class="filter-btn" data-filter="enabled" onclick="setSymFilter('enabled')" title="Islem Aktif" aria-label="Aktif semboller"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1a7 7 0 110 14A7 7 0 018 1zm3.354 4.646a.5.5 0 00-.708 0L7 9.293 5.354 7.646a.5.5 0 10-.708.708l2 2a.5.5 0 00.708 0l4-4a.5.5 0 000-.708z"/></svg></button>
+      <button class="filter-btn" data-filter="haspos" onclick="setSymFilter('haspos')" title="Acik Pozisyon" aria-label="Acik pozisyonlar"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2.5a.5.5 0 01.5-.5h7a.5.5 0 01.5.5v3a.5.5 0 01-.5.5h-7a.5.5 0 01-.5-.5v-3zm0 5a.5.5 0 01.5-.5h7a.5.5 0 01.5.5v3a.5.5 0 01-.5.5h-7a.5.5 0 01-.5-.5v-3z"/><path d="M2 1a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V2a1 1 0 00-1-1H2z"/></svg></button>
+      <button class="filter-btn" data-filter="listening" onclick="setSymFilter('listening')" title="Sinyal Dinleyen" aria-label="Sinyal dinleyenler"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1a5 5 0 00-5 5v4.5a.5.5 0 00.5.5H5a1 1 0 001 1h4a1 1 0 001-1h1.5a.5.5 0 00.5-.5V6a5 5 0 00-5-5zM5 6a3 3 0 116 0v4H5V6z"/></svg></button>
     </div>
   </div>
   <div class="sym-grid" id="symGrid">
     <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
   </div>
 
-  <!-- Two Column: Signals + Trades -->
-  <div class="two-col">
+  <!-- ═══ Islem Gecmisi — Masaustunde 2 sutun, Mobilde tabbed tek panel ═══ -->
 
-    <!-- Order History (Binance) -->
+  <!-- Desktop: 2-col layout (768px+) -->
+  <div class="two-col desktop-tables">
     <div class="panel">
-      <h2>Emir Gecmisi <span style="font-size:10px;color:#58a6ff;font-weight:400;text-transform:none;letter-spacing:0">(Binance Order History)</span></h2>
+      <h2>Emir Gecmisi</h2>
       <div class="scroll-list" id="signalsContent">
         <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
       </div>
     </div>
-
-    <!-- Transaction History (Binance) -->
     <div class="panel">
-      <h2>Transaction History</h2>
+      <h2>Islem Gecmisi</h2>
       <div class="tabs" id="tradeTabs">
         <button class="tab active" data-filter="all">Tumu</button>
         <button class="tab" data-filter="pnl">PnL</button>
@@ -255,32 +283,73 @@ tr.clickable:hover{background:#1c212888}
         <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
       </div>
     </div>
-
   </div>
 
-  <div class="two-col">
-    <!-- Position History -->
+  <div class="two-col desktop-tables">
     <div class="panel">
-      <h2>Position History <span style="font-size:10px;color:#58a6ff;font-weight:400;text-transform:none;letter-spacing:0">(Binance)</span></h2>
+      <h2>Pozisyon Gecmisi</h2>
       <div class="scroll-list" id="posHistContent">
         <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
       </div>
     </div>
-
-    <!-- Trade History (allOrders filled) -->
     <div class="panel">
-      <h2>Trade History <span style="font-size:10px;color:#58a6ff;font-weight:400;text-transform:none;letter-spacing:0">(Binance)</span></h2>
+      <h2>Emir Detaylari</h2>
       <div class="scroll-list" id="tradeHistContent">
         <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
       </div>
     </div>
   </div>
 
-  <!-- Kar/Zarar Tablosu (komisyon dahil) -->
-  <div class="panel" style="margin-top:16px">
-    <h2>Kar / Zarar Tablosu <span style="font-size:10px;color:#58a6ff;font-weight:400;text-transform:none;letter-spacing:0">(Komisyon Dahil, 7 Gun)</span></h2>
+  <div class="panel desktop-tables" style="margin-bottom:20px">
+    <h2>Kar / Zarar Tablosu <span style="font-size:10px;color:var(--color-info);font-weight:400;text-transform:none;letter-spacing:0">(7 Gun, Komisyon Dahil)</span></h2>
     <div class="scroll-list" id="pnlTableContent">
       <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
+    </div>
+  </div>
+
+  <!-- Mobile: Tek tabbed panel (768px alti) -->
+  <div class="mobile-tables">
+    <div class="panel" style="margin-bottom:20px">
+      <div class="tabs mobile-data-tabs" id="mobileDataTabs" style="width:100%;margin-bottom:12px">
+        <button class="tab active" data-panel="m-transactions" onclick="switchMobileTab(this)">Islemler</button>
+        <button class="tab" data-panel="m-positions" onclick="switchMobileTab(this)">Pozisyonlar</button>
+        <button class="tab" data-panel="m-orders" onclick="switchMobileTab(this)">Emirler</button>
+        <button class="tab" data-panel="m-pnl" onclick="switchMobileTab(this)">K/Z</button>
+      </div>
+
+      <!-- Transaction History (Mobile) -->
+      <div class="mobile-panel active" id="m-transactions">
+        <div class="tabs" id="mTradeTabs" style="margin-bottom:8px">
+          <button class="tab active" data-filter="all">Tumu</button>
+          <button class="tab" data-filter="pnl">PnL</button>
+          <button class="tab" data-filter="fee">Kom.</button>
+          <button class="tab" data-filter="funding">Fund</button>
+        </div>
+        <div class="scroll-list" id="mTradesContent">
+          <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
+        </div>
+      </div>
+
+      <!-- Position History (Mobile) -->
+      <div class="mobile-panel" id="m-positions">
+        <div class="scroll-list" id="mPosHistContent">
+          <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
+        </div>
+      </div>
+
+      <!-- Order History (Mobile) -->
+      <div class="mobile-panel" id="m-orders">
+        <div class="scroll-list" id="mSignalsContent">
+          <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
+        </div>
+      </div>
+
+      <!-- PnL Table (Mobile) -->
+      <div class="mobile-panel" id="m-pnl">
+        <div class="scroll-list" id="mPnlContent">
+          <div class="loading"><span class="spinner"></span>Yukleniyor...</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -322,6 +391,19 @@ tr.clickable:hover{background:#1c212888}
   var pnlSymFilter = 'all';
   var tradeFilter = 'all';
   var symFilter = 'all';
+
+  // ── Mobil tab switching ──
+  var isMobile=window.innerWidth<=768;
+  window.addEventListener('resize',function(){isMobile=window.innerWidth<=768});
+
+  window.switchMobileTab=function(el){
+    var panelId=el.dataset.panel;
+    document.querySelectorAll('.mobile-data-tabs .tab').forEach(function(t){t.classList.remove('active')});
+    el.classList.add('active');
+    document.querySelectorAll('.mobile-panel').forEach(function(p){p.classList.remove('active')});
+    var target=document.getElementById(panelId);
+    if(target) target.classList.add('active');
+  };
 
   window.setSymFilter=function(f){
     symFilter=f;
@@ -860,10 +942,9 @@ tr.clickable:hover{background:#1c212888}
     var syms=new Set();
     (signalsData&&signalsData.orders||[]).forEach(function(o){if(o.symbol)syms.add(o.symbol)});
     (incomeData&&incomeData.transactions||[]).forEach(function(t){if(t.symbol)syms.add(t.symbol)});
-    var html='<span style="cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;'+(currentFilter==='all'?'background:#F0B90B20;color:#F0B90B':'color:#6e7681')+'" onclick="'+callback+'(\'all\')">Tumu</span> ';
+    var html='<span class="sym-filter-chip'+(currentFilter==='all'?' active':'')+'" onclick="'+callback+'(\'all\')">Tumu</span>';
     syms.forEach(function(s){
-      var active=currentFilter===s;
-      html+='<span style="cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;'+(active?'background:#F0B90B20;color:#F0B90B':'color:#6e7681')+'" onclick="'+callback+'(\''+s+'\')">'+s.replace('USDT','')+'</span> ';
+      html+='<span class="sym-filter-chip'+(currentFilter===s?' active':'')+'" onclick="'+callback+'(\''+s+'\')">'+s.replace('USDT','')+'</span>';
     });
     return html;
   }
@@ -906,6 +987,8 @@ tr.clickable:hover{background:#1c212888}
     });
     html+='</tbody></table></div>';
     $('signalsContent').innerHTML=html;
+    // Mobil esinik
+    var mEl=$('mSignalsContent');if(mEl) mEl.innerHTML=html;
   }
 
   // ── Order Detail Modal ──
@@ -1045,6 +1128,8 @@ tr.clickable:hover{background:#1c212888}
     sumHtml+='</div>';
 
     $('tradesContent').innerHTML=sumHtml+html;
+    // Mobil esinik
+    var mEl=$('mTradesContent');if(mEl) mEl.innerHTML=sumHtml+html;
   }
 
   // ── Position History Render ──
@@ -1100,6 +1185,7 @@ tr.clickable:hover{background:#1c212888}
     });
     html+='</tbody></table></div>';
     $('posHistContent').innerHTML=html;
+    var mEl=$('mPosHistContent');if(mEl) mEl.innerHTML=html;
   }
 
   // ── Trade History Render (allOrders filled only) ──
@@ -1143,6 +1229,7 @@ tr.clickable:hover{background:#1c212888}
     });
     html+='</tbody></table></div>';
     $('tradeHistContent').innerHTML=html;
+    var mEl2=$('mSignalsContent');/* emirler mobilde Orders tabinda */
   }
 
   // ── Kar/Zarar Tablosu (komisyon dahil) ──
@@ -1204,6 +1291,7 @@ tr.clickable:hover{background:#1c212888}
     });
     html+='</tbody></table></div>';
     $('pnlTableContent').innerHTML=html;
+    var mEl=$('mPnlContent');if(mEl) mEl.innerHTML=html;
   }
 
   // ── Tab Handling ──
@@ -1219,8 +1307,9 @@ tr.clickable:hover{background:#1c212888}
     });
   }
 
-  // signalTabs kaldirildi — tek kaynak TradingView webhook
+  // Trade tabs — desktop + mobile
   setupTabs('tradeTabs',function(f){ tradeFilter=f; renderTrades(); });
+  setupTabs('mTradeTabs',function(f){ tradeFilter=f; renderTrades(); });
 
   // ── Init ──
   connectWS();
