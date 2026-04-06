@@ -1203,7 +1203,7 @@ tr.clickable:hover { background: rgba(28, 33, 40, 0.5); }
     overflow-x: auto;
   }
 
-  .hide-mobile { display: none !important; }
+  .hide-mobile, .hide-sm { display: none !important; }
   .show-mobile { display: block !important; }
 }
 

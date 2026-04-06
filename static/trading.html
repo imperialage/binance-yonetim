@@ -58,11 +58,14 @@
 .pnl-positive{color:var(--color-long-alt);font-weight:700}
 .pnl-negative{color:var(--color-short-alt);font-weight:700}
 
-.scroll-list{max-height:450px;overflow-y:auto;overflow-x:auto;-webkit-overflow-scrolling:touch}
-.scroll-list::-webkit-scrollbar{width:5px}
+.scroll-list{max-height:450px;overflow-y:auto;overflow-x:auto;-webkit-overflow-scrolling:touch;scroll-behavior:smooth}
+.scroll-list::-webkit-scrollbar{width:5px;height:5px}
 .scroll-list::-webkit-scrollbar-track{background:transparent}
 .scroll-list::-webkit-scrollbar-thumb{background:var(--border-secondary);border-radius:3px}
 .scroll-list table{min-width:500px}
+/* Mobilde scroll hint — kenar gradient */
+.scroll-list{position:relative}
+.scroll-hint{display:none;position:absolute;right:0;top:0;bottom:0;width:20px;background:linear-gradient(90deg,transparent,rgba(11,14,17,0.8));pointer-events:none;z-index:2}
 
 /* Toast container (uses toast-wrap from styles.css but trading.html uses its own ID) */
 .toast-container{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:var(--z-toast);display:flex;flex-direction:column;align-items:center;gap:8px}

@@ -6,82 +6,80 @@
 <title>Mum Izleme</title>
 <link rel="stylesheet" href="/static/styles.css">
 <style>
+/* Page-specific: Monitor — uses styles.css design system */
 body{font-size:13px}
 
-/* Header */
-.header{background:#111827;border-bottom:1px solid #1b2130;padding:10px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:10}
-.logo{color:#F0B90B;font-weight:800;font-size:16px}
-.hlink{color:#58a6ff;font-size:11px;text-decoration:none}
-select,input[type=date],input[type=number]{background:#0d1117;border:1px solid #21262d;color:#E6EDF3;padding:5px 8px;border-radius:6px;font-size:12px;font-family:inherit}
-select:focus,input:focus{outline:none;border-color:#F0B90B}
-.hbtn{padding:5px 14px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;border:none;font-family:inherit;background:#F0B90B;color:#0B0E11}
+/* Header controls */
+.hbtn{padding:5px 14px;border-radius:var(--radius-sm);font-size:11px;font-weight:700;cursor:pointer;border:none;font-family:inherit;background:var(--accent-gold);color:var(--bg-primary)}
 .hbtn:hover{opacity:0.85}
-.hbtn-red{background:#F6465D;color:#fff}
-.live-price{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;margin-left:auto;transition:color .2s}
-.live-price.up{color:#0ECB81}.live-price.down{color:#F6465D}.live-price.flat{color:#E6EDF3}
-.live-dot{width:7px;height:7px;border-radius:50%;background:#F6465D;display:inline-block;margin-right:4px}
-.live-dot.on{background:#0ECB81;box-shadow:0 0 6px #0ECB81}
+.hbtn-red{background:var(--color-short);color:#fff}
 
-.container{max-width:1400px;margin:0 auto;padding:16px 20px}
+/* Live price in header */
+.live-price-bar{margin-left:auto;display:flex;align-items:center;gap:6px}
 
 /* Cards grid */
-.cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px}
-.card{background:#111827;border:1px solid #1b2130;border-radius:12px;padding:14px 16px}
-.card-title{font-size:10px;color:#6e7681;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+.cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-md);margin-bottom:var(--space-lg)}
+.card-title{font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
 .cr{display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px}
-.cr .k{color:#6e7681}.cr .v{font-weight:600;font-variant-numeric:tabular-nums}
-.green{color:#0ECB81}.red{color:#F6465D}.yellow{color:#F0B90B}.blue{color:#3B82F6}.purple{color:#A371F7}
-.pos-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700}
-.pos-long{background:#0ECB8118;color:#0ECB81}.pos-short{background:#F6465D18;color:#F6465D}
-.progress{height:6px;background:#1E2329;border-radius:3px;overflow:hidden;margin-top:6px}
-.progress-fill{height:100%;border-radius:3px;transition:width .3s}
-.progress-green{background:linear-gradient(90deg,#0ECB81,#3fb950)}.progress-red{background:linear-gradient(90deg,#F6465D,#f0883e)}
+.cr .k{color:var(--text-dim)}.cr .v{font-weight:600;font-variant-numeric:tabular-nums}
 
-/* Params panel */
-.params{display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:6px}
-.params label{display:block;font-size:9px;color:#6e7681;margin-bottom:2px;font-weight:600}
-.params input{width:100%;padding:4px 6px;font-size:11px}
+/* Position badges */
+.pos-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700}
+.pos-long{background:var(--color-long-bg);color:var(--color-long)}.pos-short{background:var(--color-short-bg);color:var(--color-short)}
+.progress-green{background:linear-gradient(90deg,var(--color-long),var(--color-long-alt))}.progress-red{background:linear-gradient(90deg,var(--color-short),#f0883e)}
 
 /* Filter bar */
-.filter-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;padding:10px 14px;background:#111827;border:1px solid #1b2130;border-radius:10px}
-.filter-bar label{font-size:10px;color:#6e7681;font-weight:600}
-.cb-wrap{display:flex;align-items:center;gap:4px;font-size:11px;color:#848E9C}
-.cb-wrap input[type=checkbox]{accent-color:#F0B90B}
+.filter-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:var(--space-md);padding:10px 14px;background:var(--bg-secondary);border:1px solid var(--border-primary);border-radius:var(--radius-lg)}
+.filter-bar label{font-size:10px;color:var(--text-dim);font-weight:600}
+.cb-wrap{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted)}
 
-/* Tables */
-.section-title{font-size:11px;color:#6e7681;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px}
-.section-title .cnt{background:#21262d;color:#848E9C;font-size:10px;padding:1px 7px;border-radius:8px}
-.tbl-wrap{overflow-x:auto;overflow-y:auto;max-height:500px;margin-bottom:20px;border:1px solid #1b2130;border-radius:10px}
+/* Table wrappers */
+.tbl-wrap{overflow-x:auto;overflow-y:auto;max-height:500px;margin-bottom:20px;border:1px solid var(--border-primary);border-radius:var(--radius-lg);-webkit-overflow-scrolling:touch}
 .tbl-wrap thead{position:sticky;top:0;z-index:1}
-table{width:100%;border-collapse:collapse;background:#111827;border:1px solid #1b2130;border-radius:10px;overflow:hidden}
-thead{background:#0d1117}
-th{text-align:left;padding:7px 8px;font-size:9px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;font-weight:600;border-bottom:1px solid #1b2130;white-space:nowrap}
-td{padding:5px 8px;font-size:11px;border-bottom:1px solid #141922;font-variant-numeric:tabular-nums;white-space:nowrap}
-tr:hover{background:#0d111788}
-tr.sig-row{background:#F0B90B08;border-left:3px solid #F0B90B}
-tr.sig-row-skip{background:#48505808;border-left:3px solid #484f58}
-tr.tp-row{background:#0ECB8108;border-left:3px solid #0ECB81}
-tr.sl-row{background:#F6465D08;border-left:3px solid #F6465D}
-tr.bn-entry{background:#3B82F610;border-left:3px solid #3B82F6}
-tr.bn-exit-tp{background:#0ECB8110;border-left:3px solid #0ECB81}
-tr.bn-exit-sl{background:#F6465D10;border-left:3px solid #F6465D}
-tr.bn-exit{background:#A371F710;border-left:3px solid #A371F7}
-tr.os-row td:nth-child(8){color:#0ECB81;font-weight:600}
-tr.ob-row td:nth-child(8){color:#F6465D;font-weight:600}
-.badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:700}
-.b-buy{background:#0ECB8118;color:#0ECB81}.b-sell{background:#F6465D18;color:#F6465D}
-.b-tp{background:#0ECB8118;color:#0ECB81}.b-sl{background:#F6465D18;color:#F6465D}
-.b-open{background:#F0B90B18;color:#F0B90B}.b-skip{background:#48505818;color:#6e7681}
-.sig-detail{font-size:10px;padding:4px 8px 4px 20px;color:#F0B90B}
+.tbl-wrap table{background:var(--bg-secondary)}
 
-/* Mobile */
-@media(max-width:900px){.cards{grid-template-columns:1fr}}
-@media(max-width:600px){.header{padding:8px 12px}.container{padding:10px 12px}.live-price{font-size:16px}}
+/* Signal/trade row types */
+tr.sig-row{background:var(--accent-gold-bg);border-left:3px solid var(--accent-gold)}
+tr.sig-row-skip{background:rgba(72,80,88,0.03);border-left:3px solid var(--text-faint)}
+tr.bn-entry{background:var(--color-info-bg);border-left:3px solid var(--color-info)}
+tr.bn-exit-tp{background:var(--color-long-bg);border-left:3px solid var(--color-long)}
+tr.bn-exit-sl{background:var(--color-short-bg);border-left:3px solid var(--color-short)}
+tr.bn-exit{background:rgba(163,113,247,0.04);border-left:3px solid var(--color-purple)}
+tr.os-row td:nth-child(8){color:var(--color-long);font-weight:600}
+tr.ob-row td:nth-child(8){color:var(--color-short);font-weight:600}
+
+/* Compact badges */
+.b-buy{background:var(--color-long-bg);color:var(--color-long)}.b-sell{background:var(--color-short-bg);color:var(--color-short)}
+.b-tp{background:var(--color-long-bg);color:var(--color-long)}.b-sl{background:var(--color-short-bg);color:var(--color-short)}
+.b-open{background:var(--accent-gold-bg);color:var(--accent-gold)}.b-skip{background:rgba(72,80,88,0.1);color:var(--text-dim)}
+.sig-detail{font-size:10px;padding:4px 8px 4px 20px;color:var(--accent-gold)}
+
+/* ── Responsive ── */
+@media(max-width:900px){
+  .cards{grid-template-columns:1fr}
+}
+@media(max-width:768px){
+  .container{padding:var(--space-md) var(--space-md) calc(var(--bottom-nav-height) + 20px)}
+
+  /* Tablo: mobilde onemli kolonlari onceliklendir, kucuk kolonlari gizle */
+  .tbl-wrap{max-height:400px;border-radius:var(--radius-md)}
+  .tbl-wrap th, .tbl-wrap td{padding:5px 6px;font-size:10px}
+
+  /* Mum tablosunda Open/High/Low kolonlarini gizle */
+  .tbl-wrap .hide-sm{display:none}
+
+  /* Sinyal detay satiri mobilde daha kompakt */
+  .sig-detail{font-size:9px;padding:3px 6px 3px 12px;word-break:break-word;white-space:normal}
+}
+@media(max-width:480px){
+  .tbl-wrap th, .tbl-wrap td{padding:4px 4px;font-size:9px}
+  .filter-bar{padding:8px 10px;gap:6px}
+}
 </style>
 </head>
 <body>
 
-<div class="header app-header">
+<header class="app-header">
     <span class="logo">Monitor</span>
     <nav class="nav-links">
       <a href="/">Piyasa</a>
@@ -91,8 +89,8 @@ tr.ob-row td:nth-child(8){color:#F6465D;font-weight:600}
       <a href="/settings">Ayarlar</a>
       <a href="/collector">Veri</a>
     </nav>
-    <select id="symSel"></select>
-    <select id="tfSel">
+    <select id="symSel" aria-label="Sembol sec"></select>
+    <select id="tfSel" aria-label="Zaman dilimi">
         <option value="1m">1m</option>
         <option value="5m">5m</option>
         <option value="15m" selected>15m</option>
@@ -101,9 +99,12 @@ tr.ob-row td:nth-child(8){color:#F6465D;font-weight:600}
         <option value="4h">4h</option>
         <option value="1d">1g</option>
     </select>
-    <span><span class="live-dot" id="ld"></span><span id="liveTime">--</span></span>
-    <span class="live-price flat" id="lp">--</span>
-</div>
+    <div class="live-price-bar">
+        <span class="conn-dot" id="ld"></span>
+        <span style="font-size:11px;color:var(--text-dim)" id="liveTime">--</span>
+        <span class="live-price live-price-lg price-flat" id="lp">--</span>
+    </div>
+</header>
 
 <div class="container">
 
@@ -169,13 +170,13 @@ tr.ob-row td:nth-child(8){color:#F6465D;font-weight:600}
 <!-- Mum Tablosu -->
 <div class="section-title">Mum Gecmisi <span class="cnt" id="candleCnt">0</span> <span id="loadMoreStatus" style="color:#6e7681;font-size:10px;margin-left:8px"></span></div>
 <div class="tbl-wrap" id="candleWrap"><table id="candleTable"><thead><tr>
-    <th>Tarih</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th><th>RSI</th><th>Bolge</th><th>Sinyal</th>
+    <th>Tarih</th><th class="hide-sm">Open</th><th class="hide-sm">High</th><th class="hide-sm">Low</th><th>Close</th><th class="hide-sm">Volume</th><th>RSI</th><th>Bolge</th><th>Sinyal</th>
 </tr></thead><tbody id="candleBody"></tbody></table></div>
 
 <!-- Binance Islemleri Tablosu -->
 <div class="section-title">Binance Islemleri <span class="cnt" id="bnTradeCnt">0</span></div>
 <div class="tbl-wrap"><table><thead><tr>
-    <th>Sembol</th><th>Yon</th><th>Giris</th><th>Giris Fiyat</th><th>Cikis</th><th>Cikis Fiyat</th><th>Tip</th><th>Miktar</th><th>PnL $</th><th>PnL %</th>
+    <th>Sembol</th><th>Yon</th><th class="hide-sm">Giris</th><th>Giris Fiyat</th><th class="hide-sm">Cikis</th><th>Cikis Fiyat</th><th class="hide-sm">Tip</th><th class="hide-sm">Miktar</th><th>PnL $</th><th>PnL %</th>
 </tr></thead><tbody id="bnTradeBody"></tbody></table></div>
 
 <!-- Sinyal Tablosu -->
@@ -423,11 +424,11 @@ function renderAll(){
         }
         html+='<tr class="'+rowCls+'">'
             +'<td style="color:#6e7681">'+timeStr(c.time)+'</td>'
-            +'<td>'+fmt(c.open,dec(c.open))+'</td>'
-            +'<td class="green">'+fmt(c.high,dec(c.high))+'</td>'
-            +'<td class="red">'+fmt(c.low,dec(c.low))+'</td>'
+            +'<td class="hide-sm">'+fmt(c.open,dec(c.open))+'</td>'
+            +'<td class="hide-sm green">'+fmt(c.high,dec(c.high))+'</td>'
+            +'<td class="hide-sm red">'+fmt(c.low,dec(c.low))+'</td>'
             +'<td>'+fmt(c.close,dec(c.close))+'</td>'
-            +'<td style="color:#6e7681">'+fmtK(c.volume)+'</td>'
+            +'<td class="hide-sm" style="color:#6e7681">'+fmtK(c.volume)+'</td>'
             +'<td class="'+rsiClr+'">'+(c.rsi!=null?fmt(c.rsi,2):'--')+'</td>'
             +'<td>'+rsiZone+'</td>'
             +'<td>'+sigBadgeCell+'</td>'
@@ -502,12 +503,12 @@ function renderAll(){
         bnHtml+='<tr>'
             +'<td class="yellow">'+(bt.symbol||sym)+'</td>'
             +'<td><span class="badge '+sideCls+'">'+sideLabel+'</span></td>'
-            +'<td style="color:#6e7681">'+bt.entry_str+'</td>'
+            +'<td class="hide-sm" style="color:#6e7681">'+bt.entry_str+'</td>'
             +'<td class="yellow">'+fmt(bt.entry_price,dec(bt.entry_price))+'</td>'
-            +'<td style="color:#6e7681">'+bt.exit_str+'</td>'
+            +'<td class="hide-sm" style="color:#6e7681">'+bt.exit_str+'</td>'
             +'<td class="yellow">'+fmt(bt.exit_price,dec(bt.exit_price))+'</td>'
-            +'<td>'+exLabel+'</td>'
-            +'<td>'+fmt(bt.qty,4)+'</td>'
+            +'<td class="hide-sm">'+exLabel+'</td>'
+            +'<td class="hide-sm">'+fmt(bt.qty,4)+'</td>'
             +'<td class="'+pCls+'">$'+fmt(bt.pnl,2)+'</td>'
             +'<td class="'+pCls+'">'+fmt(bt.pnl_pct,2)+'%</td>'
             +'</tr>';
@@ -796,9 +797,9 @@ async function fetchLastCandle(){
             var rsiClr=newCandle.rsi!=null?(newCandle.rsi<=parseFloat($('iL').value)?'green':newCandle.rsi>=parseFloat($('iS').value)?'red':'purple'):'';
             var rsiZone=newCandle.rsi!=null?(newCandle.rsi<=parseFloat($('iL').value)?'OS':newCandle.rsi>=parseFloat($('iS').value)?'OB':''):'';
             var row='<tr><td style="color:#6e7681">'+timeStr(newCandle.time)+'</td>'
-                +'<td>'+fmt(newCandle.open,d)+'</td><td class="green">'+fmt(newCandle.high,d)+'</td>'
-                +'<td class="red">'+fmt(newCandle.low,d)+'</td><td>'+fmt(newCandle.close,d)+'</td>'
-                +'<td style="color:#6e7681">'+fmtK(newCandle.volume)+'</td>'
+                +'<td class="hide-sm">'+fmt(newCandle.open,d)+'</td><td class="hide-sm green">'+fmt(newCandle.high,d)+'</td>'
+                +'<td class="hide-sm red">'+fmt(newCandle.low,d)+'</td><td>'+fmt(newCandle.close,d)+'</td>'
+                +'<td class="hide-sm" style="color:#6e7681">'+fmtK(newCandle.volume)+'</td>'
                 +'<td class="'+rsiClr+'">'+(newCandle.rsi!=null?fmt(newCandle.rsi,1):'--')+'</td>'
                 +'<td>'+rsiZone+'</td><td></td></tr>';
 
@@ -930,7 +931,7 @@ async function loadMoreCandles(){
             var rsiClr=c.rsi!=null?(c.rsi<=longTh?'green':c.rsi>=shortTh?'red':'purple'):'';
             var sigBadgeCell2='';
             if(dbSigs.length>0){var ds02=dbSigs[0];var ent02=ds02.entered===1||ds02.entered===true;if(ent02){sigBadgeCell2=ds02.direction==='BUY'?'<span class="badge b-buy">▲L</span>':'<span class="badge b-sell">▼S</span>'}else{sigBadgeCell2='<span class="badge b-skip">'+(ds02.direction==='BUY'?'▲':'▼')+'</span>'}}
-            html+='<tr class="'+rowCls+'"><td style="color:#6e7681">'+timeStr(c.time)+'</td><td>'+fmt(c.open,dec(c.open))+'</td><td class="green">'+fmt(c.high,dec(c.high))+'</td><td class="red">'+fmt(c.low,dec(c.low))+'</td><td>'+fmt(c.close,dec(c.close))+'</td><td style="color:#6e7681">'+fmtK(c.volume)+'</td><td class="'+rsiClr+'">'+(c.rsi!=null?fmt(c.rsi,2):'--')+'</td><td>'+rsiZone+'</td><td>'+sigBadgeCell2+'</td></tr>';
+            html+='<tr class="'+rowCls+'"><td style="color:#6e7681">'+timeStr(c.time)+'</td><td class="hide-sm">'+fmt(c.open,dec(c.open))+'</td><td class="hide-sm green">'+fmt(c.high,dec(c.high))+'</td><td class="hide-sm red">'+fmt(c.low,dec(c.low))+'</td><td>'+fmt(c.close,dec(c.close))+'</td><td class="hide-sm" style="color:#6e7681">'+fmtK(c.volume)+'</td><td class="'+rsiClr+'">'+(c.rsi!=null?fmt(c.rsi,2):'--')+'</td><td>'+rsiZone+'</td><td>'+sigBadgeCell2+'</td></tr>';
         }
 
         $('candleBody').insertAdjacentHTML('beforeend',html);
