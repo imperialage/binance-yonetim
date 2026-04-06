@@ -879,28 +879,28 @@ tr.clickable:hover{background:#1c212888}
     var filtered=orderSymFilter==='all'?orders:orders.filter(function(o){return o.symbol===orderSymFilter});
     var filterHtml='<div style="padding:4px 0;margin-bottom:4px">'+_symFilterHtml(orderSymFilter,'setOrderSymFilter')+'</div>';
 
-    var html=filterHtml+'<div class="table-scroll"><table><thead><tr><th>Zaman</th><th>Sembol</th><th>Tip</th><th>Yon</th><th>Fiyat</th><th>Ort.</th><th>Miktar</th><th>Dolum</th><th>RO</th><th>Durum</th></tr></thead><tbody>';
+    var html=filterHtml+'<div class="table-scroll"><table><thead><tr><th>Zaman</th><th>Sembol</th><th>Tip</th><th>Yon</th><th>Fiyat</th><th class="hide-sm">Ort.</th><th class="hide-sm">Miktar</th><th class="hide-sm">Dolum</th><th class="hide-sm">RO</th><th>Durum</th></tr></thead><tbody>';
     filtered.forEach(function(o,idx){
       var sideCls=o.side==='BUY'?'badge-buy':'badge-sell';
-      var statusCls=o.status==='FILLED'?'color:#3fb950':o.status==='CANCELED'?'color:#6e7681':o.status==='NEW'?'color:#F0B90B':'color:#f85149';
+      var statusCls=o.status==='FILLED'?'color:var(--color-long-alt)':o.status==='CANCELED'?'color:var(--text-dim)':o.status==='NEW'?'color:var(--accent-gold)':'color:var(--color-short-alt)';
       var dp=o.avg_price>=100?2:o.avg_price>=1?4:6;
-      var ro=o.reduce_only?'<span style="color:#F0B90B">Yes</span>':'No';
+      var ro=o.reduce_only?'<span class="yellow">Yes</span>':'No';
       var trigger=o.stop_price>0?fmt(o.stop_price,dp):'—';
       var typeLabel=o.type;
-      if(o.type==='TAKE_PROFIT_MARKET') typeLabel='TP Market';
-      else if(o.type==='STOP_MARKET') typeLabel='SL Market';
+      if(o.type==='TAKE_PROFIT_MARKET') typeLabel='TP';
+      else if(o.type==='STOP_MARKET') typeLabel='SL';
       else if(o.type==='LIMIT') typeLabel='Limit';
-      else if(o.type==='MARKET') typeLabel='Market';
+      else if(o.type==='MARKET') typeLabel='MKT';
       html+='<tr class="clickable" onclick="showSignalDetail('+idx+')">';
-      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+o.time+'</td>';
+      html+='<td style="color:var(--text-dim);font-size:10px;white-space:nowrap">'+o.time+'</td>';
       html+='<td><span class="badge-sym">'+(o.symbol||'').replace('USDT','')+'</span></td>';
       html+='<td style="font-size:10px">'+typeLabel+'</td>';
       html+='<td><span class="badge '+sideCls+'">'+o.side+'</span></td>';
       html+='<td style="font-size:11px">'+(o.price>0?fmt(o.price,dp):trigger)+'</td>';
-      html+='<td style="font-size:11px">'+(o.avg_price>0?fmt(o.avg_price,dp):'—')+'</td>';
-      html+='<td style="font-size:11px">'+fmt(o.quantity,o.quantity>=10?0:4)+'</td>';
-      html+='<td style="font-size:11px">'+fmt(o.filled,o.filled>=10?0:4)+'</td>';
-      html+='<td style="font-size:10px">'+ro+'</td>';
+      html+='<td class="hide-sm" style="font-size:11px">'+(o.avg_price>0?fmt(o.avg_price,dp):'—')+'</td>';
+      html+='<td class="hide-sm" style="font-size:11px">'+fmt(o.quantity,o.quantity>=10?0:4)+'</td>';
+      html+='<td class="hide-sm" style="font-size:11px">'+fmt(o.filled,o.filled>=10?0:4)+'</td>';
+      html+='<td class="hide-sm" style="font-size:10px">'+ro+'</td>';
       html+='<td style="font-size:10px;'+statusCls+'">'+o.status+'</td>';
       html+='</tr>';
     });
@@ -973,21 +973,21 @@ tr.clickable:hover{background:#1c212888}
     cums.reverse();
 
     var filterHtml='<div style="padding:4px 0;margin-bottom:4px">'+_symFilterHtml(txnSymFilter,'setTxnSymFilter')+'</div>';
-    var html=filterHtml+'<div class="table-scroll"><table><thead><tr><th>Zaman</th><th>Sembol</th><th>Tip</th><th>Tutar</th><th>Asset</th><th>Kum.</th></tr></thead><tbody>';
+    var html=filterHtml+'<div class="table-scroll"><table><thead><tr><th>Zaman</th><th class="hide-sm">Sembol</th><th>Tip</th><th>Tutar</th><th class="hide-sm">Asset</th><th>Kum.</th></tr></thead><tbody>';
     filtered.forEach(function(t,i){
       var cls=t.income>=0?'pnl-positive':'pnl-negative';
       var cumCls=cums[i]>=0?'pnl-positive':'pnl-negative';
       var typeLabel=t.type;
-      if(t.type==='REALIZED_PNL') typeLabel='<span style="color:#F0B90B">PnL</span>';
-      else if(t.type==='COMMISSION') typeLabel='<span style="color:#f85149">Komisyon</span>';
-      else if(t.type==='FUNDING_FEE') typeLabel='<span style="color:#58a6ff">Funding</span>';
-      else if(t.type==='TRANSFER') typeLabel='<span style="color:#3fb950">Transfer</span>';
+      if(t.type==='REALIZED_PNL') typeLabel='<span class="yellow">PnL</span>';
+      else if(t.type==='COMMISSION') typeLabel='<span class="red">Kom.</span>';
+      else if(t.type==='FUNDING_FEE') typeLabel='<span class="blue">Fund</span>';
+      else if(t.type==='TRANSFER') typeLabel='<span class="green">Trf</span>';
       html+='<tr>';
-      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+t.time+'</td>';
-      html+='<td><span class="badge-sym">'+(t.symbol||'').replace('USDT','')+'</span></td>';
+      html+='<td style="color:var(--text-dim);font-size:10px;white-space:nowrap">'+t.time+'</td>';
+      html+='<td class="hide-sm"><span class="badge-sym">'+(t.symbol||'').replace('USDT','')+'</span></td>';
       html+='<td style="font-size:10px">'+typeLabel+'</td>';
       html+='<td class="'+cls+'" style="font-size:11px;font-weight:600">'+fmtUSD(t.income)+'</td>';
-      html+='<td style="font-size:10px;color:#6e7681">'+t.asset+'</td>';
+      html+='<td class="hide-sm" style="font-size:10px;color:var(--text-dim)">'+t.asset+'</td>';
       html+='<td class="'+cumCls+'" style="font-size:11px;font-weight:600">'+fmtUSD(cums[i])+'</td>';
       html+='</tr>';
     });
@@ -1039,19 +1039,19 @@ tr.clickable:hover{background:#1c212888}
       +'<span style="color:#6e7681">'+filtered.length+' islem | W:'+wins+' L:'+losses+' | %'+wr+'</span>'
       +'</div>';
 
-    var html=fHtml+sumHtml+'<div class="table-scroll"><table><thead><tr><th>Sembol</th><th>Yon</th><th>Giris</th><th>Cikis</th><th>Giris $</th><th>Cikis $</th><th>Tip</th><th>PnL</th><th>Kum.</th></tr></thead><tbody>';
+    var html=fHtml+sumHtml+'<div class="table-scroll"><table><thead><tr><th>Sembol</th><th>Yon</th><th class="hide-sm">Giris</th><th class="hide-sm">Cikis</th><th>Giris $</th><th>Cikis $</th><th>Tip</th><th>PnL</th><th>Kum.</th></tr></thead><tbody>';
     filtered.forEach(function(t,i){
       var cls=t.pnl>=0?'pnl-positive':'pnl-negative';
       var cumCls=cums[i]>=0?'pnl-positive':'pnl-negative';
       var sideBadge=t.side==='LONG'?'<span class="badge badge-buy">L</span>':'<span class="badge badge-sell">S</span>';
       var exType=t.exit_type||'';
-      var exLabel=exType.indexOf('STOP')>=0?'<span style="color:#f85149">SL</span>':exType.indexOf('TAKE')>=0?'<span style="color:#3fb950">TP</span>':exType.indexOf('MARKET')>=0?'MKT':'—';
+      var exLabel=exType.indexOf('STOP')>=0?'<span class="red">SL</span>':exType.indexOf('TAKE')>=0?'<span class="green">TP</span>':exType.indexOf('MARKET')>=0?'MKT':'—';
       var dp=t.entry_price>=100?2:t.entry_price>=1?4:6;
       html+='<tr>';
       html+='<td><span class="badge-sym">'+(t.symbol||'').replace('USDT','')+'</span></td>';
       html+='<td>'+sideBadge+'</td>';
-      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+(t.entry_str||'--')+'</td>';
-      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+(t.exit_str||'--')+'</td>';
+      html+='<td class="hide-sm" style="color:var(--text-dim);font-size:10px;white-space:nowrap">'+(t.entry_str||'--')+'</td>';
+      html+='<td class="hide-sm" style="color:var(--text-dim);font-size:10px;white-space:nowrap">'+(t.exit_str||'--')+'</td>';
       html+='<td style="font-size:11px">'+(t.entry_price?fmt(t.entry_price,dp):'--')+'</td>';
       html+='<td style="font-size:11px">'+(t.exit_price?fmt(t.exit_price,dp):'--')+'</td>';
       html+='<td style="font-size:10px">'+exLabel+'</td>';
@@ -1082,24 +1082,24 @@ tr.clickable:hover{background:#1c212888}
     syms.forEach(function(s){fHtml+='<span style="cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;'+(tradeHistSymFilter===s?'background:#F0B90B20;color:#F0B90B':'color:#6e7681')+'" onclick="setTradeHistSymFilter(\''+s+'\')">'+s.replace('USDT','')+'</span> '});
     fHtml+='</div>';
 
-    var html=fHtml+'<div class="table-scroll"><table><thead><tr><th>Zaman</th><th>Sembol</th><th>Tip</th><th>Yon</th><th>Fiyat</th><th>Ort.</th><th>Miktar</th><th>RO</th></tr></thead><tbody>';
+    var html=fHtml+'<div class="table-scroll"><table><thead><tr><th>Zaman</th><th>Sembol</th><th>Tip</th><th>Yon</th><th>Fiyat</th><th class="hide-sm">Ort.</th><th class="hide-sm">Miktar</th><th class="hide-sm">RO</th></tr></thead><tbody>';
     filtered.forEach(function(o){
       var sideCls=o.side==='BUY'?'badge-buy':'badge-sell';
       var dp=o.avg_price>=100?2:o.avg_price>=1?4:6;
       var typeLabel=o.type;
-      if(o.type==='TAKE_PROFIT_MARKET') typeLabel='TP Market';
-      else if(o.type==='STOP_MARKET') typeLabel='SL Market';
+      if(o.type==='TAKE_PROFIT_MARKET') typeLabel='TP';
+      else if(o.type==='STOP_MARKET') typeLabel='SL';
       else if(o.type==='LIMIT') typeLabel='Limit';
-      else if(o.type==='MARKET') typeLabel='Market';
+      else if(o.type==='MARKET') typeLabel='MKT';
       html+='<tr>';
-      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+o.time+'</td>';
+      html+='<td style="color:var(--text-dim);font-size:10px;white-space:nowrap">'+o.time+'</td>';
       html+='<td><span class="badge-sym">'+(o.symbol||'').replace('USDT','')+'</span></td>';
       html+='<td style="font-size:10px">'+typeLabel+'</td>';
       html+='<td><span class="badge '+sideCls+'">'+o.side+'</span></td>';
-      html+='<td style="font-size:11px">'+(o.price>0?fmt(o.price,dp):'Market')+'</td>';
-      html+='<td style="font-size:11px">'+(o.avg_price>0?fmt(o.avg_price,dp):'—')+'</td>';
-      html+='<td style="font-size:11px">'+fmt(o.filled,o.filled>=10?0:4)+'</td>';
-      html+='<td style="font-size:10px">'+(o.reduce_only?'<span style="color:#F0B90B">Yes</span>':'No')+'</td>';
+      html+='<td style="font-size:11px">'+(o.price>0?fmt(o.price,dp):'MKT')+'</td>';
+      html+='<td class="hide-sm" style="font-size:11px">'+(o.avg_price>0?fmt(o.avg_price,dp):'—')+'</td>';
+      html+='<td class="hide-sm" style="font-size:11px">'+fmt(o.filled,o.filled>=10?0:4)+'</td>';
+      html+='<td class="hide-sm" style="font-size:10px">'+(o.reduce_only?'<span class="yellow">Yes</span>':'No')+'</td>';
       html+='</tr>';
     });
     html+='</tbody></table></div>';
@@ -1142,7 +1142,7 @@ tr.clickable:hover{background:#1c212888}
       +'<span style="color:#6e7681">'+filtered.length+' islem | W:'+wins+' L:'+losses+' | %'+wr+'</span>'
       +'</div>';
 
-    var html=fHtml+sumHtml+'<div class="table-scroll"><table><thead><tr><th>Sembol</th><th>Yon</th><th>Giris</th><th>Cikis</th><th>Giris $</th><th>Cikis $</th><th>Miktar</th><th>PnL</th><th>Komis.</th><th>Net</th><th>Kum.</th></tr></thead><tbody>';
+    var html=fHtml+sumHtml+'<div class="table-scroll"><table><thead><tr><th>Sembol</th><th>Yon</th><th class="hide-sm">Giris</th><th class="hide-sm">Cikis</th><th class="hide-sm">Giris $</th><th class="hide-sm">Cikis $</th><th class="hide-sm">Miktar</th><th class="hide-sm">PnL</th><th class="hide-sm">Komis.</th><th>Net</th><th>Kum.</th></tr></thead><tbody>';
     filtered.forEach(function(t,i){
       var netCls=t.net>=0?'pnl-positive':'pnl-negative';
       var pnlCls=t.pnl>=0?'pnl-positive':'pnl-negative';
@@ -1152,13 +1152,13 @@ tr.clickable:hover{background:#1c212888}
       html+='<tr>';
       html+='<td><span class="badge-sym">'+(t.symbol||'').replace('USDT','')+'</span></td>';
       html+='<td>'+sideBadge+'</td>';
-      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+(t.entry_str||'--')+'</td>';
-      html+='<td style="color:#6e7681;font-size:10px;white-space:nowrap">'+(t.exit_str||'--')+'</td>';
-      html+='<td style="font-size:11px">'+(t.entry_price?fmt(t.entry_price,dp):'--')+'</td>';
-      html+='<td style="font-size:11px">'+(t.exit_price?fmt(t.exit_price,dp):'--')+'</td>';
-      html+='<td style="font-size:10px;color:#6e7681">'+fmt(t.qty,t.qty>=10?0:4)+'</td>';
-      html+='<td class="'+pnlCls+'" style="font-size:11px">'+fmtUSD(t.pnl)+'</td>';
-      html+='<td style="font-size:11px;color:#f85149">'+fmtUSD(t.commission)+'</td>';
+      html+='<td class="hide-sm" style="color:var(--text-dim);font-size:10px;white-space:nowrap">'+(t.entry_str||'--')+'</td>';
+      html+='<td class="hide-sm" style="color:var(--text-dim);font-size:10px;white-space:nowrap">'+(t.exit_str||'--')+'</td>';
+      html+='<td class="hide-sm" style="font-size:11px">'+(t.entry_price?fmt(t.entry_price,dp):'--')+'</td>';
+      html+='<td class="hide-sm" style="font-size:11px">'+(t.exit_price?fmt(t.exit_price,dp):'--')+'</td>';
+      html+='<td class="hide-sm" style="font-size:10px;color:var(--text-dim)">'+fmt(t.qty,t.qty>=10?0:4)+'</td>';
+      html+='<td class="hide-sm '+pnlCls+'" style="font-size:11px">'+fmtUSD(t.pnl)+'</td>';
+      html+='<td class="hide-sm" style="font-size:11px;color:var(--color-short-alt)">'+fmtUSD(t.commission)+'</td>';
       html+='<td class="'+netCls+'" style="font-size:11px;font-weight:700">'+fmtUSD(t.net)+'</td>';
       html+='<td class="'+cumCls+'" style="font-size:11px;font-weight:600">'+fmtUSD(cums[i])+'</td>';
       html+='</tr>';
