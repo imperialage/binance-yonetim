@@ -848,8 +848,12 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
             amt = float(p.get("positionAmt", 0))
             if amt == 0:
                 continue
-            # Acik pozisyonun giris zamani — simule edilen current_entry'den
-            entry_time_ms = current_entry["time_ms"] if current_entry else 0
+            # Acik pozisyonun giris zamani — son eslenmemis entry'den
+            entry_time_ms = 0
+            for f in reversed(filled):
+                if f["side"] == ("BUY" if amt > 0 else "SELL") and "LIMIT" in f["type"]:
+                    entry_time_ms = f["time_ms"]
+                    break
 
             entry_price = float(p.get("entryPrice", 0))
             pos_side = "LONG" if amt > 0 else "SHORT"
