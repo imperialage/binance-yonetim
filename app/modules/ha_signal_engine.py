@@ -587,24 +587,55 @@ class HeikinAshiEngine:
         # 3. Mum kapandi mi?
         new_candle_start = (now // self.iv_sec) * self.iv_sec
         if new_candle_start > self.candle_start and now - new_candle_start > 2:
-            # HA RSI hesapla
-            closed_ha_rsi = self._calc_live_rsi(self.ha_candle_close)
-            self._advance_candle(self.ha_candle_close)
+            # Binance'tan gercek son kapanmis mumu cek (RSI drift fix)
+            real_open = self.candle_open
+            real_high = self.candle_high
+            real_low = self.candle_low
+            real_close = self.candle_close
+            try:
+                import httpx
+                proxy_url = None
+                try:
+                    from app.config import settings as _s
+                    proxy_url = _s.binance_proxy_url or None
+                except Exception:
+                    pass
+                async with httpx.AsyncClient(timeout=5, proxy=proxy_url) as _c:
+                    _resp = await _c.get(BINANCE_URL, params={
+                        "symbol": self.symbol, "interval": self.interval, "limit": 2,
+                    })
+                    if _resp.is_success:
+                        _kl = _resp.json()
+                        if _kl and len(_kl) >= 2:
+                            real_open = float(_kl[0][1])
+                            real_high = float(_kl[0][2])
+                            real_low = float(_kl[0][3])
+                            real_close = float(_kl[0][4])
+            except Exception:
+                pass
+
+            # Gercek OHLC ile HA hesapla
+            ha = calc_ha_candle(real_open, real_high, real_low, real_close,
+                                self.ha_prev_open, self.ha_prev_close)
+
+            # HA RSI hesapla (gercek HA close ile)
+            closed_ha_rsi = self._calc_live_rsi(ha["ha_close"])
+            self._advance_candle(ha["ha_close"])
 
             # HA state guncelle
-            self.ha_prev_open = self.ha_candle_open
-            self.ha_prev_close = self.ha_candle_close
+            self.ha_prev_open = ha["ha_open"]
+            self.ha_prev_close = ha["ha_close"]
 
             # Kapanan HA mumu kaydet
             closed = {
                 "time": self.candle_start,
-                "open": self.ha_candle_open,
-                "high": self.ha_candle_high,
-                "low": self.ha_candle_low,
-                "close": self.ha_candle_close,
-                "real_high": self.candle_high,
-                "real_low": self.candle_low,
-                "real_close": self.candle_close,
+                "open": ha["ha_open"],
+                "high": ha["ha_high"],
+                "low": ha["ha_low"],
+                "close": ha["ha_close"],
+                "real_high": real_high,
+                "real_low": real_low,
+                "real_close": real_close,
                 "rsi": closed_ha_rsi,
             }
             self.closed_candles.append(closed)

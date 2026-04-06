@@ -767,17 +767,45 @@ class SignalEngine:
         # ── 2. Mum kapandi mi? ──
         new_candle_start = (now // self.iv_sec) * self.iv_sec
         if new_candle_start > self.candle_start and now - new_candle_start > 2:
-            # Kapanan mumun RSI'ini hesapla
-            closed_rsi = self._calc_live_rsi(self.candle_close)
-            self._advance_candle(self.candle_close)
+            # Binance'tan gercek son kapanmis mumu cek (RSI drift fix)
+            real_close = self.candle_close
+            real_high = self.candle_high
+            real_low = self.candle_low
+            real_open = self.candle_open
+            try:
+                import httpx
+                proxy_url = None
+                try:
+                    from app.config import settings as _s
+                    proxy_url = _s.binance_proxy_url or None
+                except Exception:
+                    pass
+                async with httpx.AsyncClient(timeout=5, proxy=proxy_url) as _c:
+                    _resp = await _c.get(BINANCE_URL, params={
+                        "symbol": self.symbol, "interval": self.interval, "limit": 2,
+                    })
+                    if _resp.is_success:
+                        _kl = _resp.json()
+                        if _kl and len(_kl) >= 2:
+                            # Son kapanmis mum = _kl[0] (ilk eleman)
+                            real_open = float(_kl[0][1])
+                            real_high = float(_kl[0][2])
+                            real_low = float(_kl[0][3])
+                            real_close = float(_kl[0][4])
+            except Exception:
+                pass  # basarisiz olursa tick fiyati kullan
 
-            # Kapanan mumu kaydet
+            # Kapanan mumun RSI'ini GERCEK close ile hesapla
+            closed_rsi = self._calc_live_rsi(real_close)
+            self._advance_candle(real_close)
+
+            # Kapanan mumu kaydet (gercek OHLC)
             closed = {
                 "time": self.candle_start,
-                "open": self.candle_open,
-                "high": self.candle_high,
-                "low": self.candle_low,
-                "close": self.candle_close,
+                "open": real_open,
+                "high": real_high,
+                "low": real_low,
+                "close": real_close,
                 "rsi": closed_rsi,
             }
             self.closed_candles.append(closed)
