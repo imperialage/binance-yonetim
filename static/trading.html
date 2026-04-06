@@ -1133,7 +1133,16 @@ tr.clickable:hover{background:#1c212888}
   }
 
   // ── Position History Render ──
+  var posHistDirFilter='all'; // all, LONG, SHORT
+  var posHistResultFilter='all'; // all, win, loss, tp, sl, mkt
   window.setPosHistSymFilter=function(s){posHistSymFilter=s;renderPosHist()};
+  window.setPosHistDirFilter=function(s){posHistDirFilter=s;renderPosHist()};
+  window.setPosHistResultFilter=function(s){posHistResultFilter=s;renderPosHist()};
+
+  function _posFilterBtn(label, value, current, fn){
+    var active=value===current;
+    return '<span style="cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;'+(active?'background:#F0B90B20;color:#F0B90B':'color:#6e7681')+'" onclick="'+fn+'(\''+value+'\')">'+label+'</span> ';
+  }
 
   function renderPosHist(){
     var trades=(posHistData&&posHistData.trades)||[];
@@ -1141,21 +1150,48 @@ tr.clickable:hover{background:#1c212888}
       $('posHistContent').innerHTML='<div class="empty-state">Pozisyon gecmisi yok</div>';
       return;
     }
-    var filtered=posHistSymFilter==='all'?trades:trades.filter(function(t){return t.symbol===posHistSymFilter});
+
+    // Yeniden eskiye sirala (exit_time'a gore)
+    trades.sort(function(a,b){return (b.exit_time||0)-(a.exit_time||0)});
+
+    // Filtrele
+    var filtered=trades;
+    if(posHistSymFilter!=='all') filtered=filtered.filter(function(t){return t.symbol===posHistSymFilter});
+    if(posHistDirFilter!=='all') filtered=filtered.filter(function(t){return t.side===posHistDirFilter});
+    if(posHistResultFilter==='win') filtered=filtered.filter(function(t){return t.pnl>0});
+    else if(posHistResultFilter==='loss') filtered=filtered.filter(function(t){return t.pnl<=0});
+    else if(posHistResultFilter==='tp') filtered=filtered.filter(function(t){return(t.exit_type||'').indexOf('TAKE')>=0});
+    else if(posHistResultFilter==='sl') filtered=filtered.filter(function(t){return(t.exit_type||'').indexOf('STOP')>=0});
+    else if(posHistResultFilter==='mkt') filtered=filtered.filter(function(t){var et=t.exit_type||'';return et.indexOf('MARKET')>=0&&et.indexOf('TAKE')<0&&et.indexOf('STOP')<0});
 
     // Sembol filtre butonlari
     var syms=new Set();trades.forEach(function(t){if(t.symbol)syms.add(t.symbol)});
-    var fHtml='<div style="padding:4px 0;margin-bottom:4px"><span style="cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;'+(posHistSymFilter==='all'?'background:#F0B90B20;color:#F0B90B':'color:#6e7681')+'" onclick="setPosHistSymFilter(\'all\')">Tumu</span> ';
-    syms.forEach(function(s){fHtml+='<span style="cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;'+(posHistSymFilter===s?'background:#F0B90B20;color:#F0B90B':'color:#6e7681')+'" onclick="setPosHistSymFilter(\''+s+'\')">'+s.replace('USDT','')+'</span> '});
+    var fHtml='<div style="padding:4px 0;margin-bottom:2px;display:flex;flex-wrap:wrap;gap:2px">';
+    fHtml+=_posFilterBtn('Tumu','all',posHistSymFilter,'setPosHistSymFilter');
+    syms.forEach(function(s){fHtml+=_posFilterBtn(s.replace('USDT',''),s,posHistSymFilter,'setPosHistSymFilter')});
     fHtml+='</div>';
 
-    // Kumulatif
-    var sorted=filtered.slice().reverse();var cum=0;var cums=[];
-    sorted.forEach(function(t){cum+=t.pnl;cums.push(cum)});cums.reverse();
+    // Yon + sonuc filtre
+    fHtml+='<div style="padding:2px 0;margin-bottom:4px;display:flex;flex-wrap:wrap;gap:2px">';
+    fHtml+=_posFilterBtn('Hepsi','all',posHistDirFilter,'setPosHistDirFilter');
+    fHtml+=_posFilterBtn('Long','LONG',posHistDirFilter,'setPosHistDirFilter');
+    fHtml+=_posFilterBtn('Short','SHORT',posHistDirFilter,'setPosHistDirFilter');
+    fHtml+='<span style="color:#21262d;margin:0 2px">|</span>';
+    fHtml+=_posFilterBtn('Hepsi','all',posHistResultFilter,'setPosHistResultFilter');
+    fHtml+=_posFilterBtn('Kazanc','win',posHistResultFilter,'setPosHistResultFilter');
+    fHtml+=_posFilterBtn('Kayip','loss',posHistResultFilter,'setPosHistResultFilter');
+    fHtml+=_posFilterBtn('TP','tp',posHistResultFilter,'setPosHistResultFilter');
+    fHtml+=_posFilterBtn('SL','sl',posHistResultFilter,'setPosHistResultFilter');
+    fHtml+=_posFilterBtn('MKT','mkt',posHistResultFilter,'setPosHistResultFilter');
+    fHtml+='</div>';
+
+    // Kumulatif (yeniden eskiye siralandi, kumulatifi eskiden yeniye hesapla)
+    var cumArr=filtered.slice().reverse();var cum=0;var cums=[];
+    cumArr.forEach(function(t){cum+=t.pnl;cums.push(cum)});cums.reverse();
 
     var totalPnl=filtered.reduce(function(s,t){return s+t.pnl},0);
     var wins=filtered.filter(function(t){return t.pnl>0}).length;
-    var losses=filtered.filter(function(t){return t.pnl<0}).length;
+    var losses=filtered.filter(function(t){return t.pnl<=0}).length;
     var wr=filtered.length>0?Math.round(wins/filtered.length*100):0;
 
     var sumHtml='<div style="display:flex;gap:12px;padding:4px 0;font-size:11px;flex-wrap:wrap">'
