@@ -49,6 +49,7 @@ _MIGRATIONS = [
     "ALTER TABLE indicator_settings ADD COLUMN reverse_signal INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE indicator_settings ADD COLUMN sl_enabled INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE indicator_settings ADD COLUMN allowed_directions TEXT NOT NULL DEFAULT 'BOTH'",
+    "ALTER TABLE indicator_settings ADD COLUMN ha_enabled INTEGER NOT NULL DEFAULT 0",
 ]
 
 # Default ayarlar — yeni sembol eklendiginde kullanilir

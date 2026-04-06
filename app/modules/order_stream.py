@@ -123,7 +123,8 @@ async def _handle_event(data: dict[str, Any]) -> None:
         if status == "FILLED":
             try:
                 from app.modules.signal_engine import get_engine
-                engine = get_engine(symbol)
+                from app.modules.ha_signal_engine import get_ha_engine
+                engine = get_ha_engine(symbol) or get_engine(symbol)
                 if engine:
                     reduce_only = order.get("R", False)  # reduceOnly flag
                     close_pos = order.get("cp", False)    # closePosition flag

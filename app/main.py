@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from app.config import settings
 from app.modules.daily_metrics_updater import start_daily_metrics_updater, stop_daily_metrics_updater
+from app.modules.ha_signal_engine import start_ha_engine_loop, stop_ha_engine_loop
 from app.modules.price_stream import start_price_stream, stop_price_stream
 from app.modules.redis_client import close_redis
 from app.modules.binance_client import close_client as close_binance
@@ -51,10 +52,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     start_price_stream()
     start_order_stream()
     start_signal_engines()
+    start_ha_engine_loop()
     start_default_collections()
     start_daily_metrics_updater()
     yield
     await stop_daily_metrics_updater()
+    await stop_ha_engine_loop()
     await stop_signal_engines()
     await stop_order_stream()
     await stop_price_stream()

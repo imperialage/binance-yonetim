@@ -37,6 +37,7 @@ class IndicatorSettingsBody(BaseModel):
     reverse_signal: int | None = None
     sl_enabled: int | None = None
     allowed_directions: str | None = None
+    ha_enabled: int | None = None
 
 
 @router.get("/api/indicator-settings")

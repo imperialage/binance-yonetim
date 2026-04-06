@@ -375,7 +375,38 @@ async def signal_engine_status() -> dict:
                 "timeout": eng.pending_order.get("timeout", 900),
             } if eng.pending_order else None,
         })
-    return {"status": "RUNNING", "task": task_status, "engines": result, "count": len(result)}
+    # HA engines
+    ha_result = []
+    try:
+        from app.modules.ha_signal_engine import get_all_ha_engines, _ha_engine_task
+        ha_engines = get_all_ha_engines()
+        ha_task_status = "NO_TASK"
+        if _ha_engine_task is not None:
+            ha_task_status = "DONE" if _ha_engine_task.done() else "RUNNING"
+        for sym, eng in ha_engines.items():
+            ha_result.append({
+                "symbol": sym,
+                "engine_type": "heikin_ashi",
+                "warmed_up": eng.warmed_up,
+                "has_position": eng.has_position,
+                "position_side": eng.position_side,
+                "trade_pending": eng.trade_pending,
+                "interval": eng.interval,
+                "closed_candles": len(eng.closed_candles),
+                "rsi_warmed_up": eng.rsi_warmed_up,
+                "ha_prev_close": round(eng.ha_prev_close, 6),
+                "last_signal_time": eng.last_signal_time,
+                "used_a_count": len(eng.used_a),
+                "max_gap": eng.max_gap,
+                "pending_order": bool(eng.pending_order),
+            })
+    except Exception:
+        ha_task_status = "ERROR"
+
+    return {
+        "status": "RUNNING", "task": task_status, "engines": result, "count": len(result),
+        "ha_task": ha_task_status, "ha_engines": ha_result, "ha_count": len(ha_result),
+    }
 
 
 @router.get("/debug/proxy")
