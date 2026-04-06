@@ -70,6 +70,7 @@ DEFAULTS = {
     "reverse_signal": 0,
     "sl_enabled": 1,
     "allowed_directions": "BOTH",
+    "ha_enabled": 0,
 }
 
 
@@ -162,8 +163,8 @@ async def upsert_settings(symbol: str, data: dict[str, Any]) -> dict[str, Any]:
             """INSERT INTO indicator_settings
                (symbol, interval, rsi_len, long_thresh, short_thresh, max_gap,
                 entry_buffer, tp_pct, sl_pct, commission, weekend_closed, active, listening,
-                weight, reverse_signal, sl_enabled, allowed_directions)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                weight, reverse_signal, sl_enabled, allowed_directions, ha_enabled)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 sym,
                 row["interval"],
@@ -182,6 +183,7 @@ async def upsert_settings(symbol: str, data: dict[str, Any]) -> dict[str, Any]:
                 row["reverse_signal"],
                 row["sl_enabled"],
                 row["allowed_directions"],
+                row["ha_enabled"],
             ),
         )
         await db.commit()
