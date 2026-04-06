@@ -764,10 +764,8 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
         if isinstance(pos_raw, Exception):
             pos_raw = []
 
-        # ── 1. Filled emirleri ayir: reduceOnly bazli ──
-        entries = []  # reduceOnly=false → giris emirleri
-        exits = []    # reduceOnly=true  → cikis emirleri
-
+        # ── 1. Filled emirleri kronolojik sirala, entry/exit eslestir ──
+        filled = []
         for o in orders_raw:
             if o.get("status") != "FILLED":
                 continue
@@ -777,7 +775,7 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
             avg_price = float(o.get("avgPrice", 0))
             if avg_price <= 0:
                 continue
-            rec = {
+            filled.append({
                 "order_id": str(o.get("orderId", "")),
                 "side": o.get("side", ""),
                 "type": o.get("origType", o.get("type", "")),
@@ -785,62 +783,110 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
                 "qty": qty,
                 "time_ms": int(o.get("updateTime", 0)) or int(o.get("time", 0)),
                 "symbol": sym,
-            }
-            if o.get("reduceOnly") or o.get("closePosition"):
-                exits.append(rec)
-            else:
-                entries.append(rec)
-
-        entries.sort(key=lambda x: x["time_ms"])
-        exits.sort(key=lambda x: x["time_ms"])
-
-        # ── 2. Exit → Entry eslestir (kronolojik) ──
-        used_entries = set()
-        sym_trades = []
-
-        for ex in exits:
-            exit_side = ex["side"]
-            entry_side = "SELL" if exit_side == "BUY" else "BUY"
-            best = None
-            for en in reversed(entries):
-                if en["order_id"] in used_entries:
-                    continue
-                if en["side"] == entry_side and en["time_ms"] <= ex["time_ms"]:
-                    best = en
-                    break
-            if best:
-                used_entries.add(best["order_id"])
-
-            entry_price = best["avg_price"] if best else 0.0
-            entry_time = best["time_ms"] if best else 0
-            exit_price = ex["avg_price"]
-            exit_time = ex["time_ms"]
-            qty = round(ex["qty"], 6)
-            pos_side = "LONG" if exit_side == "SELL" else "SHORT"
-            # PnL hesapla
-            if pos_side == "LONG" and entry_price > 0:
-                pnl = round((exit_price - entry_price) * qty, 6)
-            elif pos_side == "SHORT" and entry_price > 0:
-                pnl = round((entry_price - exit_price) * qty, 6)
-            else:
-                pnl = 0.0
-            pnl_pct = round(pnl / (entry_price * qty) * 100, 2) if entry_price > 0 and qty > 0 else 0.0
-
-            sym_trades.append({
-                "type": "CLOSED",
-                "symbol": sym,
-                "side": pos_side,
-                "entry_price": entry_price,
-                "exit_price": exit_price,
-                "qty": qty,
-                "entry_time": entry_time // 1000,
-                "exit_time": exit_time // 1000,
-                "entry_str": datetime.fromtimestamp(entry_time / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time else "",
-                "exit_str": datetime.fromtimestamp(exit_time / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if exit_time else "",
-                "exit_type": ex["type"],
-                "pnl": pnl,
-                "pnl_pct": pnl_pct,
+                "reduce_only": bool(o.get("reduceOnly") or o.get("closePosition")),
             })
+        filled.sort(key=lambda x: x["time_ms"])
+
+        # ── 2. Pozisyon state simule ederek entry/exit eslestir ──
+        # Mantik: her BUY net pozisyonu arttirir, her SELL azaltir
+        # Net pozisyon sifirdan farkliya gectiginde = entry
+        # Net pozisyon sifira dondugunde = exit (trade kapandi)
+        sym_trades = []
+        net_pos = 0.0  # >0 = long, <0 = short
+        current_entry = None  # acik pozisyonun giris bilgisi
+
+        for f in filled:
+            prev_net = net_pos
+            if f["side"] == "BUY":
+                net_pos += f["qty"]
+            else:
+                net_pos -= f["qty"]
+
+            # Pozisyon aciliyor (sifirdan farkliya gecis)
+            if prev_net == 0 and net_pos != 0:
+                current_entry = {
+                    "price": f["avg_price"],
+                    "time_ms": f["time_ms"],
+                    "side": "LONG" if net_pos > 0 else "SHORT",
+                    "qty": abs(net_pos),
+                }
+            # Pozisyon kapaniyor (sifira donus)
+            elif abs(net_pos) < 0.0001 and abs(prev_net) > 0.0001:
+                net_pos = 0.0  # floating point temizlik
+                if current_entry:
+                    entry_price = current_entry["price"]
+                    exit_price = f["avg_price"]
+                    entry_time = current_entry["time_ms"]
+                    exit_time = f["time_ms"]
+                    qty_val = round(f["qty"], 6)
+                    pos_side = current_entry["side"]
+
+                    if pos_side == "LONG":
+                        pnl = round((exit_price - entry_price) * qty_val, 6)
+                    else:
+                        pnl = round((entry_price - exit_price) * qty_val, 6)
+                    pnl_pct = round(pnl / (entry_price * qty_val) * 100, 2) if entry_price > 0 and qty_val > 0 else 0.0
+
+                    sym_trades.append({
+                        "type": "CLOSED",
+                        "symbol": sym,
+                        "side": pos_side,
+                        "entry_price": entry_price,
+                        "exit_price": exit_price,
+                        "qty": qty_val,
+                        "entry_time": entry_time // 1000,
+                        "exit_time": exit_time // 1000,
+                        "entry_str": datetime.fromtimestamp(entry_time / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time else "",
+                        "exit_str": datetime.fromtimestamp(exit_time / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if exit_time else "",
+                        "exit_type": f["type"],
+                        "pnl": pnl,
+                        "pnl_pct": pnl_pct,
+                    })
+                current_entry = None
+            # Pozisyon yonu degisiyor (ters sinyal: long → short veya short → long)
+            elif (prev_net > 0 and net_pos < 0) or (prev_net < 0 and net_pos > 0):
+                # Onceki pozisyonu kapat
+                if current_entry:
+                    entry_price = current_entry["price"]
+                    exit_price = f["avg_price"]
+                    entry_time = current_entry["time_ms"]
+                    exit_time = f["time_ms"]
+                    qty_val = round(abs(prev_net), 6)
+                    pos_side = current_entry["side"]
+
+                    if pos_side == "LONG":
+                        pnl = round((exit_price - entry_price) * qty_val, 6)
+                    else:
+                        pnl = round((entry_price - exit_price) * qty_val, 6)
+                    pnl_pct = round(pnl / (entry_price * qty_val) * 100, 2) if entry_price > 0 and qty_val > 0 else 0.0
+
+                    sym_trades.append({
+                        "type": "CLOSED",
+                        "symbol": sym,
+                        "side": pos_side,
+                        "entry_price": entry_price,
+                        "exit_price": exit_price,
+                        "qty": qty_val,
+                        "entry_time": entry_time // 1000,
+                        "exit_time": exit_time // 1000,
+                        "entry_str": datetime.fromtimestamp(entry_time / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if entry_time else "",
+                        "exit_str": datetime.fromtimestamp(exit_time / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if exit_time else "",
+                        "exit_type": f["type"],
+                        "pnl": pnl,
+                        "pnl_pct": pnl_pct,
+                    })
+                # Yeni pozisyon baslat
+                current_entry = {
+                    "price": f["avg_price"],
+                    "time_ms": f["time_ms"],
+                    "side": "LONG" if net_pos > 0 else "SHORT",
+                    "qty": abs(net_pos),
+                }
+
+        # Eslenmemis entry'ler icin used_entries set'i (acik pozisyon tespiti)
+        used_entries = set()
+        for t in sym_trades:
+            used_entries.add(t.get("entry_time", 0))
 
         all_result_trades.extend(sym_trades)
 
@@ -851,12 +897,8 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
             amt = float(p.get("positionAmt", 0))
             if amt == 0:
                 continue
-            # Son eslesmemis entry'den giris zamanini al
-            entry_time_ms = 0
-            for en in reversed(entries):
-                if en["order_id"] not in used_entries:
-                    entry_time_ms = en["time_ms"]
-                    break
+            # Acik pozisyonun giris zamani — simule edilen current_entry'den
+            entry_time_ms = current_entry["time_ms"] if current_entry else 0
 
             entry_price = float(p.get("entryPrice", 0))
             pos_side = "LONG" if amt > 0 else "SHORT"
