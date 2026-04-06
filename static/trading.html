@@ -629,13 +629,18 @@ tr.clickable:hover{background:#1c212888}
     // Boolean → integer donusumu
     if(typeof value==='boolean') value=value?1:0;
     body[apiField]=value;
-    fetch('/api/indicator-settings/'+sym,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-    .then(function(r){return r.json()})
+    var token=ensureToken();
+    if(!token){showToast('Admin token gerekli','error');return;}
+    fetch('/api/indicator-settings/'+sym,{method:'PUT',headers:{'Content-Type':'application/json','X-Admin-Token':token},body:JSON.stringify(body)})
+    .then(function(r){
+      if(r.status===401){ADMIN_TOKEN='';localStorage.removeItem('admin_token');showToast('Gecersiz token','error');return Promise.reject(new Error('401'));}
+      return r.json();
+    })
     .then(function(data){
-      // symConfigs guncelle
+      if(!data)return;
       fetchSymConfigs();
       showToast(sym+' '+field+' guncellendi');
-    }).catch(function(e){showToast('Hata: '+e.message,'error');});
+    }).catch(function(e){if(e.message!=='401')showToast('Hata: '+e.message,'error');});
   };
 
   // ── Toggle helpers ──
