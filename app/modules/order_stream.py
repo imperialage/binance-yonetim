@@ -138,7 +138,15 @@ async def _handle_event(data: dict[str, Any]) -> None:
                                 await log.ainfo("position_closed_orders_cleaned_instant", symbol=symbol)
                             except Exception:
                                 pass
-                            engine.on_position_closed()
+                            # Kapanış bilgilerini exit_info olarak aktar
+                            exit_info = {
+                                "avg_price": avg_price,
+                                "qty": qty,
+                                "order_type": order_type,
+                                "side": side,
+                                "realized_pnl": float(order.get("rp", 0)),
+                            }
+                            engine.on_position_closed(exit_info=exit_info)
                             await log.ainfo("signal_engine_position_closed", symbol=symbol, side=side)
                             # Son sinyal hala gecerli mi? Hemen isleme gir
                             if engine.last_signal and engine.last_signal_bar == engine.candle_start:

@@ -342,12 +342,18 @@ async def _execute_trade_inner(
         from app.modules.signal_engine import get_engine
         engine = get_engine(symbol)
         if engine:
+            # signal_id'yi event_id'den parse et (format: se-{row_id}-{ts})
+            _sig_id = None
+            _parts = event_id.split("-")
+            if len(_parts) >= 2 and _parts[1].isdigit():
+                _sig_id = int(_parts[1])
             engine.pending_order = {
                 "order_id": order_id,
                 "side": side,
                 "limit_price": limit_price,
                 "quantity": quantity,
                 "event_id": event_id,
+                "signal_id": _sig_id,
                 "tick_size": tick_size,
                 "sl_enabled": sl_enabled,
                 "sl_order_id": sl_order_id,

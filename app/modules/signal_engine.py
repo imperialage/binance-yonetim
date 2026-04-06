@@ -250,8 +250,14 @@ class SignalEngine:
             await log.awarning("signal_engine_position_check_error", symbol=self.symbol, error=str(e))
 
     # ── Pozisyon kapandi bildirimi (order_stream'den) ────
-    def on_position_closed(self) -> None:
-        """TP/SL fill → pozisyon kapandi."""
+    def on_position_closed(self, exit_info: dict | None = None) -> None:
+        """TP/SL fill → pozisyon kapandi. exit_info: order_stream'den gelen detaylar."""
+        # Kapanış kaydı için mevcut state'i sakla
+        prev_direction = self.position_side  # LONG/SHORT
+        prev_tp = self.tp_price
+        prev_sl = self.sl_price
+        prev_pending = self.pending_order
+
         self.has_position = False
         self.position_side = ""
         self.trade_pending = False
@@ -269,6 +275,152 @@ class SignalEngine:
                 _save_algo_ids(data)
         except Exception:
             pass
+
+        # trade_closures kaydı oluştur (async task olarak)
+        if exit_info and prev_direction:
+            asyncio.get_event_loop().call_soon(
+                lambda: asyncio.create_task(
+                    self._record_closure(exit_info, prev_direction, prev_tp, prev_sl, prev_pending)
+                )
+            )
+
+    async def _record_closure(
+        self,
+        exit_info: dict,
+        direction: str,
+        tp_price: float,
+        sl_price: float,
+        pending_order: dict | None,
+    ) -> None:
+        """trade_closures tablosuna kapanış kaydı yaz."""
+        try:
+            from app.modules.trade_store import log_closure
+            from app.modules.binance_client import get_position_risk
+
+            exit_price = exit_info.get("avg_price", 0)
+            exit_time = int(time.time())
+            qty = exit_info.get("qty", 0)
+            realized_pnl = exit_info.get("realized_pnl", 0)
+
+            # Entry bilgisini pending_order'dan al
+            entry_price = pending_order.get("signal_price", 0) if pending_order else 0
+            entry_time = int(pending_order.get("start_time", 0)) if pending_order else 0
+            event_id = pending_order.get("event_id", "") if pending_order else ""
+            signal_id_raw = event_id.split("-")[1] if event_id and "-" in event_id else None
+            signal_id = int(signal_id_raw) if signal_id_raw and signal_id_raw.isdigit() else None
+
+            # Entry bilgisi yoksa Binance'tan son order'a bak
+            if entry_price <= 0:
+                entry_price = exit_info.get("entry_price", exit_price)
+
+            # exit_reason belirle: çıkış fiyatı TP'ye mi SL'ye mi yakın?
+            exit_reason = exit_info.get("exit_reason", "")
+            if not exit_reason and tp_price > 0 and sl_price > 0 and exit_price > 0:
+                tp_dist = abs(exit_price - tp_price)
+                sl_dist = abs(exit_price - sl_price)
+                if tp_dist <= sl_dist:
+                    exit_reason = "TP"
+                else:
+                    exit_reason = "SL"
+            if not exit_reason:
+                order_type = exit_info.get("order_type", "")
+                if "TAKE_PROFIT" in order_type:
+                    exit_reason = "TP"
+                elif "STOP" in order_type:
+                    exit_reason = "SL"
+                elif "MARKET" in order_type:
+                    exit_reason = "MANUAL"
+                else:
+                    exit_reason = "UNKNOWN"
+
+            # PnL hesapla
+            if direction == "LONG":
+                pnl_pct = (exit_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
+            else:
+                pnl_pct = (entry_price - exit_price) / entry_price * 100 if entry_price > 0 else 0
+            pnl_usdt = realized_pnl if realized_pnl else pnl_pct / 100 * entry_price * qty
+
+            hold_seconds = exit_time - entry_time if entry_time > 0 else 0
+
+            closure_id = await log_closure(
+                event_id=event_id,
+                signal_id=signal_id,
+                symbol=self.symbol,
+                direction=direction,
+                entry_price=entry_price,
+                entry_time=entry_time,
+                exit_price=exit_price,
+                exit_time=exit_time,
+                exit_reason=exit_reason,
+                qty=qty,
+                pnl_usdt=round(pnl_usdt, 4),
+                pnl_pct=round(pnl_pct, 4),
+                commission=0.04 * 2,  # %0.04 giriş + çıkış
+                hold_duration_seconds=hold_seconds,
+                tp_price=tp_price,
+                sl_price=sl_price,
+            )
+
+            await log.ainfo(
+                "trade_closure_recorded",
+                symbol=self.symbol,
+                direction=direction,
+                exit_reason=exit_reason,
+                pnl_pct=round(pnl_pct, 2),
+                closure_id=closure_id,
+            )
+
+            # SL kapanışlarında post-exit analiz başlat
+            if exit_reason == "SL" and closure_id > 0:
+                asyncio.create_task(self._collect_post_exit_candles(closure_id, exit_time))
+
+        except Exception as e:
+            log.error("record_closure_failed", symbol=self.symbol, error=str(e))
+
+    async def _collect_post_exit_candles(self, closure_id: int, exit_time: int) -> None:
+        """SL kapanışından sonra 20 mum boyunca fiyat hareketini kaydet."""
+        try:
+            import httpx
+            from app.modules.trade_store import log_post_exit_candles
+
+            # 5 dakika bekle, sonra mumları çek (bir kaç mum oluşsun)
+            await asyncio.sleep(300)
+
+            iv = self.interval
+            iv_ms = self.iv_sec * 1000
+            start_ms = exit_time * 1000
+            end_ms = start_ms + (20 * iv_ms)
+
+            proxy_url = None
+            try:
+                from app.config import settings as app_cfg
+                proxy_url = app_cfg.binance_proxy_url or None
+            except Exception:
+                pass
+
+            async with httpx.AsyncClient(timeout=15, proxy=proxy_url) as client:
+                resp = await client.get("https://fapi.binance.com/fapi/v1/klines", params={
+                    "symbol": self.symbol, "interval": iv,
+                    "startTime": start_ms, "endTime": end_ms, "limit": 20,
+                })
+                resp.raise_for_status()
+                klines = resp.json()
+
+            candles = []
+            for i, k in enumerate(klines):
+                candles.append({
+                    "index": i + 1,
+                    "open_time": int(k[0]) // 1000,
+                    "high": float(k[2]),
+                    "low": float(k[3]),
+                    "close": float(k[4]),
+                })
+
+            if candles:
+                await log_post_exit_candles(closure_id, candles)
+                await log.ainfo("post_exit_candles_saved", symbol=self.symbol, closure_id=closure_id, count=len(candles))
+        except Exception as e:
+            await log.awarning("post_exit_candles_failed", symbol=self.symbol, error=str(e))
 
     def on_position_opened(self, side: str) -> None:
         """Limit order fill → pozisyon acildi."""
@@ -324,7 +476,14 @@ class SignalEngine:
                 except Exception:
                     pass
 
-                self.on_position_closed()
+                # Polling ile tespit — exit bilgisini live price'dan al
+                _exit_price = get_live_price(self.symbol) or 0
+                self.on_position_closed(exit_info={
+                    "avg_price": _exit_price,
+                    "qty": 0,
+                    "order_type": "",
+                    "realized_pnl": 0,
+                })
                 await log.ainfo("position_closed_detected", symbol=self.symbol)
 
                 # Son sinyal hala bu mumda mi? Hemen isleme gir
@@ -481,7 +640,8 @@ class SignalEngine:
                     try:
                         await cancel_all_open_orders(self.symbol)
                         await place_market_order(self.symbol, exit_side, qty, reduce_only=True)
-                        self.on_position_closed()
+                        _p = get_live_price(self.symbol) or tp_price
+                        self.on_position_closed(exit_info={"avg_price": _p, "qty": qty, "order_type": "TAKE_PROFIT_MARKET", "realized_pnl": 0, "exit_reason": "TP"})
                         await log.ainfo("tp_passed_market_close", symbol=self.symbol)
                     except Exception as e2:
                         await log.aerror("tp_passed_close_failed", symbol=self.symbol, error=str(e2))
@@ -501,7 +661,8 @@ class SignalEngine:
                         try:
                             await cancel_all_open_orders(self.symbol)
                             await place_market_order(self.symbol, exit_side, qty, reduce_only=True)
-                            self.on_position_closed()
+                            _p2 = get_live_price(self.symbol) or sl_price
+                            self.on_position_closed(exit_info={"avg_price": _p2, "qty": qty, "order_type": "STOP_MARKET", "realized_pnl": 0, "exit_reason": "SL"})
                             await log.ainfo("sl_passed_market_close", symbol=self.symbol)
                         except Exception as e2:
                             await log.aerror("sl_passed_close_failed", symbol=self.symbol, error=str(e2))
@@ -516,7 +677,8 @@ class SignalEngine:
                     try:
                         await cancel_all_open_orders(self.symbol)
                         await place_market_order(self.symbol, exit_side, qty, reduce_only=True)
-                        self.on_position_closed()
+                        _p3 = get_live_price(self.symbol) or 0
+                        self.on_position_closed(exit_info={"avg_price": _p3, "qty": qty, "order_type": "MARKET", "realized_pnl": 0, "exit_reason": "WATCHDOG"})
                         await log.ainfo("sl_failed_emergency_close", symbol=self.symbol)
                     except Exception as e3:
                         await log.aerror("sl_failed_emergency_close_failed", symbol=self.symbol, error=str(e3))
@@ -538,6 +700,7 @@ class SignalEngine:
                 status="FILLED",
                 closed_previous=po.get("closed_previous", False),
                 balance_used=po.get("balance", 0),
+                signal_id=po.get("signal_id"),
             )
 
         except Exception as e:

@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from app.config import settings
+from app.modules.daily_metrics_updater import start_daily_metrics_updater, stop_daily_metrics_updater
 from app.modules.price_stream import start_price_stream, stop_price_stream
 from app.modules.redis_client import close_redis
 from app.modules.binance_client import close_client as close_binance
@@ -27,7 +28,7 @@ from app.modules.indicator_settings_store import init_indicator_settings_db, clo
 from app.modules.order_stream import start_order_stream, stop_order_stream
 from app.modules.signal_engine import start_signal_engines, stop_signal_engines
 from app.routers import admin, backtest, chart, data_collector, events, latest, status, webhook, ws
-from app.routers import st_webhook, indicator_settings
+from app.routers import st_webhook, indicator_settings, strategy_report
 from app.utils.logging import get_logger, setup_logging
 
 setup_logging(log_level=settings.log_level, json_output=settings.log_json)
@@ -51,7 +52,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     start_order_stream()
     start_signal_engines()
     start_default_collections()
+    start_daily_metrics_updater()
     yield
+    await stop_daily_metrics_updater()
     await stop_signal_engines()
     await stop_order_stream()
     await stop_price_stream()
@@ -87,6 +90,7 @@ app.include_router(backtest.router, tags=["backtest"])
 app.include_router(data_collector.router, tags=["data-collector"])
 app.include_router(st_webhook.router, tags=["st-webhook"])
 app.include_router(indicator_settings.router, tags=["indicator-settings"])
+app.include_router(strategy_report.router, tags=["strategy-report"])
 
 # ── Static files & page routes ────────────────────────
 _static_dir = Path(__file__).resolve().parent.parent / "static"
