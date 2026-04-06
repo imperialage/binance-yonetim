@@ -149,6 +149,14 @@ async def collector_page() -> FileResponse:
     )
 
 
+@app.get("/ha-monitor")
+async def ha_monitor_page() -> FileResponse:
+    return FileResponse(
+        str(_static_dir / "ha_monitor.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
 @app.get("/strategy")
 async def strategy_page() -> FileResponse:
     return FileResponse(

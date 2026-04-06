@@ -1502,3 +1502,143 @@ async def debug_raw_open_orders(symbol: str) -> dict:
             pass
 
     return result
+
+
+@router.get("/api/ha-chart-data")
+async def api_ha_chart_data(
+    symbol: str = "MYXUSDT",
+    interval: str = "5m",
+    rsi_len: int = 10,
+    long_thresh: float = 32,
+    short_thresh: float = 70,
+    max_gap: int = 21,
+    entry_buffer: float = 0.1,
+    tp_pct_param: float = 0,
+    sl_pct_param: float = 0,
+    start_date: str = "",
+    end_date: str = "",
+) -> dict:
+    """HA monitor icin: Binance'tan mum cek → Heikin-Ashi'ye donustur → RSI hesapla."""
+    from app.modules.rsi_calculator import calculate_rsi
+    from app.modules.ha_signal_engine import convert_klines_to_ha
+    from app.modules.binance_client import get_position_risk
+    from app.config import get_symbol_config
+    from datetime import datetime, timezone, timedelta
+    import httpx
+
+    tz_ist = timezone(timedelta(hours=3))
+    sym = symbol.upper()
+
+    cfg = get_symbol_config(sym)
+    tp_pct = tp_pct_param / 100 if tp_pct_param > 0 else cfg.get("tp_pct", 0.013)
+    sl_pct = sl_pct_param / 100 if sl_pct_param > 0 else cfg.get("sl_pct", 0.01)
+
+    import time as _time
+    INTERVAL_MS = {"1m": 60000, "5m": 300000, "15m": 900000, "30m": 1800000, "1h": 3600000, "4h": 14400000, "1d": 86400000}
+    iv_ms = INTERVAL_MS.get(interval, 300000)
+
+    _tz_ist = timezone(timedelta(hours=3))
+    if start_date:
+        try:
+            start_ms = int(datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=_tz_ist).timestamp() * 1000)
+            warmup_ms = start_ms - (1000 * iv_ms)
+        except Exception:
+            warmup_ms = int(_time.time() * 1000) - (1500 * iv_ms)
+            start_ms = warmup_ms
+    else:
+        warmup_ms = int(_time.time() * 1000) - (1500 * iv_ms)
+        start_ms = warmup_ms
+
+    if end_date:
+        try:
+            end_ms = int(datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=_tz_ist).timestamp() * 1000) + 86400000
+        except Exception:
+            end_ms = int(_time.time() * 1000)
+    else:
+        end_ms = int(_time.time() * 1000)
+
+    try:
+        raw_klines = []
+        current = warmup_ms
+        async with httpx.AsyncClient(timeout=15) as client:
+            while current < end_ms:
+                resp = await client.get("https://fapi.binance.com/fapi/v1/klines", params={
+                    "symbol": sym, "interval": interval, "startTime": current, "endTime": end_ms, "limit": 1500,
+                })
+                resp.raise_for_status()
+                batch = resp.json()
+                if not batch:
+                    break
+                raw_klines.extend(batch)
+                current = int(batch[-1][0]) + iv_ms
+                if len(batch) < 1500:
+                    break
+                await asyncio.sleep(0.2)
+    except Exception as e:
+        return {"candles": [], "signals": [], "position": None, "error": str(e)}
+
+    if not raw_klines:
+        return {"candles": [], "signals": [], "position": None}
+
+    # Normal klines → HA mumlari
+    ha_candles = convert_klines_to_ha(raw_klines)
+
+    # HA close'lardan RSI
+    ha_closes = [c["close"] for c in ha_candles]
+    rsi_values = calculate_rsi(ha_closes, rsi_len)
+
+    candles = []
+    for i, hc in enumerate(ha_candles):
+        rsi = rsi_values[i] if i < len(rsi_values) else None
+        candles.append({
+            "time": hc["time"],
+            "open": round(hc["open"], 6),
+            "high": round(hc["high"], 6),
+            "low": round(hc["low"], 6),
+            "close": round(hc["close"], 6),
+            "real_close": round(hc.get("real_close", hc["close"]), 6),
+            "rsi": rsi,
+        })
+
+    # Binance acik pozisyon
+    position = None
+    try:
+        positions = await get_position_risk(sym)
+        for p in positions:
+            if p.get("symbol") == sym:
+                amt = float(p.get("positionAmt", 0))
+                if amt != 0:
+                    entry_p = float(p.get("entryPrice", 0))
+                    is_long = amt > 0
+                    position = {
+                        "side": "BUY" if is_long else "SELL",
+                        "entry_price": entry_p,
+                        "tp_price": entry_p * (1 + tp_pct) if is_long else entry_p * (1 - tp_pct),
+                        "sl_price": entry_p * (1 - sl_pct) if is_long else entry_p * (1 + sl_pct),
+                        "qty": abs(amt),
+                        "upnl": float(p.get("unRealizedProfit", 0)),
+                    }
+                break
+    except Exception:
+        pass
+
+    # Tarih filtresi
+    if start_date:
+        filtered_candles = [c for c in candles if c["time"] >= start_ms // 1000]
+    else:
+        filtered_candles = candles
+
+    return {
+        "candles": filtered_candles,
+        "signals": [],
+        "trades": [],
+        "position": position,
+        "symbol": sym,
+        "interval": interval,
+        "total_candles": len(filtered_candles),
+        "params": {
+            "rsi_len": rsi_len, "long_thresh": long_thresh, "short_thresh": short_thresh,
+            "max_gap": max_gap, "entry_buffer": entry_buffer,
+            "tp_pct": round(tp_pct * 100, 2), "sl_pct": round(sl_pct * 100, 2),
+        },
+    }
