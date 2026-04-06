@@ -399,6 +399,11 @@ async def signal_engine_status() -> dict:
                 "used_a_count": len(eng.used_a),
                 "max_gap": eng.max_gap,
                 "pending_order": bool(eng.pending_order),
+                "tp_confirmed": eng.tp_confirmed,
+                "sl_confirmed": eng.sl_confirmed,
+                "tp_price": eng.tp_price,
+                "sl_price": eng.sl_price,
+                "entry_price": eng.entry_price,
             })
     except Exception:
         ha_task_status = "ERROR"
