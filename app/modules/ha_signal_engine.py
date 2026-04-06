@@ -811,8 +811,7 @@ async def _ha_engine_loop() -> None:
         await log.aerror("ha_engine_init_error", error=str(e))
 
     if not _ha_engines:
-        await log.ainfo("ha_engine_no_symbols")
-        return
+        await log.ainfo("ha_engine_no_symbols_yet")
 
     last_fill_check = time.time()
     last_pos_sync = time.time()
@@ -853,6 +852,19 @@ async def _ha_engine_loop() -> None:
                             eng.short_thresh = s.get("short_thresh", 70.0)
                             eng.max_gap = s.get("max_gap", 21)
                             eng.entry_buffer = s.get("entry_buffer", 0.1) / 100.0
+                        elif s.get("active") and s.get("ha_enabled") and sym not in _ha_engines:
+                            # Yeni ha_enabled sembol — engine olustur
+                            new_eng = HeikinAshiEngine(sym, s)
+                            await new_eng.warmup()
+                            if new_eng.warmed_up:
+                                _ha_engines[sym] = new_eng
+                                await log.ainfo("ha_engine_new_symbol", symbol=sym)
+                    # ha_enabled kapanan sembolleri kaldir
+                    ha_syms = {s["symbol"] for s in fresh if s.get("active") and s.get("ha_enabled")}
+                    for sym in list(_ha_engines.keys()):
+                        if sym not in ha_syms:
+                            del _ha_engines[sym]
+                            await log.ainfo("ha_engine_removed", symbol=sym)
                     for eng in _ha_engines.values():
                         eng._cleanup_used_a()
                 except Exception as e:
