@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Strateji Dashboard</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>
+/* Page-specific: Strategy Dashboard */
+.summary-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:var(--space-md);margin-bottom:var(--space-xl)}
+.sum-card{background:var(--bg-secondary);border:1px solid var(--border-primary);border-radius:var(--radius-lg);padding:16px;text-align:center}
+.sum-label{font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:6px}
+.sum-val{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-1px}
+.sum-sub{font-size:11px;color:var(--text-muted);margin-top:2px}
+
+/* Filters */
+.filter-row{display:flex;gap:var(--space-md);align-items:center;flex-wrap:wrap;margin-bottom:var(--space-xl);padding:10px 16px;background:var(--bg-secondary);border:1px solid var(--border-primary);border-radius:var(--radius-lg)}
+.filter-row label{font-size:10px;color:var(--text-dim);font-weight:600}
+.fbtn{padding:5px 14px;border-radius:var(--radius-sm);font-size:11px;font-weight:700;cursor:pointer;border:1px solid var(--border-secondary);background:transparent;color:var(--text-muted);font-family:inherit;transition:all var(--transition-fast)}
+.fbtn.active{background:var(--accent-gold);color:var(--bg-primary);border-color:var(--accent-gold)}
+.fbtn:hover:not(.active){background:var(--bg-hover);color:var(--text-primary)}
+
+/* Two-col layout */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-xl);margin-bottom:var(--space-xl)}
+.section{background:var(--bg-secondary);border:1px solid var(--border-primary);border-radius:var(--radius-lg);padding:16px}
+.section-hd{font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.section-hd .cnt{background:var(--bg-tertiary);color:var(--text-muted);font-size:10px;padding:1px 7px;border-radius:8px}
+
+/* Mini table inside sections */
+.mtbl{width:100%;border-collapse:collapse}
+.mtbl th{text-align:left;padding:6px 8px;font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;font-weight:600;border-bottom:1px solid var(--border-primary)}
+.mtbl td{padding:5px 8px;font-size:12px;border-bottom:1px solid rgba(21,26,35,0.5);font-variant-numeric:tabular-nums}
+.mtbl tr:hover{background:var(--bg-hover)}
+.mtbl .positive{color:var(--color-long-alt)}.mtbl .negative{color:var(--color-short-alt)}
+.row-positive{background:rgba(14,203,129,0.04)}.row-negative{background:rgba(246,70,93,0.04)}
+
+/* Hour heatmap */
+.hour-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:3px}
+.hour-cell{text-align:center;padding:6px 2px;border-radius:var(--radius-sm);font-size:10px;font-weight:600;transition:all var(--transition-fast)}
+.hour-cell .h-num{font-size:9px;color:var(--text-dim);display:block}
+.hour-cell .h-wr{font-size:11px;font-weight:700;display:block}
+.hour-cell .h-cnt{font-size:8px;color:var(--text-muted)}
+
+/* Direction cards */
+.dir-row{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);margin-bottom:var(--space-xl)}
+.dir-card{background:var(--bg-secondary);border:1px solid var(--border-primary);border-radius:var(--radius-lg);padding:16px}
+.dir-card .dir-badge{font-size:14px;font-weight:800;margin-bottom:8px}
+.dir-stat{display:flex;justify-content:space-between;margin-bottom:3px;font-size:12px}
+.dir-stat .k{color:var(--text-dim)}.dir-stat .v{font-weight:600}
+
+/* Exit reason bar */
+.exit-bars{display:flex;gap:4px;height:24px;border-radius:var(--radius-sm);overflow:hidden;margin-bottom:8px}
+.exit-bar{display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff;min-width:20px;transition:width var(--transition-normal)}
+
+/* Full-width section */
+.full-section{background:var(--bg-secondary);border:1px solid var(--border-primary);border-radius:var(--radius-lg);padding:16px;margin-bottom:var(--space-xl)}
+
+/* Loading */
+.loading{text-align:center;padding:40px;color:var(--accent-gold)}
+
+/* Responsive */
+@media(max-width:900px){.summary-grid{grid-template-columns:repeat(3,1fr)}.two-col{grid-template-columns:1fr}.dir-row{grid-template-columns:1fr}.hour-grid{grid-template-columns:repeat(8,1fr)}}
+@media(max-width:600px){.summary-grid{grid-template-columns:repeat(2,1fr)}.hour-grid{grid-template-columns:repeat(6,1fr)}.filter-row{flex-direction:column;align-items:stretch}}
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <h1>Strateji</h1>
+  <nav class="nav-links">
+    <a href="/">Piyasa</a>
+    <a href="/trading">Trading</a>
+    <a href="/monitor">Monitor</a>
+    <a href="/chart">Grafik</a>
+    <a href="/settings">Ayarlar</a>
+  </nav>
+  <div class="header-right">
+    <span class="last-update" id="lastUpdate"></span>
+  </div>
+</header>
+
+<div class="container">
+
+<!-- Filters -->
+<div class="filter-row">
+  <label>Donem:</label>
+  <button class="fbtn" data-days="7" onclick="setDays(7)">7 gun</button>
+  <button class="fbtn active" data-days="30" onclick="setDays(30)">30 gun</button>
+  <button class="fbtn" data-days="60" onclick="setDays(60)">60 gun</button>
+  <button class="fbtn" data-days="365" onclick="setDays(365)">Tumu</button>
+  <label style="margin-left:auto">Sembol:</label>
+  <select id="symFilter" onchange="loadData()">
+    <option value="">Hepsi</option>
+  </select>
+</div>
+
+<!-- 1) Summary Cards -->
+<div class="summary-grid" id="summaryGrid">
+  <div class="sum-card"><div class="sum-label">Toplam Trade</div><div class="sum-val" id="sTrades">--</div></div>
+  <div class="sum-card"><div class="sum-label">Win Rate</div><div class="sum-val" id="sWinRate">--</div><div class="sum-sub" id="sWinSub"></div></div>
+  <div class="sum-card"><div class="sum-label">Toplam PnL</div><div class="sum-val" id="sPnl">--</div><div class="sum-sub" id="sPnlSub"></div></div>
+  <div class="sum-card"><div class="sum-label">Profit Factor</div><div class="sum-val" id="sPF">--</div></div>
+  <div class="sum-card"><div class="sum-label">Ort. Sure</div><div class="sum-val" id="sHold">--</div></div>
+</div>
+
+<!-- 5) Direction Analysis -->
+<div class="dir-row" id="dirRow">
+  <div class="dir-card" id="dirLong">
+    <div class="dir-badge" style="color:var(--color-long)">LONG</div>
+    <div id="dirLongStats" class="loading">--</div>
+  </div>
+  <div class="dir-card" id="dirShort">
+    <div class="dir-badge" style="color:var(--color-short)">SHORT</div>
+    <div id="dirShortStats" class="loading">--</div>
+  </div>
+</div>
+
+<!-- Two column: Symbol table + Exit reasons -->
+<div class="two-col">
+
+  <!-- 2) Symbol Table -->
+  <div class="section">
+    <div class="section-hd">Sembol Bazli <span class="cnt" id="symCnt">0</span></div>
+    <table class="mtbl"><thead><tr>
+      <th>Sembol</th><th>Trade</th><th>Win%</th><th>PnL%</th><th>Ort.Kazanc</th><th>Ort.Kayip</th>
+    </tr></thead><tbody id="symBody"></tbody></table>
+  </div>
+
+  <!-- 3) Exit Reasons -->
+  <div class="section">
+    <div class="section-hd">Cikis Sebebi</div>
+    <div class="exit-bars" id="exitBars"></div>
+    <table class="mtbl"><thead><tr>
+      <th>Sebep</th><th>Adet</th><th>Ort. PnL%</th><th>Toplam PnL%</th>
+    </tr></thead><tbody id="exitBody"></tbody></table>
+  </div>
+
+</div>
+
+<!-- 4) Hour Heatmap -->
+<div class="full-section">
+  <div class="section-hd">Saat Bazli Performans</div>
+  <div class="hour-grid" id="hourGrid"></div>
+</div>
+
+<!-- 7) Best / Worst -->
+<div class="two-col">
+  <div class="section">
+    <div class="section-hd" style="color:var(--color-long)">En Iyi 5 Trade</div>
+    <table class="mtbl"><thead><tr><th>Sembol</th><th>Yon</th><th>PnL%</th><th>$</th><th>Sure</th></tr></thead>
+    <tbody id="bestBody"></tbody></table>
+  </div>
+  <div class="section">
+    <div class="section-hd" style="color:var(--color-short)">En Kotu 5 Trade</div>
+    <table class="mtbl"><thead><tr><th>Sembol</th><th>Yon</th><th>PnL%</th><th>$</th><th>Sure</th></tr></thead>
+    <tbody id="worstBody"></tbody></table>
+  </div>
+</div>
+
+<!-- 6) Recent Trades Table -->
+<div class="full-section">
+  <div class="section-hd">Son Trade'ler <span class="cnt" id="recentCnt">0</span></div>
+  <div style="overflow-x:auto;max-height:500px;overflow-y:auto">
+  <table class="mtbl"><thead style="position:sticky;top:0;background:var(--bg-secondary);z-index:1"><tr>
+    <th>Tarih</th><th>Sembol</th><th>Yon</th><th>Giris</th><th>Cikis</th><th>Sebep</th><th>PnL%</th><th>PnL $</th><th>Sure</th>
+  </tr></thead><tbody id="recentBody"></tbody></table>
+  </div>
+</div>
+
+</div><!-- container -->
+
+<script>
+var days=30,data=null;
+var SYMS=['XAGUSDT','ETHUSDT','MYXUSDT','BTCUSDT','SOLUSDT','XRPUSDT','DOGEUSDT','AVAXUSDT'];
+
+function $(id){return document.getElementById(id)}
+function fmt(n,d){return n==null||isNaN(n)?'--':Number(n).toFixed(d!=null?d:2)}
+function cls(n){return n>0?'positive':n<0?'negative':''}
+
+function setDays(d){
+  days=d;
+  document.querySelectorAll('.fbtn[data-days]').forEach(function(b){b.classList.toggle('active',parseInt(b.dataset.days)===d)});
+  loadData();
+}
+
+// Init symbol filter
+(function(){
+  var sel=$('symFilter');
+  SYMS.forEach(function(s){var o=document.createElement('option');o.value=s;o.textContent=s.replace('USDT','');sel.appendChild(o)});
+})();
+
+async function loadData(){
+  var sym=$('symFilter').value;
+  var u='/api/strategy-report?days='+days;
+  if(sym) u+='&symbol='+sym;
+  try{
+    var r=await fetch(u);
+    data=await r.json();
+    render();
+    $('lastUpdate').textContent=new Date().toLocaleTimeString('tr-TR');
+  }catch(e){console.error(e)}
+}
+
+function render(){
+  if(!data)return;
+  var s=data.summary||{};
+
+  // 1) Summary
+  $('sTrades').textContent=s.total_trades||0;
+  var wr=s.win_rate||0;
+  $('sWinRate').textContent=fmt(wr,1)+'%';
+  $('sWinRate').style.color=wr>=50?'var(--color-long)':'var(--color-short)';
+  $('sWinSub').textContent=(s.total_trades?Math.round(s.total_trades*wr/100):0)+' kazanc';
+
+  var pnlPct=s.total_pnl_pct||0;
+  $('sPnl').textContent=fmt(pnlPct,2)+'%';
+  $('sPnl').style.color=pnlPct>=0?'var(--color-long)':'var(--color-short)';
+  $('sPnlSub').textContent='$'+fmt(s.total_pnl_usdt||0,2);
+  $('sPnlSub').style.color=pnlPct>=0?'var(--color-long)':'var(--color-short)';
+
+  var pf=s.profit_factor||0;
+  $('sPF').textContent=pf===Infinity?'--':fmt(pf,2);
+  $('sPF').style.color=pf>=1.5?'var(--color-long)':pf>=1?'var(--accent-gold)':'var(--color-short)';
+
+  $('sHold').textContent=fmt(s.avg_hold_minutes||0,0)+'dk';
+
+  // 2) Symbol table
+  var byS=data.by_symbol||{};
+  var keys=Object.keys(byS).sort(function(a,b){return(byS[b].total_pnl_pct||0)-(byS[a].total_pnl_pct||0)});
+  var sh='';
+  keys.forEach(function(sym){
+    var d=byS[sym];
+    var rowCls=(d.total_pnl_pct||0)>=0?'row-positive':'row-negative';
+    sh+='<tr class="'+rowCls+'"><td style="font-weight:700;color:var(--accent-gold)">'+sym.replace('USDT','')+'</td>'
+      +'<td>'+d.total_trades+'</td>'
+      +'<td class="'+cls(d.win_rate-50)+'">'+fmt(d.win_rate,1)+'%</td>'
+      +'<td class="'+cls(d.total_pnl_pct)+'">'+fmt(d.total_pnl_pct,2)+'%</td>'
+      +'<td class="positive">'+fmt(d.avg_win_pct,3)+'%</td>'
+      +'<td class="negative">'+fmt(d.avg_loss_pct,3)+'%</td></tr>';
+  });
+  $('symBody').innerHTML=sh||'<tr><td colspan="6" style="text-align:center;color:var(--text-faint);padding:20px">Veri yok</td></tr>';
+  $('symCnt').textContent=keys.length;
+
+  // 3) Exit reasons
+  var byE=data.by_exit_reason||{};
+  var eKeys=Object.keys(byE);
+  var totalE=eKeys.reduce(function(s,k){return s+(byE[k].count||0)},0);
+  var colors={TP:'var(--color-long)',SL:'var(--color-short)',MANUAL:'var(--color-info)',REVERSE_SIGNAL:'var(--color-purple)',WATCHDOG:'var(--color-warning)',UNKNOWN:'var(--text-faint)'};
+  var barsHtml='';
+  eKeys.forEach(function(k){
+    var pct=totalE>0?(byE[k].count/totalE*100):0;
+    if(pct<1)pct=1;
+    barsHtml+='<div class="exit-bar" style="width:'+pct+'%;background:'+(colors[k]||'var(--text-faint)')+'">'+k+'</div>';
+  });
+  $('exitBars').innerHTML=barsHtml;
+
+  var eh='';
+  eKeys.forEach(function(k){
+    var d=byE[k];
+    eh+='<tr><td style="font-weight:700">'+k+'</td><td>'+d.count+'</td>'
+      +'<td class="'+cls(d.avg_pnl)+'">'+fmt(d.avg_pnl,3)+'%</td>'
+      +'<td class="'+cls(d.total_pnl)+'">'+fmt(d.total_pnl,2)+'%</td></tr>';
+  });
+  $('exitBody').innerHTML=eh||'<tr><td colspan="4" style="text-align:center;color:var(--text-faint)">Veri yok</td></tr>';
+
+  // 4) Hour heatmap
+  var byH=data.by_hour||{};
+  var hHtml='';
+  for(var h=0;h<24;h++){
+    var hd=byH[String(h)]||{trades:0,win_rate:0,avg_pnl:0};
+    var bg='var(--bg-tertiary)';
+    if(hd.trades>0){
+      var wr2=hd.win_rate;
+      if(wr2>=60) bg='rgba(14,203,129,0.25)';
+      else if(wr2>=50) bg='rgba(14,203,129,0.1)';
+      else if(wr2>=40) bg='rgba(246,70,93,0.1)';
+      else bg='rgba(246,70,93,0.25)';
+    }
+    hHtml+='<div class="hour-cell" style="background:'+bg+'" title="Saat '+h+': '+hd.trades+' trade, WR:'+fmt(hd.win_rate,0)+'%">'
+      +'<span class="h-num">'+h+':00</span>'
+      +'<span class="h-wr" style="color:'+(hd.win_rate>=50?'var(--color-long)':'var(--color-short)')+'">'+fmt(hd.win_rate,0)+'%</span>'
+      +'<span class="h-cnt">'+hd.trades+'</span></div>';
+  }
+  $('hourGrid').innerHTML=hHtml;
+
+  // 5) Direction
+  renderDir('dirLongStats',data.by_direction&&data.by_direction.LONG);
+  renderDir('dirShortStats',data.by_direction&&data.by_direction.SHORT);
+
+  // 6) Recent trades
+  var recent=data.recent_trades||[];
+  var rh='';
+  recent.forEach(function(t){
+    var rowCls=t.pnl_pct>=0?'row-positive':'row-negative';
+    var dirBadge=t.direction==='LONG'?'<span class="badge badge-long badge-sm">LONG</span>':'<span class="badge badge-short badge-sm">SHORT</span>';
+    var reasonBadge='<span class="badge badge-sm '+(t.exit_reason==='TP'?'badge-tp':t.exit_reason==='SL'?'badge-sl':'badge-muted')+'">'+t.exit_reason+'</span>';
+    rh+='<tr class="'+rowCls+'">'
+      +'<td style="color:var(--text-dim);font-size:11px">'+t.exit_time+'</td>'
+      +'<td style="color:var(--accent-gold);font-weight:600">'+t.symbol.replace('USDT','')+'</td>'
+      +'<td>'+dirBadge+'</td>'
+      +'<td>'+fmt(t.entry_price,t.entry_price>=100?2:4)+'</td>'
+      +'<td>'+fmt(t.exit_price,t.exit_price>=100?2:4)+'</td>'
+      +'<td>'+reasonBadge+'</td>'
+      +'<td class="'+cls(t.pnl_pct)+'" style="font-weight:700">'+fmt(t.pnl_pct,3)+'%</td>'
+      +'<td class="'+cls(t.pnl_usdt)+'">$'+fmt(t.pnl_usdt,2)+'</td>'
+      +'<td style="color:var(--text-muted)">'+fmt(t.hold_minutes,0)+'dk</td></tr>';
+  });
+  $('recentBody').innerHTML=rh||'<tr><td colspan="9" style="text-align:center;color:var(--text-faint);padding:20px">Trade verisi yok</td></tr>';
+  $('recentCnt').textContent=recent.length;
+
+  // 7) Best / Worst
+  renderTopTrades('bestBody',data.best_trades||[]);
+  renderTopTrades('worstBody',data.worst_trades||[]);
+}
+
+function renderDir(elId,d){
+  if(!d||!d.total_trades){$(elId).innerHTML='<span style="color:var(--text-faint)">Veri yok</span>';return}
+  $(elId).innerHTML=
+    '<div class="dir-stat"><span class="k">Trade</span><span class="v">'+d.total_trades+'</span></div>'
+    +'<div class="dir-stat"><span class="k">Win Rate</span><span class="v '+cls(d.win_rate-50)+'">'+fmt(d.win_rate,1)+'%</span></div>'
+    +'<div class="dir-stat"><span class="k">PnL</span><span class="v '+cls(d.total_pnl_pct)+'">'+fmt(d.total_pnl_pct,2)+'% ($'+fmt(d.total_pnl_usdt,2)+')</span></div>'
+    +'<div class="dir-stat"><span class="k">Ort. Kazanc</span><span class="v positive">'+fmt(d.avg_win_pct,3)+'%</span></div>'
+    +'<div class="dir-stat"><span class="k">Ort. Kayip</span><span class="v negative">'+fmt(d.avg_loss_pct,3)+'%</span></div>'
+    +'<div class="dir-stat"><span class="k">PF</span><span class="v">'+(d.profit_factor===Infinity?'--':fmt(d.profit_factor,2))+'</span></div>';
+}
+
+function renderTopTrades(elId,trades){
+  var h='';
+  trades.forEach(function(t){
+    var dirBadge=t.direction==='LONG'?'<span class="badge badge-long badge-sm">L</span>':'<span class="badge badge-short badge-sm">S</span>';
+    h+='<tr><td style="color:var(--accent-gold);font-weight:600">'+t.symbol.replace('USDT','')+'</td>'
+      +'<td>'+dirBadge+'</td>'
+      +'<td class="'+cls(t.pnl_pct)+'" style="font-weight:700">'+fmt(t.pnl_pct,3)+'%</td>'
+      +'<td class="'+cls(t.pnl_usdt)+'">$'+fmt(t.pnl_usdt,2)+'</td>'
+      +'<td style="color:var(--text-muted)">'+fmt(t.hold_minutes,0)+'dk</td></tr>';
+  });
+  $(elId).innerHTML=h||'<tr><td colspan="5" style="text-align:center;color:var(--text-faint)">--</td></tr>';
+}
+
+// Auto refresh every 30s
+setInterval(loadData,30000);
+
+// Init
+loadData();
+</script>
+</body>
+</html>

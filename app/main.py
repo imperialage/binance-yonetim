@@ -146,6 +146,14 @@ async def collector_page() -> FileResponse:
     )
 
 
+@app.get("/strategy")
+async def strategy_page() -> FileResponse:
+    return FileResponse(
+        str(_static_dir / "strategy.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 
