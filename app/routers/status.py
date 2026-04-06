@@ -1001,6 +1001,42 @@ async def api_live_rsi(symbol: str = "XAGUSDT", interval: str = "15m", rsi_len: 
     return {"symbol": symbol.upper(), "interval": interval, "rsi": rsi, "price": price}
 
 
+@router.get("/api/ha-live-rsi")
+async def api_ha_live_rsi(symbol: str = "MYXUSDT") -> dict:
+    """HA engine'den canli RSI — 1sn polling icin."""
+    from app.modules.ha_signal_engine import get_ha_engine
+    from app.modules.price_stream import get_live_price
+
+    sym = symbol.upper()
+    price = get_live_price(sym)
+    engine = get_ha_engine(sym)
+
+    if not engine or not engine.warmed_up:
+        # HA engine yoksa normal live-rsi'ya fallback
+        if price is None:
+            return {"symbol": sym, "rsi": None, "price": None, "ha_engine": False}
+        from app.modules.live_rsi import get_live_rsi
+        rsi = await get_live_rsi(sym, "5m", price, 10)
+        return {"symbol": sym, "rsi": rsi, "price": price, "ha_engine": False}
+
+    # HA engine'den canli RSI hesapla
+    if price is not None:
+        engine.candle_high = max(engine.candle_high, price)
+        engine.candle_low = min(engine.candle_low, price)
+        engine.candle_close = price
+        engine._update_ha_candle()
+
+    ha_rsi = engine._calc_live_rsi(engine.ha_candle_close) if engine.rsi_warmed_up else None
+
+    return {
+        "symbol": sym,
+        "rsi": ha_rsi,
+        "price": price,
+        "ha_close": round(engine.ha_candle_close, 6),
+        "ha_engine": True,
+    }
+
+
 @router.get("/api/chart-data")
 async def api_chart_data(
     symbol: str = "XAGUSDT",

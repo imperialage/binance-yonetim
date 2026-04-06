@@ -163,6 +163,7 @@ async function loadSettingsAndData(){
   }catch(e){$('activeSettings').innerHTML='<span style="color:#F6465D">Ayar bulunamadi</span>'}
   loadData();
   loadEngineStatus();
+  startRSIPolling();
 }
 
 async function loadData(){
@@ -413,6 +414,35 @@ function connectWS(){
     }catch(x){}
   };
   ws.onclose=function(){$('ld').classList.remove('on');setTimeout(connectWS,3000)};
+}
+
+// HA RSI Polling (1sn)
+var rsiInterval=null;
+function startRSIPolling(){
+  if(rsiInterval)clearInterval(rsiInterval);
+  rsiInterval=setInterval(async function(){
+    try{
+      var resp=await fetch('/api/ha-live-rsi?symbol='+sym);
+      var data=await resp.json();
+      if(data.rsi!=null){
+        var re=$('lcR');
+        if(re){
+          re.textContent=data.rsi.toFixed(2);
+          var lt=parseFloat($('iL').value),st=parseFloat($('iS').value);
+          re.style.color=data.rsi<=lt?'#0ECB81':data.rsi>=st?'#F6465D':'#A371F7';
+        }
+        // Canli mum RSI guncelle
+        if(chartData&&chartData.candles&&chartData.candles.length>0){
+          chartData.candles[chartData.candles.length-1].rsi=data.rsi;
+        }
+      }
+      if(data.ha_close){
+        // HA canli mum kartini guncelle
+        var d=dec(data.ha_close);
+        $('lcC').textContent=fmt(data.ha_close,d);
+      }
+    }catch(e){}
+  },1000);
 }
 
 // Timer
