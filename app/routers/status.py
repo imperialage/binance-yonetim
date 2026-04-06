@@ -788,29 +788,36 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
         filled.sort(key=lambda x: x["time_ms"])
 
         # ── 2. Net pozisyon simulasyonu ile entry/exit eslestir ──
-        # Ilk emrin oncesinde acik pozisyon olabilir — bunu tahmin et:
-        # Ilk FILLED emirin reduceOnly=true ise, demek ki onceden pozisyon vardi
-        # Ilk emirin yonune gore baslangic state belirle
+        # Baslangic state: tum emirlerin net etkisini hesapla, mevcut pozisyonla karsilastir
+        # Mevcut pozisyon (Binance'tan) - tum emirlerin net etkisi = baslangic state
         sym_trades = []
-        net_pos = 0.0
+
+        # Mevcut net pozisyon (Binance'tan)
+        current_binance_pos = 0.0
+        for p in pos_raw:
+            if p.get("symbol") == sym:
+                current_binance_pos = float(p.get("positionAmt", 0))
+                break
+
+        # Tum emirlerin net etkisi
+        orders_net = 0.0
+        for f in filled:
+            if f["side"] == "BUY":
+                orders_net += f["qty"]
+            else:
+                orders_net -= f["qty"]
+
+        # Baslangic state = mevcut - emirlerin etkisi
+        net_pos = round(current_binance_pos - orders_net, 6)
         current_entry = None
 
-        if filled:
-            first = filled[0]
-            if first["reduce_only"]:
-                # Ilk emir reduceOnly → onceden pozisyon vardi
-                # SELL reduceOnly → onceden LONG vardi, BUY reduceOnly → onceden SHORT
-                if first["side"] == "SELL":
-                    net_pos = first["qty"]  # long pozisyon
-                else:
-                    net_pos = -first["qty"]  # short pozisyon
-                # Entry bilgisi yok (pencere disinda)
-                current_entry = {
-                    "price": 0,
-                    "time_ms": 0,
-                    "side": "LONG" if net_pos > 0 else "SHORT",
-                    "qty": abs(net_pos),
-                }
+        if abs(net_pos) > 0.0001:
+            current_entry = {
+                "price": 0,
+                "time_ms": 0,
+                "side": "LONG" if net_pos > 0 else "SHORT",
+                "qty": abs(net_pos),
+            }
 
         def _make_trade(entry_d, exit_f, pos_side_str, qty_val):
             ep = entry_d["price"] if entry_d else 0
