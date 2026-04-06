@@ -787,44 +787,18 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
             })
         filled.sort(key=lambda x: x["time_ms"])
 
-        # ── 2. Net pozisyon simulasyonu ile entry/exit eslestir ──
-        # Baslangic state: tum emirlerin net etkisini hesapla, mevcut pozisyonla karsilastir
-        # Mevcut pozisyon (Binance'tan) - tum emirlerin net etkisi = baslangic state
+        # ── 2. Ardisik ters-yon ciftleri eslestir ──
+        # Pattern: LIMIT FILLED (entry) → MARKET FILLED (exit)
+        # veya: MARKET FILLED (reverse close) + LIMIT FILLED (new entry)
         sym_trades = []
+        used = set()
 
-        # Mevcut net pozisyon (Binance'tan)
-        current_binance_pos = 0.0
-        for p in pos_raw:
-            if p.get("symbol") == sym:
-                current_binance_pos = float(p.get("positionAmt", 0))
-                break
-
-        # Tum emirlerin net etkisi
-        orders_net = 0.0
-        for f in filled:
-            if f["side"] == "BUY":
-                orders_net += f["qty"]
-            else:
-                orders_net -= f["qty"]
-
-        # Baslangic state = mevcut - emirlerin etkisi
-        net_pos = round(current_binance_pos - orders_net, 6)
-        current_entry = None
-
-        if abs(net_pos) > 0.0001:
-            current_entry = {
-                "price": 0,
-                "time_ms": 0,
-                "side": "LONG" if net_pos > 0 else "SHORT",
-                "qty": abs(net_pos),
-            }
-
-        def _make_trade(entry_d, exit_f, pos_side_str, qty_val):
-            ep = entry_d["price"] if entry_d else 0
-            et = entry_d["time_ms"] if entry_d else 0
-            xp = exit_f["avg_price"]
-            xt = exit_f["time_ms"]
-            qt = round(qty_val, 6)
+        def _make_trade(en, ex, pos_side_str, qt):
+            ep = en["avg_price"]
+            et = en["time_ms"]
+            xp = ex["avg_price"]
+            xt = ex["time_ms"]
+            qt = round(qt, 6)
             if pos_side_str == "LONG" and ep > 0:
                 pnl = round((xp - ep) * qt, 6)
             elif pos_side_str == "SHORT" and ep > 0:
@@ -839,40 +813,32 @@ async def api_binance_trades(symbol: str = "", days: int = 2) -> dict:
                 "exit_time": xt // 1000 if xt else 0,
                 "entry_str": datetime.fromtimestamp(et / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if et else "",
                 "exit_str": datetime.fromtimestamp(xt / 1000, tz=tz_ist).strftime("%d.%m %H:%M") if xt else "",
-                "exit_type": exit_f["type"], "pnl": pnl, "pnl_pct": pnl_pct,
+                "exit_type": ex["type"], "pnl": pnl, "pnl_pct": pnl_pct,
             }
 
-        for f in filled:
-            prev_net = net_pos
-            if f["side"] == "BUY":
-                net_pos += f["qty"]
-            else:
-                net_pos -= f["qty"]
-
-            # Pozisyon aciliyor (sifirdan farkliya gecis)
-            if abs(prev_net) < 0.0001 and abs(net_pos) > 0.0001:
-                current_entry = {
-                    "price": f["avg_price"],
-                    "time_ms": f["time_ms"],
-                    "side": "LONG" if net_pos > 0 else "SHORT",
-                    "qty": abs(net_pos),
-                }
-            # Pozisyon kapaniyor (sifira donus)
-            elif abs(net_pos) < 0.0001 and abs(prev_net) > 0.0001:
-                net_pos = 0.0
-                if current_entry:
-                    sym_trades.append(_make_trade(current_entry, f, current_entry["side"], abs(prev_net)))
-                current_entry = None
-            # Pozisyon yonu degisiyor (reverse)
-            elif (prev_net > 0.0001 and net_pos < -0.0001) or (prev_net < -0.0001 and net_pos > 0.0001):
-                if current_entry:
-                    sym_trades.append(_make_trade(current_entry, f, current_entry["side"], abs(prev_net)))
-                current_entry = {
-                    "price": f["avg_price"],
-                    "time_ms": f["time_ms"],
-                    "side": "LONG" if net_pos > 0 else "SHORT",
-                    "qty": abs(net_pos),
-                }
+        # Strateji: Her LIMIT FILLED'in hemen sonrasindaki ters-yon MARKET FILLED = cikis
+        for i, f in enumerate(filled):
+            if i in used:
+                continue
+            # LIMIT entry ara
+            if "LIMIT" in f["type"] and f["side"] in ("BUY", "SELL"):
+                entry = f
+                entry_side = f["side"]
+                exit_side = "SELL" if entry_side == "BUY" else "BUY"
+                pos_side = "LONG" if entry_side == "BUY" else "SHORT"
+                # Sonraki emirlerde cikis ara
+                for j in range(i + 1, len(filled)):
+                    if j in used:
+                        continue
+                    nxt = filled[j]
+                    if nxt["side"] == exit_side:
+                        used.add(i)
+                        used.add(j)
+                        sym_trades.append(_make_trade(entry, nxt, pos_side, min(entry["qty"], nxt["qty"])))
+                        break
+                    # Ayni yon emir gelirse (ek entry) atla
+                    if nxt["side"] == entry_side and "LIMIT" in nxt["type"]:
+                        break  # bu baska bir trade'in entry'si
 
         used_entries = set()
         all_result_trades.extend(sym_trades)
