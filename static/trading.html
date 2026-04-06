@@ -4,141 +4,87 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trading Dashboard</title>
+<link rel="stylesheet" href="/static/styles.css">
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0e14;color:#c9d1d9;font-family:'Inter','SF Pro Display',-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;min-height:100vh}
+/* Page-specific: Trading Dashboard — uses styles.css design system */
 
-/* Header */
-header{position:sticky;top:0;z-index:10;background:rgba(13,17,23,0.92);backdrop-filter:blur(12px);border-bottom:1px solid #1b2130;padding:12px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
-header h1{font-size:18px;font-weight:700;color:#e6edf3;white-space:nowrap;letter-spacing:-0.3px}
-.nav-links{display:flex;gap:12px;font-size:13px;margin-left:8px}
-.nav-links a{color:#58a6ff;text-decoration:none;opacity:0.8;transition:opacity .2s}
-.nav-links a:hover{opacity:1}
-.status-badge{display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 12px;border-radius:20px;background:#141922}
-.status-badge .dot{width:7px;height:7px;border-radius:50%;background:#f85149;transition:background .3s}
-.status-badge.connected .dot{background:#3fb950}
-.header-right{margin-left:auto;display:flex;align-items:center;gap:12px}
-.last-update{font-size:11px;color:#6e7681}
-.btn-refresh{background:#161b22;border:1px solid #21262d;color:#c9d1d9;padding:5px 14px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:500;transition:all .2s}
-.btn-refresh:hover{background:#1c2128;border-color:#388bfd}
-
-/* Container */
-.container{padding:20px 24px 60px;max-width:1440px;margin:0 auto}
+/* Status badge (trading-specific variant) */
+.status-badge{display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 12px;border-radius:var(--radius-pill);background:var(--bg-hover)}
+.status-badge .dot{width:7px;height:7px;border-radius:50%;background:var(--color-short-alt);transition:background var(--transition-slow)}
+.status-badge.connected .dot{background:var(--color-long-alt)}
+.last-update{font-size:11px;color:var(--text-dim)}
+.btn-refresh{background:var(--bg-tertiary);border:1px solid var(--border-secondary);color:var(--text-secondary);padding:5px 14px;border-radius:var(--radius-md);cursor:pointer;font-family:inherit;font-size:12px;font-weight:500;transition:all var(--transition-normal)}
+.btn-refresh:hover{background:var(--bg-hover);border-color:var(--color-info-alt)}
 
 /* Top Summary Row */
-.top-row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:24px}
-.stat-card{background:linear-gradient(135deg,#111827 0%,#0d1117 100%);border:1px solid #1b2130;border-radius:14px;padding:18px 20px;position:relative;overflow:hidden}
-.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,#21262d,transparent)}
-.stat-label{font-size:11px;color:#6e7681;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px;font-weight:600}
-.stat-value{font-size:26px;font-weight:800;color:#e6edf3;font-variant-numeric:tabular-nums;letter-spacing:-0.5px}
-.stat-sub{font-size:12px;color:#6e7681;margin-top:4px}
-.stat-value.positive{color:#3fb950}.stat-value.negative{color:#f85149}
+.top-row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:var(--space-md);margin-bottom:24px}
 
-/* Section Titles */
-.section-title{font-size:13px;color:#6e7681;text-transform:uppercase;letter-spacing:1.2px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px}
-.section-title .count{background:#21262d;color:#8b949e;font-size:11px;padding:2px 8px;border-radius:10px}
-
-/* Symbol Grid — Positions */
-.sym-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:28px}
-.sym-card{background:#111827;border:1px solid #1b2130;border-radius:14px;padding:18px 20px;transition:border-color .2s,box-shadow .2s;position:relative;overflow:hidden}
-.sym-card:hover{border-color:#30363d}
-.sym-card.has-position{border-color:#388bfd40}
+/* Symbol Grid */
+.sym-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-md);margin-bottom:28px}
+.sym-card{background:var(--bg-secondary);border:1px solid var(--border-primary);border-radius:var(--radius-xl);padding:18px var(--space-xl);transition:border-color var(--transition-normal),box-shadow var(--transition-normal);position:relative;overflow:hidden}
+.sym-card:hover{border-color:var(--border-tertiary)}
+.sym-card.has-position{border-color:rgba(56,139,253,0.25)}
 .sym-card.has-position::after{content:'';position:absolute;top:0;left:0;right:0;height:2px}
-.sym-card.has-position.long-pos::after{background:linear-gradient(90deg,#3fb950,transparent)}
-.sym-card.has-position.short-pos::after{background:linear-gradient(90deg,#f85149,transparent)}
+.sym-card.has-position.long-pos::after{background:linear-gradient(90deg,var(--color-long-alt),transparent)}
+.sym-card.has-position.short-pos::after{background:linear-gradient(90deg,var(--color-short-alt),transparent)}
 .sym-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-.sym-name{font-size:16px;font-weight:700;color:#e6edf3;letter-spacing:-0.3px}
-.sym-price{font-size:15px;font-weight:600;color:#e6edf3;font-variant-numeric:tabular-nums}
-.sym-price.up{color:#3fb950}.sym-price.down{color:#f85149}
-.sym-config{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
-.sym-tag{font-size:10px;padding:3px 8px;border-radius:6px;font-weight:600;background:#1c2128;color:#8b949e;border:1px solid #21262d}
-.sym-tag.sell-only{color:#f85149;background:#f8514910;border-color:#f8514930}
-.sym-tag.tp{color:#3fb950;background:#3fb95010;border-color:#3fb95030}
-.sym-tag.sl{color:#f0883e;background:#f0883e10;border-color:#f0883e30}
-.sym-tag.weight{color:#58a6ff;background:#58a6ff10;border-color:#58a6ff30}
+.sym-name{font-size:16px;font-weight:700;color:var(--text-primary);letter-spacing:-0.3px}
+.sym-price{font-size:15px;font-weight:600;color:var(--text-primary);font-variant-numeric:tabular-nums}
+.sym-price.up{color:var(--color-long-alt)}.sym-price.down{color:var(--color-short-alt)}
+.sym-config{display:flex;gap:var(--space-sm);margin-bottom:12px;flex-wrap:wrap}
 
-/* Position info inside sym-card */
-.pos-info{margin-top:8px;padding-top:10px;border-top:1px solid #1b2130}
+/* Position info */
+.pos-info{margin-top:var(--space-sm);padding-top:10px;border-top:1px solid var(--border-primary)}
 .pos-row{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
-.pos-row .k{color:#6e7681}.pos-row .v{color:#e6edf3;font-weight:600;font-variant-numeric:tabular-nums}
-.pos-side{display:inline-block;padding:2px 10px;border-radius:8px;font-size:12px;font-weight:700;letter-spacing:0.5px}
-.pos-side.long{background:#3fb95015;color:#3fb950;border:1px solid #3fb95030}
-.pos-side.short{background:#f8514915;color:#f85149;border:1px solid #f8514930}
-.no-pos{font-size:12px;color:#484f58;text-align:center;padding:8px 0}
+.pos-row .k{color:var(--text-dim)}.pos-row .v{color:var(--text-primary);font-weight:600;font-variant-numeric:tabular-nums}
+.pos-side{display:inline-block;padding:2px 10px;border-radius:var(--radius-md);font-size:12px;font-weight:700;letter-spacing:0.5px}
+.pos-side.long{background:var(--color-long-bg);color:var(--color-long-alt);border:1px solid var(--color-long-border)}
+.pos-side.short{background:var(--color-short-bg);color:var(--color-short-alt);border:1px solid var(--color-short-border)}
+.no-pos{font-size:12px;color:var(--text-faint);text-align:center;padding:8px 0}
 
-/* Progress bar */
-.mini-progress{position:relative;height:6px;background:#1c2128;border-radius:3px;margin-top:8px;overflow:hidden}
-.mini-progress-fill{height:100%;border-radius:3px;transition:width .3s}
-.mini-progress-fill.profit{background:linear-gradient(90deg,#388bfd,#3fb950)}
-.mini-progress-fill.loss{background:linear-gradient(90deg,#f85149,#f0883e)}
+/* Mini progress */
+.mini-progress{position:relative;height:6px;background:var(--bg-hover);border-radius:3px;margin-top:8px;overflow:hidden}
+.mini-progress-fill{height:100%;border-radius:3px;transition:width var(--transition-slow)}
+.mini-progress-fill.profit{background:linear-gradient(90deg,var(--color-info-alt),var(--color-long-alt))}
+.mini-progress-fill.loss{background:linear-gradient(90deg,var(--color-short-alt),#f0883e)}
 
-/* Signals Table */
-.panel{background:#111827;border:1px solid #1b2130;border-radius:14px;padding:20px;margin-bottom:20px}
-.panel h2{font-size:13px;color:#6e7681;text-transform:uppercase;letter-spacing:1.2px;font-weight:700;margin-bottom:14px}
+/* Panels — override panel border-radius */
+.panel{border-radius:var(--radius-xl)}
 
-.tabs{display:flex;gap:4px;margin-bottom:16px;background:#0d1117;border-radius:10px;padding:3px;border:1px solid #1b2130}
-.tab{padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;color:#6e7681;cursor:pointer;transition:all .2s;border:none;background:none;font-family:inherit}
-.tab:hover{color:#c9d1d9}
-.tab.active{background:#1c2128;color:#e6edf3;box-shadow:0 1px 3px rgba(0,0,0,0.3)}
+/* tabs, table, badge, toast, spinner, modal → from styles.css */
+/* Trading-specific overrides only: */
+.badge-sym{background:var(--color-info-bg);color:var(--color-info);border:1px solid var(--color-info-border);font-size:10px;padding:2px 8px;border-radius:var(--radius-sm)}
+.badge-entered{background:var(--color-long-bg);color:var(--color-long-alt);border:1px solid var(--color-long-border)}
+.pnl-positive{color:var(--color-long-alt);font-weight:700}
+.pnl-negative{color:var(--color-short-alt);font-weight:700}
 
-table{width:100%;border-collapse:collapse}
-thead{background:#0d1117}
-th{text-align:left;padding:10px 12px;font-size:11px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #1b2130;font-weight:600}
-td{padding:9px 12px;border-bottom:1px solid #141922;font-size:13px;font-variant-numeric:tabular-nums}
-tr:hover{background:#0d111788}
-.badge{display:inline-block;padding:3px 10px;border-radius:8px;font-size:11px;font-weight:700;letter-spacing:0.3px}
-.badge-buy{background:#3fb95012;color:#3fb950;border:1px solid #3fb95025}
-.badge-sell{background:#f8514912;color:#f85149;border:1px solid #f8514925}
-.badge-entered{background:#3fb95012;color:#3fb950;border:1px solid #3fb95025}
-.badge-filtered{background:#6e768112;color:#6e7681;border:1px solid #6e768125}
-.badge-sym{background:#58a6ff12;color:#58a6ff;border:1px solid #58a6ff25;font-size:10px;padding:2px 8px;border-radius:6px}
-.pnl-positive{color:#3fb950;font-weight:700}
-.pnl-negative{color:#f85149;font-weight:700}
-
-.scroll-list{max-height:450px;overflow-y:auto}
+.scroll-list{max-height:450px;overflow-y:auto;overflow-x:auto;-webkit-overflow-scrolling:touch}
 .scroll-list::-webkit-scrollbar{width:5px}
 .scroll-list::-webkit-scrollbar-track{background:transparent}
-.scroll-list::-webkit-scrollbar-thumb{background:#21262d;border-radius:3px}
-
-/* Toast */
-.toast-container{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;align-items:center;gap:8px}
-.toast{padding:12px 24px;border-radius:10px;font-size:13px;font-family:inherit;font-weight:600;color:#fff;backdrop-filter:blur(8px);animation:toastIn .3s ease,toastOut .3s ease 2.7s forwards;pointer-events:none;white-space:nowrap}
-.toast.success{background:rgba(35,134,54,0.9)}.toast.error{background:rgba(218,54,51,0.9)}
-@keyframes toastIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
-@keyframes toastOut{from{opacity:1}to{opacity:0}}
-
-.empty-state{text-align:center;color:#484f58;padding:24px;font-size:13px}
-.loading{text-align:center;padding:30px;color:#6e7681}
-.spinner{display:inline-block;width:18px;height:18px;border:2px solid #21262d;border-top-color:#388bfd;border-radius:50%;animation:spin .7s linear infinite;margin-right:8px;vertical-align:middle}
-@keyframes spin{to{transform:rotate(360deg)}}
-
-/* Two-column layout */
-.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
-
-/* Scroll wrapper for tables */
-.scroll-list{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.scroll-list::-webkit-scrollbar-thumb{background:var(--border-secondary);border-radius:3px}
 .scroll-list table{min-width:500px}
 
-/* Signal Detail Modal */
-.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:100;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
-.modal-overlay.active{display:flex}
-.modal{background:#111827;border:1px solid #1b2130;border-radius:16px;padding:28px;width:92%;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,0.5)}
-.modal-close{position:absolute;top:16px;right:20px;background:none;border:none;color:#6e7681;font-size:20px;cursor:pointer;padding:4px 8px;border-radius:6px}
-.modal-close:hover{background:#1c2128;color:#e6edf3}
+/* Toast container (uses toast-wrap from styles.css but trading.html uses its own ID) */
+.toast-container{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:var(--z-toast);display:flex;flex-direction:column;align-items:center;gap:8px}
+.toast.success{background:rgba(35,134,54,0.92)}.toast.error{background:rgba(218,54,51,0.92)}
+
+/* Two-column layout */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-lg);margin-bottom:var(--space-xl)}
+/* Modal detail items */
 .modal-header{margin-bottom:20px;position:relative}
-.modal-header h3{font-size:16px;font-weight:700;color:#e6edf3;margin-bottom:4px}
-.modal-header .modal-sub{font-size:12px;color:#6e7681}
+.modal-header h3{font-size:16px;font-weight:700;color:var(--text-primary);margin-bottom:4px}
+.modal-header .modal-sub{font-size:12px;color:var(--text-dim)}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
-.detail-item{background:#0d1117;border:1px solid #1b2130;border-radius:10px;padding:12px 14px}
-.detail-item .dl{font-size:10px;color:#6e7681;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;font-weight:600}
-.detail-item .dv{font-size:15px;font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums}
+.detail-item{background:var(--bg-input);border:1px solid var(--border-primary);border-radius:var(--radius-lg);padding:12px 14px}
+.detail-item .dl{font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;font-weight:600}
+.detail-item .dv{font-size:15px;font-weight:700;color:var(--text-primary);font-variant-numeric:tabular-nums}
 .detail-full{grid-column:1/-1}
-.detail-item .dv.entered{color:#3fb950}
-.detail-item .dv.filtered{color:#f85149}
-.detail-item .dv.unknown{color:#6e7681}
-.reason-box{background:#f8514908;border:1px solid #f8514920;border-radius:10px;padding:14px;margin-top:4px}
-.reason-box .reason-title{font-size:11px;color:#f85149;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:6px}
-.reason-box .reason-text{font-size:13px;color:#e6edf3}
+.detail-item .dv.entered{color:var(--color-long-alt)}
+.detail-item .dv.filtered{color:var(--color-short-alt)}
+.detail-item .dv.unknown{color:var(--text-dim)}
+.reason-box{background:var(--color-short-bg);border:1px solid var(--color-short-border);border-radius:var(--radius-lg);padding:14px;margin-top:4px}
+.reason-box .reason-title{font-size:11px;color:var(--color-short);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:6px}
+.reason-box .reason-text{font-size:13px;color:var(--text-primary)}
 
 /* Clickable row */
 tr.clickable{cursor:pointer;transition:background .15s}
@@ -147,15 +93,15 @@ tr.clickable:hover{background:#1c212888}
 /* Toggle switch */
 .toggle-row{display:flex;gap:10px;margin-bottom:8px;align-items:center;flex-wrap:wrap}
 .toggle-wrap{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;padding:3px 0}
-.toggle-label{font-size:10px;color:#6e7681;font-weight:600;transition:color .2s}
-.toggle-wrap:hover .toggle-label{color:#c9d1d9}
-.mini-toggle{width:32px;height:18px;border-radius:9px;background:#21262d;position:relative;transition:background .2s}
-.mini-toggle.on{background:#3fb950}
-.mini-toggle.off{background:#484f58}
-.mini-toggle.listen.on{background:#58a6ff}
+.toggle-label{font-size:10px;color:var(--text-dim);font-weight:600;transition:color var(--transition-normal)}
+.toggle-wrap:hover .toggle-label{color:var(--text-secondary)}
+.mini-toggle{width:32px;height:18px;border-radius:9px;background:var(--border-secondary);position:relative;transition:background var(--transition-normal)}
+.mini-toggle.on{background:var(--color-long-alt)}
+.mini-toggle.off{background:var(--text-faint)}
+.mini-toggle.listen.on{background:var(--color-info)}
 .mini-toggle.sl-toggle.on{background:#f0883e}
-.mini-toggle.reverse-toggle.on{background:#a371f7}
-.mini-toggle-dot{width:14px;height:14px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,0.3)}
+.mini-toggle.reverse-toggle.on{background:var(--color-purple)}
+.mini-toggle-dot{width:14px;height:14px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:transform var(--transition-normal);box-shadow:var(--shadow-sm)}
 .mini-toggle.on .mini-toggle-dot{transform:translateX(14px)}
 
 /* SL off tag */
@@ -188,89 +134,51 @@ tr.clickable:hover{background:#1c212888}
 .table-scroll table{min-width:600px}
 
 /* Modal input styles */
-.mod-label{display:block;font-size:10px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:4px}
-.mod-input{width:100%;background:#0d1117;border:1px solid #21262d;color:#e6edf3;padding:10px 12px;border-radius:8px;font-size:14px;font-family:inherit;font-variant-numeric:tabular-nums;transition:border-color .2s}
-.mod-input:focus{outline:none;border-color:#388bfd}
+.mod-label{display:block;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:4px}
+.mod-input{width:100%;background:var(--bg-input);border:1px solid var(--border-secondary);color:var(--text-primary);padding:10px 12px;border-radius:var(--radius-md);font-size:14px;font-family:inherit;font-variant-numeric:tabular-nums;transition:border-color var(--transition-normal)}
+.mod-input:focus{outline:none;border-color:var(--color-info-alt)}
 
 /* Responsive */
-/* Tablet */
 @media(max-width:1100px){
   .sym-grid{grid-template-columns:repeat(2,1fr)}
   .two-col{grid-template-columns:1fr}
 }
 
-/* Mobil */
 @media(max-width:768px){
-  body{font-size:13px}
-  header{padding:10px 16px;gap:8px;flex-wrap:wrap}
-  header h1{font-size:16px}
-  .nav-links{font-size:11px;gap:8px}
-  .header-right{width:100%;justify-content:space-between}
-  .container{padding:12px}
-
-  /* Ust kartlar 2x2 */
-  .top-row{grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px}
-  .stat-card{padding:12px 14px;border-radius:10px}
-  .stat-label{font-size:9px;letter-spacing:0.8px;margin-bottom:4px}
-  .stat-value{font-size:18px}
-  .stat-sub{font-size:10px;margin-top:2px}
-
-  /* Sembol kartlari tek sutun, tam genislik */
-  .section-title{font-size:12px;flex-wrap:wrap;margin-bottom:10px}
+  .container{padding:var(--space-md) var(--space-md) calc(var(--bottom-nav-height) + 20px)}
+  .top-row{grid-template-columns:1fr 1fr;gap:var(--space-sm);margin-bottom:var(--space-lg)}
   .filter-icons{margin-top:4px;margin-left:0;width:100%}
-  .sym-grid{grid-template-columns:1fr;gap:10px;margin-bottom:16px}
-  .sym-card{padding:14px 16px;border-radius:12px}
-  .sym-header{margin-bottom:8px}
-  .sym-name{font-size:16px}
-  .sym-price{font-size:15px}
-  .toggle-row{gap:12px;margin-bottom:6px}
-  .toggle-label{font-size:9px}
-  .sym-config{gap:6px;margin-bottom:8px}
-  .sym-tag{font-size:9px;padding:3px 8px}
-  .pos-row{font-size:12px}
-  .card-btn{font-size:11px;padding:8px 10px}
-
-  /* Tablolar — tam genislik, yatay scroll */
-  .two-col{grid-template-columns:1fr;gap:12px;margin-bottom:16px}
-  .panel{padding:14px;border-radius:12px}
-  .panel h2{font-size:12px;margin-bottom:10px}
-  .tabs{padding:2px;margin-bottom:10px}
-  .tab{padding:6px 12px;font-size:11px}
-  .scroll-list{max-height:400px;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -14px;padding:0 14px}
+  .sym-grid{grid-template-columns:1fr;gap:10px;margin-bottom:var(--space-lg)}
+  .two-col{grid-template-columns:1fr;gap:var(--space-md);margin-bottom:var(--space-lg)}
+  .panel{padding:14px;border-radius:var(--radius-lg)}
+  .scroll-list{max-height:400px;margin:0 -14px;padding:0 14px}
   .scroll-list table{min-width:480px}
-  th{padding:8px 8px;font-size:10px;white-space:nowrap}
-  td{padding:7px 8px;font-size:11px;white-space:nowrap}
-
-  /* Modal */
-  .modal{padding:20px;width:95%;max-width:none;border-radius:14px}
-  .detail-grid{grid-template-columns:1fr 1fr;gap:8px}
-
-  /* Trade modal */
+  .modal{padding:20px;width:95%;max-width:none;border-radius:var(--radius-xl)}
+  .detail-grid{gap:var(--space-sm)}
   .mod-label{font-size:9px}
   .mod-input{padding:8px 10px;font-size:13px}
 }
 
-/* Kucuk mobil */
 @media(max-width:400px){
-  .top-row{grid-template-columns:1fr 1fr;gap:6px}
-  .stat-value{font-size:16px}
-  .stat-label{font-size:8px}
+  .top-row{gap:6px}
   .sym-name{font-size:14px}
   .sym-price{font-size:13px}
-  .nav-links{font-size:10px;gap:6px}
   .table-scroll{margin:0 -12px;padding:0 12px}
-  .table-scroll table{min-width:520px}
 }
 </style>
 </head>
 <body>
 
-<header>
+<header class="app-header">
   <h1>Trading Dashboard</h1>
-  <div class="nav-links">
+  <nav class="nav-links">
+    <a href="/">Piyasa</a>
+    <a href="/chart">Grafik</a>
     <a href="/monitor">Monitor</a>
+    <a href="/backtest">Backtest</a>
     <a href="/settings">Ayarlar</a>
-  </div>
+    <a href="/collector">Veri</a>
+  </nav>
   <div class="status-badge" id="wsBadge">
     <span class="dot"></span>
     <span id="wsText">Baglaniyor...</span>
@@ -389,6 +297,7 @@ tr.clickable:hover{background:#1c212888}
 
 <div class="toast-container" id="toastContainer"></div>
 
+<script src="/static/components.js"></script>
 <script>
 (function(){
   var SYMBOLS = [];  // indicator_settings'ten yuklenecek
@@ -1274,6 +1183,7 @@ tr.clickable:hover{background:#1c212888}
   // ── Init ──
   connectWS();
   fetchAll();
+  renderBottomNav('trading');
   setInterval(fetchDiagnosis, 60000);
   setInterval(fetchIncome, 300000);
   setInterval(fetchSignals, 15000);

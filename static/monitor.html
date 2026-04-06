@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mum İzleme</title>
+<title>Mum Izleme</title>
+<link rel="stylesheet" href="/static/styles.css">
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#0B0E11;color:#E6EDF3;font-family:'Inter',-apple-system,sans-serif;font-size:13px;min-height:100vh}
+body{font-size:13px}
 
 /* Header */
 .header{background:#111827;border-bottom:1px solid #1b2130;padding:10px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:10}
@@ -81,10 +81,16 @@ tr.ob-row td:nth-child(8){color:#F6465D;font-weight:600}
 </head>
 <body>
 
-<div class="header">
+<div class="header app-header">
     <span class="logo">Monitor</span>
-    <a href="/trading" class="hlink">Trading</a>
-    <a href="/settings" class="hlink">Ayarlar</a>
+    <nav class="nav-links">
+      <a href="/">Piyasa</a>
+      <a href="/trading">Trading</a>
+      <a href="/chart">Grafik</a>
+      <a href="/backtest">Backtest</a>
+      <a href="/settings">Ayarlar</a>
+      <a href="/collector">Veri</a>
+    </nav>
     <select id="symSel"></select>
     <select id="tfSel">
         <option value="1m">1m</option>
@@ -991,5 +997,7 @@ loadState();if(!sym)sym='XAGUSDT';if(!tf)tf='15m';
 setToday();
 initUI();loadSettingsAndData();connectWS();
 </script>
+<script src="/static/components.js"></script>
+<script>renderBottomNav('chart');/* Monitor chart grubunda */</script>
 </body>
 </html>

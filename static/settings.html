@@ -3,63 +3,24 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>İndikatör Ayarları</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#0B0E11;color:#E6EDF3;font-family:'Inter',-apple-system,sans-serif;font-size:13px;min-height:100vh}
-.header{background:#111827;border-bottom:1px solid #1b2130;padding:12px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.logo{color:#F0B90B;font-weight:800;font-size:16px}
-.hlink{color:#58a6ff;font-size:11px;text-decoration:none}
-.hlink:hover{text-decoration:underline}
-.container{max-width:900px;margin:0 auto;padding:20px}
-
-/* Form */
-.form-card{background:#111827;border:1px solid #1b2130;border-radius:12px;padding:20px;margin-bottom:16px}
-.form-title{font-size:11px;color:#F0B90B;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #1b2130}
-.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
-.fg label{display:block;font-size:10px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:4px}
-.fg input,.fg select{width:100%;background:#0d1117;border:1px solid #21262d;color:#E6EDF3;padding:8px 10px;border-radius:8px;font-size:13px;font-family:inherit}
-.fg input:focus,.fg select:focus{outline:none;border-color:#F0B90B}
-.fg input[type=checkbox]{width:auto;accent-color:#F0B90B}
-.cb-row{display:flex;align-items:center;gap:8px;padding:6px 0}
-.cb-row label{font-size:12px;color:#848E9C;margin:0}
-
-.btn-row{display:flex;gap:10px;margin-top:16px}
-.btn{padding:10px 24px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;border:none;font-family:inherit;transition:opacity .15s}
-.btn:hover{opacity:0.85}
-.btn-primary{background:#F0B90B;color:#0B0E11}
-.btn-secondary{background:#1c2128;color:#E6EDF3;border:1px solid #21262d}
-.btn-danger{background:#F6465D;color:#fff}
-
-/* Toast */
-.toast-wrap{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:99}
-.toast{padding:10px 24px;border-radius:8px;font-size:13px;font-weight:600;color:#fff;animation:fadeIn .3s}
-.toast-ok{background:rgba(14,203,129,0.9)}.toast-err{background:rgba(246,70,93,0.9)}
-@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-
-/* Table */
-.tbl-card{background:#111827;border:1px solid #1b2130;border-radius:12px;overflow:hidden}
-table{width:100%;border-collapse:collapse}
-th{background:#0d1117;text-align:left;padding:8px 10px;font-size:10px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;font-weight:600;border-bottom:1px solid #1b2130;white-space:nowrap}
-td{padding:7px 10px;font-size:12px;border-bottom:1px solid #141922;font-variant-numeric:tabular-nums;white-space:nowrap}
-tr:hover{background:#0d111788}
-tr.active-row{background:#F0B90B08;border-left:3px solid #F0B90B}
-.green{color:#0ECB81}.red{color:#F6465D}.yellow{color:#F0B90B}
-.edit-btn{padding:3px 10px;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;border:1px solid #F0B90B30;background:#F0B90B10;color:#F0B90B;font-family:inherit}
-.edit-btn:hover{background:#F0B90B20}
-.del-btn{padding:3px 10px;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;border:1px solid #F6465D30;background:#F6465D10;color:#F6465D;font-family:inherit}
-.section-title{font-size:12px;color:#6e7681;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px}
-</style>
+<title>Indikator Ayarlari</title>
+<link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
 
-<div class="header">
+<header class="app-header">
     <span class="logo">Ayarlar</span>
-    <a href="/trading" class="hlink">Trading</a>
-    <a href="/monitor" class="hlink">Monitor</a>
-</div>
+    <nav class="nav-links">
+        <a href="/">Piyasa</a>
+        <a href="/trading">Trading</a>
+        <a href="/chart">Grafik</a>
+        <a href="/monitor">Monitor</a>
+        <a href="/backtest">Backtest</a>
+        <a href="/collector">Veri</a>
+    </nav>
+</header>
 
-<div class="container">
+<div class="container container-narrow">
 
 <!-- Sembol Secici -->
 <div class="form-card">
@@ -75,7 +36,7 @@ tr.active-row{background:#F0B90B08;border-left:3px solid #F0B90B}
             <label>Yeni Sembol Ekle</label>
             <div style="display:flex;gap:6px">
                 <input id="newSym" placeholder="BTCUSDT" style="flex:1">
-                <button class="btn btn-secondary" onclick="addNewSymbol()" style="padding:6px 12px;font-size:11px">Ekle</button>
+                <button class="btn btn-secondary btn-sm" onclick="addNewSymbol()">Ekle</button>
             </div>
         </div>
     </div>
@@ -94,8 +55,8 @@ tr.active-row{background:#F0B90B08;border-left:3px solid #F0B90B}
             </select>
         </div>
         <div class="fg"><label>RSI Uzunluk</label><input id="fRsi" type="number" value="10"></div>
-        <div class="fg"><label>LONG Esik (≤)</label><input id="fLong" type="number" value="32" step="1"></div>
-        <div class="fg"><label>SHORT Esik (≥)</label><input id="fShort" type="number" value="70" step="1"></div>
+        <div class="fg"><label>LONG Esik (&le;)</label><input id="fLong" type="number" value="32" step="1"></div>
+        <div class="fg"><label>SHORT Esik (&ge;)</label><input id="fShort" type="number" value="70" step="1"></div>
         <div class="fg"><label>Max Gap</label><input id="fGap" type="number" value="12"></div>
         <div class="fg"><label>Buffer %</label><input id="fBuf" type="number" value="0.1" step="0.05"></div>
         <div class="fg"><label>TP %</label><input id="fTp" type="number" value="1.0" step="0.1"></div>
@@ -112,11 +73,11 @@ tr.active-row{background:#F0B90B08;border-left:3px solid #F0B90B}
     </div>
 
     <div style="margin-top:12px">
-        <div class="cb-row"><input type="checkbox" id="fWeekend"><label>Haftasonu Kapali (Cuma 20:00 - Pazar 24:00 TR)</label></div>
-        <div class="cb-row"><input type="checkbox" id="fActive" checked><label>Islem Aktif</label></div>
-        <div class="cb-row"><input type="checkbox" id="fListening" checked><label>Sinyal Dinleme Aktif</label></div>
-        <div class="cb-row"><input type="checkbox" id="fSlEnabled" checked><label>Stop Loss Aktif</label></div>
-        <div class="cb-row"><input type="checkbox" id="fReverse"><label>Ters Sinyal (Pozisyon Ters Cevirme)</label></div>
+        <div class="cb-row"><input type="checkbox" id="fWeekend"><label for="fWeekend">Haftasonu Kapali (Cuma 20:00 - Pazar 24:00 TR)</label></div>
+        <div class="cb-row"><input type="checkbox" id="fActive" checked><label for="fActive">Islem Aktif</label></div>
+        <div class="cb-row"><input type="checkbox" id="fListening" checked><label for="fListening">Sinyal Dinleme Aktif</label></div>
+        <div class="cb-row"><input type="checkbox" id="fSlEnabled" checked><label for="fSlEnabled">Stop Loss Aktif</label></div>
+        <div class="cb-row"><input type="checkbox" id="fReverse"><label for="fReverse">Ters Sinyal (Pozisyon Ters Cevirme)</label></div>
     </div>
 
     <div class="btn-row">
@@ -127,32 +88,28 @@ tr.active-row{background:#F0B90B08;border-left:3px solid #F0B90B}
 </div>
 
 <!-- Tum Semboller Tablosu -->
-<div class="section-title">Tum Sembol Ayarlari <span id="totalCount" style="color:#F0B90B"></span></div>
+<div class="section-title">Tum Sembol Ayarlari <span id="totalCount" class="count"></span></div>
 <div class="tbl-card">
-    <table>
-        <thead><tr>
-            <th>Sembol</th><th>TF</th><th>RSI</th><th>L≤</th><th>S≥</th><th>Gap</th><th>Buf%</th><th>TP%</th><th>SL%</th><th>Agrlk</th><th>Yon</th><th>SL</th><th>Ters</th><th>Aktif</th><th>Dinle</th><th></th>
-        </tr></thead>
-        <tbody id="allBody"></tbody>
-    </table>
+    <div class="scroll-area">
+        <table>
+            <thead><tr>
+                <th>Sembol</th><th>TF</th><th>RSI</th><th>L&le;</th><th>S&ge;</th><th>Gap</th><th>Buf%</th><th>TP%</th><th>SL%</th><th>Agrlk</th><th>Yon</th><th>SL</th><th>Ters</th><th>Aktif</th><th>Dinle</th><th></th>
+            </tr></thead>
+            <tbody id="allBody"></tbody>
+        </table>
+    </div>
 </div>
 
 </div>
 
 <div class="toast-wrap" id="toastWrap"></div>
 
+<script src="/static/components.js"></script>
 <script>
 var SYMS=['XAGUSDT','ETHUSDT','MYXUSDT','BTCUSDT','SOLUSDT','XRPUSDT','DOGEUSDT','AVAXUSDT'];
 var currentSym='';
 
-function $(id){return document.getElementById(id)}
-function toast(msg,ok){
-    var el=document.createElement('div');
-    el.className='toast '+(ok?'toast-ok':'toast-err');
-    el.textContent=msg;
-    $('toastWrap').appendChild(el);
-    setTimeout(function(){el.remove()},3000);
-}
+function toast(msg,ok){ Toast.show(msg, !ok); }
 
 // ── Load all settings ──
 async function loadAll(){
@@ -160,7 +117,6 @@ async function loadAll(){
     var data=await resp.json();
     var settings=data.settings||[];
 
-    // Dropdown guncelle
     var existing=settings.map(function(s){return s.symbol});
     var allSyms=[...new Set([...SYMS,...existing])].sort();
     var opts='<option value="">-- Sec --</option>';
@@ -169,10 +125,9 @@ async function loadAll(){
     });
     $('symSel').innerHTML=opts;
 
-    // Tablo
     var html='';
     settings.forEach(function(s){
-        var cls=s.symbol===currentSym?' class="active-row"':'';
+        var cls=s.symbol===currentSym?' class="row-active"':'';
         html+='<tr'+cls+'>'
             +'<td><strong class="yellow">'+s.symbol+'</strong></td>'
             +'<td>'+s.interval+'</td>'
@@ -186,13 +141,13 @@ async function loadAll(){
             +'<td>'+(s.weight!=null?s.weight:'0.10')+'</td>'
             +'<td>'+(s.allowed_directions||'BOTH')+'</td>'
             +'<td>'+(s.sl_enabled!==0?'<span class="green">On</span>':'<span class="red">Off</span>')+'</td>'
-            +'<td>'+(s.reverse_signal?'<span class="yellow">Evet</span>':'—')+'</td>'
+            +'<td>'+(s.reverse_signal?'<span class="yellow">Evet</span>':'\u2014')+'</td>'
             +'<td>'+(s.active?'<span class="green">Aktif</span>':'<span class="red">Pasif</span>')+'</td>'
             +'<td>'+(s.listening?'<span class="green">Dinle</span>':'<span class="red">Kapali</span>')+'</td>'
             +'<td><button class="edit-btn" onclick="selectSym(\''+s.symbol+'\')">Duzenle</button></td>'
             +'</tr>';
     });
-    $('allBody').innerHTML=html||'<tr><td colspan="16" style="text-align:center;color:#484f58;padding:20px">Henuz ayar yok. Yukaridan sembol secin ve kaydedin.</td></tr>';
+    $('allBody').innerHTML=html||'<tr><td colspan="16" class="empty-state">Henuz ayar yok. Yukaridan sembol secin ve kaydedin.</td></tr>';
     $('totalCount').textContent='('+settings.length+' sembol)';
 }
 
@@ -288,11 +243,9 @@ function addNewSymbol(){
     if(!sym){toast('Sembol girin',false);return}
     if(!sym.endsWith('USDT'))sym+='USDT';
     currentSym=sym;
-    // Dropdown'a ekle
     var opt=document.createElement('option');opt.value=sym;opt.textContent=sym;opt.selected=true;
     $('symSel').appendChild(opt);
     $('newSym').value='';
-    // Form goster default degerlerle
     resetForm();
     $('formTitle').textContent=sym+' Ayarlari (Yeni)';
     $('settingsForm').style.display='block';
@@ -300,6 +253,7 @@ function addNewSymbol(){
 
 // ── Init ──
 loadAll();
+renderBottomNav('settings');
 </script>
 </body>
 </html>

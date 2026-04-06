@@ -4,208 +4,146 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Market Intelligence Dashboard</title>
+<link rel="stylesheet" href="/static/styles.css">
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#0d1117;color:#c9d1d9;font-family:'SF Mono','Cascadia Code','Consolas',monospace;font-size:14px}
-header{position:sticky;top:0;z-index:10;background:#161b22;border-bottom:1px solid #30363d;padding:12px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
-header h1{font-size:18px;font-weight:600;color:#e6edf3;white-space:nowrap}
-.status{display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 10px;border-radius:12px;background:#1c2128}
-.status .dot{width:8px;height:8px;border-radius:50%;background:#f85149}
-.status.connected .dot{background:#3fb950}
-.search-box{flex:1;min-width:200px;max-width:400px;margin-left:auto}
-.search-box input{width:100%;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-family:inherit;font-size:13px;outline:none}
-.search-box input:focus{border-color:#58a6ff}
-.stats{font-size:12px;color:#8b949e;white-space:nowrap}
-.container{padding:12px 20px 40px}
-.watchlist-section{margin-bottom:24px}
-.watchlist-section h2{font-size:14px;color:#8b949e;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}
-.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;transition:border-color .2s}
-.card:hover{border-color:#58a6ff}
-.card .symbol{font-weight:600;color:#e6edf3;font-size:14px}
-.card .price{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
-table{width:100%;border-collapse:collapse}
-thead{position:sticky;top:60px;background:#161b22;z-index:5}
-th{text-align:left;padding:8px 12px;font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #30363d;cursor:pointer;user-select:none}
-th:hover{color:#e6edf3}
-th.sorted-asc::after{content:' \u25B2';font-size:10px}
-th.sorted-desc::after{content:' \u25BC';font-size:10px}
-td{padding:6px 12px;border-bottom:1px solid #21262d;font-variant-numeric:tabular-nums}
-tr:hover{background:#1c2128}
-.price-up{color:#3fb950}
-.price-down{color:#f85149}
-.flash-up{animation:flashGreen .6s ease-out}
-.flash-down{animation:flashRed .6s ease-out}
-@keyframes flashGreen{0%{background:rgba(63,185,80,.3)}100%{background:transparent}}
-@keyframes flashRed{0%{background:rgba(248,81,73,.3)}100%{background:transparent}}
-.no-data{text-align:center;padding:60px 20px;color:#8b949e;font-size:16px}
-@media(max-width:600px){
-  header{padding:10px 12px}
-  header h1{font-size:15px}
-  .container{padding:10px 12px}
-  .grid{grid-template-columns:1fr 1fr}
-  .card{padding:10px}
-  th,td{padding:6px 8px;font-size:12px}
-}
+/* Page-specific: watchlist grid */
+.watchlist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.wl-card { background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: var(--radius-md); padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; transition: border-color var(--transition-normal); }
+.wl-card:hover { border-color: var(--color-info); }
+.wl-card .symbol { font-weight: 600; color: var(--text-primary); font-size: 14px; }
+.wl-card .price  { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stats-text { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 </style>
 </head>
 <body>
 
-<header>
+<header class="app-header">
   <h1>Market Intelligence</h1>
-  <nav style="display:flex;gap:12px;font-size:13px"><a href="/trading" style="color:#58a6ff;text-decoration:none">Trading</a><a href="/backtest" style="color:#58a6ff;text-decoration:none">Backtest</a></nav>
-  <div class="status" id="status">
-    <span class="dot"></span>
+  <nav class="nav-links">
+    <a href="/trading">Trading</a>
+    <a href="/chart">Grafik</a>
+    <a href="/backtest">Backtest</a>
+    <a href="/monitor">Monitor</a>
+    <a href="/settings">Ayarlar</a>
+    <a href="/collector">Veri</a>
+  </nav>
+  <div class="conn-status" id="status">
+    <span class="conn-dot"></span>
     <span id="statusText">Disconnected</span>
   </div>
-  <div class="search-box">
-    <input type="text" id="search" placeholder="Search symbol... (e.g. ETH, SOL)" autocomplete="off">
+  <div class="search-box hide-mobile">
+    <input type="text" id="search" placeholder="Sembol ara... (ETH, SOL)" autocomplete="off">
   </div>
-  <div class="stats" id="stats"></div>
+  <div class="stats-text" id="stats"></div>
 </header>
 
 <div class="container">
-  <div class="watchlist-section" id="watchlistSection">
-    <h2>Watchlist</h2>
-    <div class="grid" id="watchlist"></div>
+  <!-- Mobile search -->
+  <div class="show-mobile" style="display:none;margin-bottom:12px">
+    <input type="text" id="searchMobile" placeholder="Sembol ara..." autocomplete="off" style="width:100%">
   </div>
+
+  <div id="watchlistSection" style="margin-bottom:24px">
+    <div class="section-title">Watchlist</div>
+    <div class="watchlist-grid" id="watchlist"></div>
+  </div>
+
   <div>
-    <h2 style="font-size:14px;color:#8b949e;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px">All Symbols</h2>
-    <table>
-      <thead>
-        <tr>
-          <th data-col="symbol" class="sorted-asc">#  Symbol</th>
-          <th data-col="price">Price (USDT)</th>
-        </tr>
-      </thead>
-      <tbody id="tbody"></tbody>
-    </table>
+    <div class="section-title">All Symbols</div>
+    <div class="tbl-card">
+      <div class="scroll-area" style="max-height:none">
+        <table>
+          <thead>
+            <tr>
+              <th class="sortable sorted-asc" data-col="symbol"># Symbol</th>
+              <th class="sortable" data-col="price">Price (USDT)</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
 
-<div class="no-data" id="noData">Connecting to price stream...</div>
+<div class="empty-state" id="noData">Connecting to price stream...</div>
+<div class="toast-wrap" id="toastWrap"></div>
 
+<script src="/static/components.js"></script>
 <script>
 (function(){
   const WATCHLIST = ['BTCUSDT','XRPUSDT','AVAXUSDT','DOGEUSDT','ETHUSDT','SOLUSDT'];
 
-  const tbody = document.getElementById('tbody');
-  const watchlistEl = document.getElementById('watchlist');
-  const watchlistSection = document.getElementById('watchlistSection');
-  const statusEl = document.getElementById('status');
-  const statusText = document.getElementById('statusText');
-  const statsEl = document.getElementById('stats');
-  const noDataEl = document.getElementById('noData');
-  const searchInput = document.getElementById('search');
+  const tbody = $('tbody');
+  const watchlistEl = $('watchlist');
+  const watchlistSection = $('watchlistSection');
+  const statusEl = $('status');
+  const statusText = $('statusText');
+  const statsEl = $('stats');
+  const noDataEl = $('noData');
+  const searchInput = $('search');
+  const searchMobile = $('searchMobile');
 
-  let prices = {};
-  let prevPrices = {};
   let sortCol = 'symbol';
-  let sortDir = 1; // 1=asc, -1=desc
+  let sortDir = 1;
   let searchTerm = '';
-  let ws = null;
-  let reconnectTimer = null;
   let updateCount = 0;
 
-  // --- WebSocket ---
-  function connect() {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(proto + '//' + location.host + '/ws/prices');
-
-    ws.onopen = function() {
+  // ── WebSocket ──
+  const stream = new PriceStream({
+    onConnect() {
       statusEl.classList.add('connected');
       statusText.textContent = 'Connected';
       noDataEl.style.display = 'none';
-    };
-
-    ws.onmessage = function(e) {
-      try {
-        const data = JSON.parse(e.data);
-        prevPrices = Object.assign({}, prices);
-        prices = data;
-        updateCount++;
-        render();
-      } catch(err) {}
-    };
-
-    ws.onclose = function() {
+    },
+    onPrices(prices, prev) {
+      updateCount++;
+      render();
+    },
+    onDisconnect() {
       statusEl.classList.remove('connected');
       statusText.textContent = 'Reconnecting...';
-      scheduleReconnect();
-    };
+    }
+  });
 
-    ws.onerror = function() {
-      ws.close();
-    };
-  }
-
-  function scheduleReconnect() {
-    if (reconnectTimer) return;
-    reconnectTimer = setTimeout(function() {
-      reconnectTimer = null;
-      connect();
-    }, 2000);
-  }
-
-  // --- Sorting ---
-  document.querySelectorAll('th[data-col]').forEach(function(th) {
+  // ── Sorting ──
+  document.querySelectorAll('th.sortable').forEach(function(th) {
     th.addEventListener('click', function() {
       const col = th.dataset.col;
-      if (sortCol === col) {
-        sortDir *= -1;
-      } else {
-        sortCol = col;
-        sortDir = 1;
-      }
-      document.querySelectorAll('th[data-col]').forEach(function(t) {
-        t.classList.remove('sorted-asc','sorted-desc');
-      });
+      if (sortCol === col) sortDir *= -1;
+      else { sortCol = col; sortDir = 1; }
+      document.querySelectorAll('th.sortable').forEach(t => t.classList.remove('sorted-asc','sorted-desc'));
       th.classList.add(sortDir === 1 ? 'sorted-asc' : 'sorted-desc');
       render();
     });
   });
 
-  // --- Search ---
-  searchInput.addEventListener('input', function() {
-    searchTerm = this.value.toUpperCase().trim();
+  // ── Search (debounced) ──
+  var onSearch = debounce(function(e) {
+    searchTerm = e.target.value.toUpperCase().trim();
     render();
-  });
+  }, 200);
+  if (searchInput) searchInput.addEventListener('input', onSearch);
+  if (searchMobile) searchMobile.addEventListener('input', onSearch);
 
-  // --- Format ---
-  function fmt(p) {
-    const n = parseFloat(p);
-    if (isNaN(n)) return p;
-    if (n >= 100) return n.toFixed(2);
-    if (n >= 1) return n.toFixed(4);
-    if (n >= 0.01) return n.toFixed(6);
-    return n.toFixed(8);
-  }
-
-  // --- Render ---
+  // ── Render ──
   function render() {
+    const prices = stream.prices;
     const keys = Object.keys(prices);
     if (keys.length === 0) return;
 
-    // Stats
-    statsEl.textContent = keys.length + ' symbols | update #' + updateCount;
+    statsEl.textContent = keys.length + ' sembol | #' + updateCount;
 
     // Watchlist
-    let wlHtml = '';
     const wlVisible = searchTerm === '';
     watchlistSection.style.display = wlVisible ? '' : 'none';
     if (wlVisible) {
+      let wlHtml = '';
       WATCHLIST.forEach(function(sym) {
         const p = prices[sym];
         if (!p) return;
-        const prev = prevPrices[sym];
-        let cls = '';
-        if (prev) {
-          const curr = parseFloat(p);
-          const pr = parseFloat(prev);
-          if (curr > pr) cls = 'price-up';
-          else if (curr < pr) cls = 'price-down';
-        }
-        wlHtml += '<div class="card"><span class="symbol">' + sym.replace('USDT','') + '</span><span class="price ' + cls + '">' + fmt(p) + '</span></div>';
+        const cls = stream.getPriceClass(sym);
+        wlHtml += '<div class="wl-card"><span class="symbol">' + sym.replace('USDT','') + '</span><span class="price ' + cls + '">' + Fmt.price(p) + '</span></div>';
       });
       watchlistEl.innerHTML = wlHtml;
     }
@@ -213,36 +151,27 @@ tr:hover{background:#1c2128}
     // Filter & sort
     let filtered = keys;
     if (searchTerm) {
-      filtered = keys.filter(function(k) { return k.indexOf(searchTerm) !== -1; });
+      filtered = keys.filter(k => k.indexOf(searchTerm) !== -1);
     }
-
     filtered.sort(function(a, b) {
-      if (sortCol === 'price') {
-        return (parseFloat(prices[a]) - parseFloat(prices[b])) * sortDir;
-      }
+      if (sortCol === 'price') return (parseFloat(prices[a]) - parseFloat(prices[b])) * sortDir;
       return a.localeCompare(b) * sortDir;
     });
 
-    // Build table rows
+    // Table
     let html = '';
     for (let i = 0; i < filtered.length; i++) {
       const sym = filtered[i];
       const p = prices[sym];
-      const prev = prevPrices[sym];
-      let cls = '';
-      let flash = '';
-      if (prev) {
-        const curr = parseFloat(p);
-        const pr = parseFloat(prev);
-        if (curr > pr) { cls = 'price-up'; flash = 'flash-up'; }
-        else if (curr < pr) { cls = 'price-down'; flash = 'flash-down'; }
-      }
-      html += '<tr class="' + flash + '"><td>' + (i+1) + '  ' + sym + '</td><td class="' + cls + '">' + fmt(p) + '</td></tr>';
+      const cls = stream.getPriceClass(sym);
+      const flash = stream.getFlashClass(sym);
+      html += '<tr class="' + flash + '"><td>' + (i+1) + '  ' + sym + '</td><td class="' + cls + '">' + Fmt.price(p) + '</td></tr>';
     }
     tbody.innerHTML = html;
   }
 
-  connect();
+  stream.connect();
+  renderBottomNav('market');
 })();
 </script>
 
