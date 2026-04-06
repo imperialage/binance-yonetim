@@ -671,7 +671,7 @@ tr.clickable:hover{background:#1c212888}
     if(input===null) return;
     var val=parseFloat(input);
     if(isNaN(val)||val<=0){showToast('Gecersiz deger','error');return;}
-    if(field==='tp_pct'||field==='sl_pct'||field==='weight') val=val/100; // kullanici % girer, biz ondalik saklariz
+    if(field==='weight') val=val/100; // weight: kullanici %33 girer, DB 0.33 saklar. tp_pct/sl_pct DB'de zaten yuzde (1.3 = %1.3)
     updateSymConfig(sym,field,val);
   };
 
