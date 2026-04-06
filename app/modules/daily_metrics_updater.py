@@ -68,7 +68,7 @@ async def _daily_loop() -> None:
             now_ist = datetime.now(_TZ_IST)
             # Bir sonraki 00:05'e kadar bekle (5dk marja)
             tomorrow = (now_ist + timedelta(days=1)).replace(hour=0, minute=5, second=0, microsecond=0)
-            wait_seconds = (tomorrow - now_ist).total_seconds()
+            wait_seconds = max(60, (tomorrow - now_ist).total_seconds())
             await asyncio.sleep(wait_seconds)
 
             # Dunku gunu hesapla

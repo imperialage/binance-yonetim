@@ -301,10 +301,8 @@ class SignalEngine:
                 "event_id": prev_entry_event_id,
                 "signal_id": prev_entry_signal_id,
             }
-            asyncio.get_event_loop().call_soon(
-                lambda: asyncio.create_task(
-                    self._record_closure(exit_info, prev_direction, prev_tp, prev_sl, entry_data)
-                )
+            asyncio.create_task(
+                self._record_closure(exit_info, prev_direction, prev_tp, prev_sl, entry_data)
             )
 
     async def _record_closure(
@@ -1245,8 +1243,9 @@ async def _engine_loop() -> None:
                     # Sinyal bulundu — HER ZAMAN logla (pozisyon olsa bile)
                     dt_str = datetime.now(tz_ist).strftime("%Y-%m-%d %H:%M:%S")
 
-                    # Isleme girilecek mi kontrol et
-                    should_trade = await engine.try_execute_signal(signal)
+                    # Isleme girilecek mi kontrol et (lock altinda — used_a race fix)
+                    async with engine._state_lock:
+                        should_trade = await engine.try_execute_signal(signal)
 
                     await log.ainfo(
                         "signal_engine_signal",

@@ -5,8 +5,9 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from app.dependencies import require_admin
 from app.modules.trade_store import query_closures, get_post_exit_candles, query_daily_metrics
 from app.utils.logging import get_logger
 
@@ -20,6 +21,7 @@ _TZ_IST = timezone(timedelta(hours=3))
 async def strategy_report(
     days: int = Query(30, ge=1, le=365),
     symbol: str | None = Query(None),
+    _=Depends(require_admin),
 ) -> dict:
     """Strateji analiz raporu — trade_closures tablosundan."""
     now = int(time.time())
@@ -113,14 +115,14 @@ async def strategy_report(
 
 
 @router.get("/api/strategy-report/post-exit/{closure_id}")
-async def post_exit_detail(closure_id: int) -> dict:
+async def post_exit_detail(closure_id: int, _=Depends(require_admin)) -> dict:
     """Tek bir trade'in SL sonrasi mum verileri."""
     candles = await get_post_exit_candles(closure_id)
     return {"closure_id": closure_id, "candles": candles, "count": len(candles)}
 
 
 @router.get("/api/strategy-report/post-exit-summary")
-async def post_exit_summary(days: int = Query(30, ge=1, le=365)) -> dict:
+async def post_exit_summary(days: int = Query(30, ge=1, le=365), _=Depends(require_admin)) -> dict:
     """SL kapanislarinin post-exit analizi — SL cok mu dar?"""
     now = int(time.time())
     after = now - (days * 86400)
@@ -168,7 +170,7 @@ async def post_exit_summary(days: int = Query(30, ge=1, le=365)) -> dict:
 
 
 @router.get("/api/strategy-report/daily")
-async def daily_metrics_endpoint(days: int = Query(30, ge=1, le=365)) -> dict:
+async def daily_metrics_endpoint(days: int = Query(30, ge=1, le=365), _=Depends(require_admin)) -> dict:
     """Gunluk performans metrikleri."""
     metrics = await query_daily_metrics(days)
     return {"days": days, "metrics": metrics, "count": len(metrics)}
