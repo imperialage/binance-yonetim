@@ -944,7 +944,7 @@ tr.clickable:hover{background:#1c212888}
   $('signalModal').addEventListener('click',function(e){if(e.target===$('signalModal'))$('signalModal').classList.remove('active');});
   document.addEventListener('keydown',function(e){if(e.key==='Escape')$('signalModal').classList.remove('active');});
 
-  // ── Trade History Table ──
+  // ── Trade History Table — Gruplanmis (PnL + Komisyon ayni satirda) ──
   function renderTrades(){
     var txns=(incomeData&&incomeData.transactions)||[];
     if(txns.length===0){
@@ -952,42 +952,81 @@ tr.clickable:hover{background:#1c212888}
       return;
     }
 
-    // Tip filtresi
-    var filtered=txns;
-    if(tradeFilter==='pnl') filtered=txns.filter(function(t){return t.type==='REALIZED_PNL'});
-    else if(tradeFilter==='fee') filtered=txns.filter(function(t){return t.type==='COMMISSION'});
-    else if(tradeFilter==='funding') filtered=txns.filter(function(t){return t.type==='FUNDING_FEE'});
-
     // Sembol filtresi
+    var filtered=txns;
     if(txnSymFilter!=='all') filtered=filtered.filter(function(t){return t.symbol===txnSymFilter});
+
+    // Tip filtresi — 'all' modunda gruplama yap, diger modlarda ham goster
+    if(tradeFilter!=='all'){
+      if(tradeFilter==='pnl') filtered=filtered.filter(function(t){return t.type==='REALIZED_PNL'});
+      else if(tradeFilter==='fee') filtered=filtered.filter(function(t){return t.type==='COMMISSION'});
+      else if(tradeFilter==='funding') filtered=filtered.filter(function(t){return t.type==='FUNDING_FEE'});
+    }
 
     if(filtered.length===0){
       $('tradesContent').innerHTML='<div class="empty-state">Bu filtrede transaction yok</div>';
       return;
     }
 
-    // Cumulative (eskiden yeniye)
-    var sorted=filtered.slice().reverse();
+    // Gruplama: Ayni sembol + yakin zaman (5sn icinde) PnL + komisyonlari birlestir
+    var grouped=[];
+    if(tradeFilter==='all'){
+      var i=0;
+      while(i<filtered.length){
+        var t=filtered[i];
+        // Funding ve Transfer tek basina kalir
+        if(t.type==='FUNDING_FEE'||t.type==='TRANSFER'){
+          grouped.push({time:t.time,symbol:t.symbol,type:t.type,pnl:t.type==='REALIZED_PNL'?t.income:0,commission:t.type==='COMMISSION'?t.income:0,funding:t.type==='FUNDING_FEE'?t.income:0,net:t.income});
+          i++;continue;
+        }
+        // PnL ve komisyon gruplama — ayni sembol, 5sn icerisindeki islemler
+        var group={time:t.time,symbol:t.symbol,type:'TRADE',pnl:0,commission:0,funding:0,net:0};
+        var baseTime=new Date(t.time.replace(' ','T')).getTime();
+        while(i<filtered.length){
+          var c=filtered[i];
+          var cTime=new Date(c.time.replace(' ','T')).getTime();
+          if(c.symbol!==group.symbol||Math.abs(cTime-baseTime)>5000||c.type==='FUNDING_FEE'||c.type==='TRANSFER') break;
+          if(c.type==='REALIZED_PNL') group.pnl+=c.income;
+          else if(c.type==='COMMISSION') group.commission+=c.income;
+          group.net+=c.income;
+          i++;
+        }
+        // Eger sadece komisyon varsa (giris/cikis emri) tipini belirt
+        if(group.pnl===0&&group.commission!==0) group.type='FEE';
+        grouped.push(group);
+      }
+    }else{
+      // Filtreli modda gruplama yok
+      filtered.forEach(function(t){
+        grouped.push({time:t.time,symbol:t.symbol,type:t.type,pnl:t.type==='REALIZED_PNL'?t.income:0,commission:t.type==='COMMISSION'?t.income:0,funding:t.type==='FUNDING_FEE'?t.income:0,net:t.income});
+      });
+    }
+
+    // Cumulative
+    var sorted=grouped.slice().reverse();
     var cum=0;var cums=[];
-    sorted.forEach(function(t){cum+=t.income;cums.push(cum)});
-    cums.reverse();
+    sorted.forEach(function(g){cum+=g.net;cums.push(cum)});cums.reverse();
 
     var filterHtml='<div style="padding:4px 0;margin-bottom:4px">'+_symFilterHtml(txnSymFilter,'setTxnSymFilter')+'</div>';
-    var html=filterHtml+'<div class="table-scroll"><table><thead><tr><th>Zaman</th><th class="hide-sm">Sembol</th><th>Tip</th><th>Tutar</th><th class="hide-sm">Asset</th><th>Kum.</th></tr></thead><tbody>';
-    filtered.forEach(function(t,i){
-      var cls=t.income>=0?'pnl-positive':'pnl-negative';
+    var html=filterHtml+'<div class="table-scroll"><table><thead><tr><th>Zaman</th><th>Sembol</th><th>PnL</th><th>Komis.</th><th>Net</th><th>Kum.</th></tr></thead><tbody>';
+    grouped.forEach(function(g,i){
+      var netCls=g.net>=0?'pnl-positive':'pnl-negative';
+      var pnlCls=g.pnl>=0?'pnl-positive':'pnl-negative';
       var cumCls=cums[i]>=0?'pnl-positive':'pnl-negative';
-      var typeLabel=t.type;
-      if(t.type==='REALIZED_PNL') typeLabel='<span class="yellow">PnL</span>';
-      else if(t.type==='COMMISSION') typeLabel='<span class="red">Kom.</span>';
-      else if(t.type==='FUNDING_FEE') typeLabel='<span class="blue">Fund</span>';
-      else if(t.type==='TRANSFER') typeLabel='<span class="green">Trf</span>';
+      var typeIcon='';
+      if(g.type==='TRADE') typeIcon='';
+      else if(g.type==='FEE') typeIcon=' <span style="font-size:8px;color:var(--text-dim)">emir</span>';
+      else if(g.type==='FUNDING_FEE') typeIcon=' <span class="blue" style="font-size:8px">fund</span>';
+      else if(g.type==='TRANSFER') typeIcon=' <span class="green" style="font-size:8px">trf</span>';
+      else if(g.type==='REALIZED_PNL') typeIcon='';
+      else if(g.type==='COMMISSION') typeIcon=' <span style="font-size:8px;color:var(--text-dim)">kom</span>';
+
       html+='<tr>';
-      html+='<td style="color:var(--text-dim);font-size:10px;white-space:nowrap">'+t.time+'</td>';
-      html+='<td class="hide-sm"><span class="badge-sym">'+(t.symbol||'').replace('USDT','')+'</span></td>';
-      html+='<td style="font-size:10px">'+typeLabel+'</td>';
-      html+='<td class="'+cls+'" style="font-size:11px;font-weight:600">'+fmtUSD(t.income)+'</td>';
-      html+='<td class="hide-sm" style="font-size:10px;color:var(--text-dim)">'+t.asset+'</td>';
+      html+='<td style="color:var(--text-dim);font-size:10px;white-space:nowrap">'+g.time+'</td>';
+      html+='<td><span class="badge-sym">'+(g.symbol||'').replace('USDT','')+'</span>'+typeIcon+'</td>';
+      html+='<td class="'+pnlCls+'" style="font-size:11px;font-weight:600">'+(g.pnl!==0?fmtUSD(g.pnl):'—')+'</td>';
+      html+='<td style="font-size:10px;color:var(--color-short-alt)">'+(g.commission!==0?fmtUSD(g.commission):'—')+'</td>';
+      html+='<td class="'+netCls+'" style="font-size:11px;font-weight:700">'+fmtUSD(g.net)+'</td>';
       html+='<td class="'+cumCls+'" style="font-size:11px;font-weight:600">'+fmtUSD(cums[i])+'</td>';
       html+='</tr>';
     });
@@ -1001,7 +1040,7 @@ tr.clickable:hover{background:#1c212888}
     for(var k in summary){
       var v=summary[k];
       var label=k==='REALIZED_PNL'?'PnL':k==='COMMISSION'?'Komisyon':k==='FUNDING_FEE'?'Funding':k;
-      sumHtml+='<span style="color:#6e7681">'+label+': <strong class="'+(v>=0?'pnl-positive':'pnl-negative')+'">'+fmtUSD(v)+'</strong></span>';
+      sumHtml+='<span style="color:var(--text-dim)">'+label+': <strong class="'+(v>=0?'pnl-positive':'pnl-negative')+'">'+fmtUSD(v)+'</strong></span>';
     }
     sumHtml+='</div>';
 

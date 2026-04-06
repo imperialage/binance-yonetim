@@ -99,6 +99,8 @@
 }
 
 html {
+  height: 100%;
+  height: -webkit-fill-available;
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
 }
@@ -109,8 +111,9 @@ body {
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
-  min-height: 100vh;
+  min-height: 100%;
   min-height: 100dvh;
+  min-height: -webkit-fill-available;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
