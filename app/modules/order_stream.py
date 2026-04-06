@@ -171,6 +171,11 @@ async def _handle_event(data: dict[str, Any]) -> None:
                         async with engine._state_lock:
                             pos_side = "LONG" if side == "BUY" else "SHORT"
                             engine.on_position_opened(pos_side)
+                            # Entry bilgilerini kaydet (check_pending_fill de yapar, yedek)
+                            if avg_price > 0 and engine.entry_price <= 0:
+                                engine.entry_price = avg_price
+                                engine.entry_time = int(time.time())
+                                engine.entry_qty = qty
                             await log.ainfo("signal_engine_position_opened", symbol=symbol, side=pos_side)
             except Exception as e:
                 await log.awarning("signal_engine_notify_error", symbol=symbol, error=str(e))

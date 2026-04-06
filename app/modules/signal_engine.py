@@ -86,6 +86,13 @@ class SignalEngine:
         self.tp_price: float = 0.0
         self.sl_price: float = 0.0
 
+        # Entry bilgileri — fill tespitinde doldurulur, kapanista kullanilir
+        self.entry_price: float = 0.0
+        self.entry_time: int = 0
+        self.entry_qty: float = 0.0
+        self.entry_event_id: str = ""
+        self.entry_signal_id: int | None = None
+
         # Per-engine lock — pozisyon kapanisi + fill islemleri icin
         self._state_lock: asyncio.Lock = asyncio.Lock()
 
@@ -256,7 +263,11 @@ class SignalEngine:
         prev_direction = self.position_side  # LONG/SHORT
         prev_tp = self.tp_price
         prev_sl = self.sl_price
-        prev_pending = self.pending_order
+        prev_entry_price = self.entry_price
+        prev_entry_time = self.entry_time
+        prev_entry_qty = self.entry_qty
+        prev_entry_event_id = self.entry_event_id
+        prev_entry_signal_id = self.entry_signal_id
 
         self.has_position = False
         self.position_side = ""
@@ -265,6 +276,11 @@ class SignalEngine:
         self.sl_confirmed = False
         self.tp_price = 0.0
         self.sl_price = 0.0
+        self.entry_price = 0.0
+        self.entry_time = 0
+        self.entry_qty = 0.0
+        self.entry_event_id = ""
+        self.entry_signal_id = None
         self.pending_order = None
         # algo_ids.json temizle — eski TP/SL ID'leri kalmasin
         try:
@@ -278,9 +294,16 @@ class SignalEngine:
 
         # trade_closures kaydı oluştur (async task olarak)
         if exit_info and prev_direction:
+            entry_data = {
+                "entry_price": prev_entry_price,
+                "entry_time": prev_entry_time,
+                "qty": prev_entry_qty,
+                "event_id": prev_entry_event_id,
+                "signal_id": prev_entry_signal_id,
+            }
             asyncio.get_event_loop().call_soon(
                 lambda: asyncio.create_task(
-                    self._record_closure(exit_info, prev_direction, prev_tp, prev_sl, prev_pending)
+                    self._record_closure(exit_info, prev_direction, prev_tp, prev_sl, entry_data)
                 )
             )
 
@@ -290,28 +313,26 @@ class SignalEngine:
         direction: str,
         tp_price: float,
         sl_price: float,
-        pending_order: dict | None,
+        entry_data: dict,
     ) -> None:
         """trade_closures tablosuna kapanış kaydı yaz."""
         try:
             from app.modules.trade_store import log_closure
-            from app.modules.binance_client import get_position_risk
 
             exit_price = exit_info.get("avg_price", 0)
             exit_time = int(time.time())
-            qty = exit_info.get("qty", 0)
+            qty = exit_info.get("qty", 0) or entry_data.get("qty", 0)
             realized_pnl = exit_info.get("realized_pnl", 0)
 
-            # Entry bilgisini pending_order'dan al
-            entry_price = pending_order.get("signal_price", 0) if pending_order else 0
-            entry_time = int(pending_order.get("start_time", 0)) if pending_order else 0
-            event_id = pending_order.get("event_id", "") if pending_order else ""
-            signal_id_raw = event_id.split("-")[1] if event_id and "-" in event_id else None
-            signal_id = int(signal_id_raw) if signal_id_raw and signal_id_raw.isdigit() else None
+            # Entry bilgisini kalici alanlardan al
+            entry_price = entry_data.get("entry_price", 0)
+            entry_time = entry_data.get("entry_time", 0)
+            event_id = entry_data.get("event_id", "")
+            signal_id = entry_data.get("signal_id")
 
-            # Entry bilgisi yoksa Binance'tan son order'a bak
+            # Entry bilgisi yoksa exit fiyatini kullan (fallback)
             if entry_price <= 0:
-                entry_price = exit_info.get("entry_price", exit_price)
+                entry_price = exit_price
 
             # exit_reason belirle: çıkış fiyatı TP'ye mi SL'ye mi yakın?
             exit_reason = exit_info.get("exit_reason", "")
@@ -585,6 +606,14 @@ class SignalEngine:
             self.has_position = True
             self.position_side = "LONG" if is_long else "SHORT"
             self.trade_pending = False
+
+            # Entry bilgilerini kalici alanlara kaydet (kapanista kullanilacak)
+            self.entry_price = entry_price
+            self.entry_time = int(time.time())
+            self.entry_qty = qty
+            self.entry_event_id = po.get("event_id", "")
+            self.entry_signal_id = po.get("signal_id")
+
             self.pending_order = None
 
             # TP/SL hesapla
