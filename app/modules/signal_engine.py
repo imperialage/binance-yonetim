@@ -920,11 +920,15 @@ class SignalEngine:
 # ══════════════════════════════════════════════════════════
 
 async def _cleanup_orphan_limit_orders() -> None:
-    """Startup: pozisyon yokken VE pending_order yokken acik kalmis LIMIT emirlerini iptal et."""
-    from app.modules.binance_client import get_position_risk, get_all_orders, cancel_order
+    """Periyodik: pozisyon yokken VE pending_order yokken kalan TUM emirleri temizle.
+
+    Ozellikle: reduceOnly=false SL algo order'lari — giris emri iptal edilmis
+    ama SL hala duruyorsa, ters pozisyon acabilir.
+    """
+    from app.modules.binance_client import get_position_risk, cancel_all_open_orders
 
     for sym, engine in _engines.items():
-        # trade_pending veya pending_order varsa → bu emir bizim, dokunma
+        # trade_pending veya pending_order varsa → bu emirler bizim, dokunma
         if engine.trade_pending or engine.pending_order:
             continue
 
@@ -937,29 +941,15 @@ async def _cleanup_orphan_limit_orders() -> None:
                     pos_amt = float(p.get("positionAmt", 0))
                     break
 
-            # Acik emirleri kontrol et
-            orders = await get_all_orders(sym, days=1)
-            for o in orders:
-                if o.get("status") != "NEW":
-                    continue
-                otype = o.get("origType", o.get("type", ""))
-                oid = o.get("orderId")
-
-                # Pozisyon yokken LIMIT emri duruyorsa → orphan, iptal et
-                if otype == "LIMIT" and pos_amt == 0:
-                    try:
-                        await cancel_order(sym, int(oid))
-                        await log.ainfo("orphan_limit_cancelled", symbol=sym, order_id=oid)
-                    except Exception as e:
-                        await log.awarning("orphan_limit_cancel_error", symbol=sym, order_id=oid, error=str(e))
-
-                # Pozisyon varken reduceOnly olmayan LIMIT emri → yeni pozisyon acma girişimi, iptal
-                elif otype == "LIMIT" and pos_amt != 0 and not o.get("reduceOnly"):
-                    try:
-                        await cancel_order(sym, int(oid))
-                        await log.ainfo("orphan_entry_limit_cancelled", symbol=sym, order_id=oid)
-                    except Exception as e:
-                        await log.awarning("orphan_entry_cancel_error", symbol=sym, order_id=oid, error=str(e))
+            # Pozisyon yokken TUM emirleri temizle (LIMIT + algo SL/TP)
+            if pos_amt == 0:
+                try:
+                    result = await cancel_all_open_orders(sym)
+                    total = result.get("total", 0)
+                    if total > 0:
+                        await log.ainfo("orphan_all_orders_cancelled", symbol=sym, result=result)
+                except Exception as e:
+                    await log.awarning("orphan_cleanup_cancel_error", symbol=sym, error=str(e))
 
         except Exception as e:
             await log.awarning("orphan_cleanup_error", symbol=sym, error=str(e))
