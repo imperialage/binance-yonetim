@@ -833,6 +833,16 @@ class SignalEngine:
                 used_a=len(self.used_a),
             )
 
+            # Kapanan mumu B olarak diverjans kontrol (kapanmis mumlar arasi)
+            if closed_rsi is not None and not self.signal_fired_this_bar:
+                close_signal = self._check_closed_divergence(closed)
+                if close_signal:
+                    self.signal_fired_this_bar = True
+                    self.last_signal_time = time.time()
+                    self.last_signal = close_signal
+                    self.last_signal_bar = self.candle_start
+                    return close_signal
+
             # Yeni mum baslat
             self.candle_start = new_candle_start
             self.candle_open = price
@@ -923,6 +933,57 @@ class SignalEngine:
                         "gap": gap,
                         "candle_a_time": a["time"],
                         "source": "server",
+                    }
+
+        return None
+
+    # ── Kapanmis mumlar arasi diverjans ───────────────────
+    def _check_closed_divergence(self, b_candle: dict) -> dict | None:
+        """Kapanan mumu B olarak onceki kapanmis mumlara karsi kontrol et."""
+        n = len(self.closed_candles)
+        if n < 2:
+            return None
+        search_range = min(self.max_gap, n - 1)
+        allowed = self.settings.get("allowed_directions", "BOTH")
+
+        b_rsi = b_candle.get("rsi")
+        if b_rsi is None:
+            return None
+
+        # SHORT
+        if allowed in ("BOTH", "SELL"):
+            for gap in range(2, search_range + 2):
+                if n - gap < 0:
+                    break
+                a = self.closed_candles[n - gap]
+                if a["rsi"] is None or a["time"] in self.used_a:
+                    continue
+                if (a["rsi"] >= self.short_thresh
+                        and b_candle["high"] > a["high"]
+                        and b_rsi < a["rsi"]):
+                    entry_price = round(b_candle["high"] * (1 - self.entry_buffer), 6)
+                    return {
+                        "symbol": self.symbol, "direction": "SELL", "entry_price": entry_price,
+                        "rsi_a": a["rsi"], "rsi_b": b_rsi, "gap": gap - 1,
+                        "candle_a_time": a["time"], "source": "server",
+                    }
+
+        # LONG
+        if allowed in ("BOTH", "BUY"):
+            for gap in range(2, search_range + 2):
+                if n - gap < 0:
+                    break
+                a = self.closed_candles[n - gap]
+                if a["rsi"] is None or a["time"] in self.used_a:
+                    continue
+                if (a["rsi"] <= self.long_thresh
+                        and b_candle["low"] < a["low"]
+                        and b_rsi > a["rsi"]):
+                    entry_price = round(b_candle["low"] * (1 + self.entry_buffer), 6)
+                    return {
+                        "symbol": self.symbol, "direction": "BUY", "entry_price": entry_price,
+                        "rsi_a": a["rsi"], "rsi_b": b_rsi, "gap": gap - 1,
+                        "candle_a_time": a["time"], "source": "server",
                     }
 
         return None
