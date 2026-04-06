@@ -570,7 +570,25 @@ class SignalEngine:
             await log.ainfo("pending_timeout", symbol=self.symbol, elapsed=int(elapsed))
             return
 
-        # Binance'tan gercek pozisyon kontrol (tek API call)
+        # Limit order hala aktif mi kontrol et — iptal edildiyse SL'yi de temizle
+        try:
+            from app.modules.binance_client import get_order_status, cancel_all_open_orders as _cancel_all
+            order_info = await get_order_status(self.symbol, int(po["order_id"]))
+            order_status = order_info.get("status", "")
+            if order_status in ("CANCELED", "EXPIRED", "REJECTED"):
+                # Limit order iptal/expire olmus — SL dahil tum emirleri temizle
+                await log.ainfo("pending_entry_cancelled", symbol=self.symbol, status=order_status, order_id=po["order_id"])
+                try:
+                    await _cancel_all(self.symbol)
+                except Exception:
+                    pass
+                self.trade_pending = False
+                self.pending_order = None
+                return
+        except Exception:
+            pass  # order status alinamazsa pozisyon kontrolune devam et
+
+        # Binance'tan gercek pozisyon kontrol
         try:
             from app.modules.binance_client import get_position_risk
             positions = await get_position_risk(self.symbol)
