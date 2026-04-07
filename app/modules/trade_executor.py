@@ -41,7 +41,8 @@ def _clear_trade_pending(symbol: str) -> None:
     """trade_pending kilidini ac — islem acilamadi, yeni sinyal aranabilir."""
     try:
         from app.modules.signal_engine import get_engine
-        eng = get_engine(symbol)
+        from app.modules.ha_signal_engine import get_ha_engine
+        eng = get_ha_engine(symbol) or get_engine(symbol)
         if eng:
             eng.trade_pending = False
             eng.pending_order = None
@@ -88,7 +89,8 @@ async def execute_trade(
             # trade_pending temizle — sıkışmasın
             try:
                 from app.modules.signal_engine import get_engine
-                eng = get_engine(symbol)
+                from app.modules.ha_signal_engine import get_ha_engine
+                eng = get_ha_engine(symbol) or get_engine(symbol)
                 if eng:
                     eng.trade_pending = False
                     eng.pending_order = None
@@ -340,7 +342,8 @@ async def _execute_trade_inner(
     # ── 8b. Signal engine'e bilgi ver — fill takibi + TP oradan yapilacak ──
     try:
         from app.modules.signal_engine import get_engine
-        engine = get_engine(symbol)
+        from app.modules.ha_signal_engine import get_ha_engine
+        engine = get_ha_engine(symbol) or get_engine(symbol)
         if engine:
             # signal_id'yi event_id'den parse et (format: se-{row_id}-{ts})
             _sig_id = None
