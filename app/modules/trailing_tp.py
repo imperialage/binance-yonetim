@@ -115,23 +115,24 @@ async def _trailing_loop() -> None:
                 if price is None:
                     continue
 
-                # TP fiyatini hesapla
-                tp_pct = cfg.get("tp_pct", 1.0) / 100.0
+                # TP fiyatini engine'den al (Binance'a verilen gercek TP)
                 entry = engine.entry_price
                 side = engine.position_side
-
-                if side == "LONG":
-                    tp_price = entry * (1 + tp_pct)
-                elif side == "SHORT":
-                    tp_price = entry * (1 - tp_pct)
-                else:
-                    continue
+                tp_price = engine.tp_price
+                if tp_price <= 0:
+                    # Fallback: config'den hesapla
+                    tp_pct = cfg.get("tp_pct", 1.0) / 100.0
+                    if side == "LONG":
+                        tp_price = entry * (1 + tp_pct)
+                    elif side == "SHORT":
+                        tp_price = entry * (1 - tp_pct)
+                    else:
+                        continue
 
                 # TP mesafesinin yuzdesi
                 progress = calc_tp_progress(price, entry, tp_price, side)
 
                 # ── Flash crash korumasi ──
-                # Tek tick'te buyuk dusus → hemen kapat (SL'yi bekleme)
                 prev_price = _prev_prices.get(sym)
                 _prev_prices[sym] = price
                 if prev_price and prev_price > 0:
@@ -139,8 +140,7 @@ async def _trailing_loop() -> None:
                         tick_drop_pct = (prev_price - price) / prev_price * 100
                     else:
                         tick_drop_pct = (price - prev_price) / prev_price * 100
-                    # Tek tick'te %0.3+ dusus = flash crash → hemen kapat
-                    flash_thresh = 0.3
+                    flash_thresh = cfg.get("trailing_tp_flash_pct", 1.0)
                     if tick_drop_pct >= flash_thresh and progress < 50:
                         await log.ainfo("trailing_tp_flash_crash", symbol=sym, side=side,
                                         drop_pct=round(tick_drop_pct, 3), progress=round(progress, 2))
@@ -158,7 +158,13 @@ async def _trailing_loop() -> None:
                             if qty > 0:
                                 await place_market_order(sym, close_side, qty, reduce_only=True)
                                 await log.ainfo("trailing_tp_flash_closed", symbol=sym, qty=qty)
+                                engine.on_position_closed(exit_info={
+                                    "avg_price": price, "qty": qty,
+                                    "order_type": "MARKET", "realized_pnl": 0,
+                                    "exit_reason": "FLASH_CRASH",
+                                })
                             _peaks.pop(sym, None)
+                            _prev_prices.pop(sym, None)
                         except Exception as e:
                             await log.aerror("trailing_tp_flash_error", symbol=sym, error=str(e))
                         continue
@@ -177,7 +183,7 @@ async def _trailing_loop() -> None:
                         active_rule = (peak_thresh, close_at)
 
                 if active_rule is None:
-                    continue  # henuz hicbir kurala ulasilmadi
+                    continue
 
                 peak_thresh, close_at = active_rule
 
@@ -185,22 +191,16 @@ async def _trailing_loop() -> None:
                 if progress <= close_at:
                     await log.ainfo(
                         "trailing_tp_triggered",
-                        symbol=sym,
-                        side=side,
-                        entry=entry,
-                        price=price,
+                        symbol=sym, side=side, entry=entry, price=price,
                         peak_pct=round(current_peak, 2),
                         current_pct=round(progress, 2),
                         rule=f"{peak_thresh}:{close_at}",
                     )
 
-                    # Market close
                     try:
                         await cancel_all_open_orders(sym)
                         close_side = "SELL" if side == "LONG" else "BUY"
-                        qty = engine.entry_qty if engine.entry_qty > 0 else abs(float(getattr(engine, 'entry_qty', 0)))
-
-                        # Qty yoksa Binance'tan al
+                        qty = engine.entry_qty
                         if qty <= 0:
                             try:
                                 from app.modules.binance_client import get_position_risk
@@ -216,14 +216,19 @@ async def _trailing_loop() -> None:
                             await place_market_order(sym, close_side, qty, reduce_only=True)
                             await log.ainfo("trailing_tp_closed", symbol=sym, side=close_side, qty=qty,
                                             peak=round(current_peak, 2), closed_at=round(progress, 2))
+                            engine.on_position_closed(exit_info={
+                                "avg_price": price, "qty": qty,
+                                "order_type": "MARKET", "realized_pnl": 0,
+                                "exit_reason": "TRAILING_TP",
+                            })
                         else:
                             await log.awarning("trailing_tp_no_qty", symbol=sym)
 
                     except Exception as e:
                         await log.aerror("trailing_tp_close_error", symbol=sym, error=str(e))
 
-                    # Peak sifirla
                     _peaks.pop(sym, None)
+                    _prev_prices.pop(sym, None)
 
     except asyncio.CancelledError:
         await log.ainfo("trailing_tp_stopped")

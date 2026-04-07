@@ -40,6 +40,7 @@ class IndicatorSettingsBody(BaseModel):
     ha_enabled: int | None = None
     trailing_tp_enabled: int | None = None
     trailing_tp_rules: str | None = None
+    trailing_tp_flash_pct: float | None = None
 
 
 @router.get("/api/indicator-settings")

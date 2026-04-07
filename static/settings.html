@@ -92,9 +92,15 @@
     <div style="margin-bottom:16px">
         <div style="font-size:11px;color:var(--color-long);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px">Trailing Take-Profit</div>
         <div class="cb-row" style="margin-bottom:10px"><input type="checkbox" id="fTrailingEnabled"><label for="fTrailingEnabled">Trailing TP Aktif</label></div>
-        <div class="fg" style="margin-bottom:8px">
-            <label>Kurallar <span style="font-weight:400;color:var(--text-dim)">(zirve:kapanış — virgülle ayır)</span></label>
-            <input id="fTrailingRules" type="text" value="40:10,70:40,90:70,99:90" placeholder="40:10,70:40,90:70,99:90">
+        <div class="form-grid">
+            <div class="fg">
+                <label>Kurallar <span style="font-weight:400;color:var(--text-dim)">(zirve:kapanış)</span></label>
+                <input id="fTrailingRules" type="text" value="40:10,70:40,90:70,99:90" placeholder="40:10,70:40,90:70,99:90">
+            </div>
+            <div class="fg">
+                <label>Flash Crash % <span style="font-weight:400;color:var(--text-dim)">(tek tick dusus)</span></label>
+                <input id="fFlashPct" type="number" value="1.0" step="0.1" min="0.1">
+            </div>
         </div>
         <div style="font-size:10px;color:var(--text-dim);line-height:1.6;padding:8px 10px;background:var(--bg-tertiary);border-radius:var(--radius-sm)">
             <strong>Ornek:</strong> 40:10 → Kar TP'nin %40'ina ulasti, %10'a duserse kapat<br>
@@ -200,6 +206,7 @@ async function loadSymbol(){
     $('fHaEnabled').checked=!!s.ha_enabled;
     $('fTrailingEnabled').checked=!!s.trailing_tp_enabled;
     $('fTrailingRules').value=s.trailing_tp_rules||'40:10,70:40,90:70,99:90';
+    $('fFlashPct').value=s.trailing_tp_flash_pct!=null?s.trailing_tp_flash_pct:1.0;
 
     $('settingsForm').style.display='block';
     loadAll();
@@ -234,6 +241,7 @@ async function saveSettings(){
         ha_enabled:$('fHaEnabled').checked?1:0,
         trailing_tp_enabled:$('fTrailingEnabled').checked?1:0,
         trailing_tp_rules:$('fTrailingRules').value.trim(),
+        trailing_tp_flash_pct:parseFloat($('fFlashPct').value),
     };
     var token=localStorage.getItem('admin_token')||'';
     if(!token){token=prompt('Admin Token:');if(!token)return;localStorage.setItem('admin_token',token)}
@@ -253,7 +261,7 @@ function resetForm(){
     $('fWeekend').checked=false;$('fActive').checked=true;$('fListening').checked=true;
     $('fSlEnabled').checked=true;$('fReverse').checked=false;
     $('fHaEnabled').checked=false;$('fTrailingEnabled').checked=false;
-    $('fTrailingRules').value='40:10,70:40,90:70,99:90';
+    $('fTrailingRules').value='40:10,70:40,90:70,99:90';$('fFlashPct').value=1.0;
 }
 
 // ── Delete ──
