@@ -240,7 +240,7 @@ async function saveSettings(){
     try{
         var resp=await fetch('/api/indicator-settings/'+currentSym,{method:'PUT',headers:{'Content-Type':'application/json','X-Admin-Token':token},body:JSON.stringify(body)});
         if(resp.status===401){localStorage.removeItem('admin_token');toast('Gecersiz token',false);return}
-        if(resp.ok){toast(currentSym+' kaydedildi',true);loadAll()}
+        if(resp.ok){toast(currentSym+' kaydedildi',true);loadSymbol()}
         else{toast('Hata: '+resp.statusText,false)}
     }catch(e){toast('Hata: '+e.message,false)}
 }
