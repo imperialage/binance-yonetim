@@ -169,8 +169,11 @@ async def _trailing_loop() -> None:
                             await log.aerror("trailing_tp_flash_error", symbol=sym, error=str(e))
                         continue
 
-                # Peak guncelle
-                prev_peak = _peaks.get(sym, 0.0)
+                # Peak guncelle — yoksa mevcut progress'ten basla (restart korumasi)
+                if sym not in _peaks:
+                    _peaks[sym] = progress
+                    await log.ainfo("trailing_tp_peak_init", symbol=sym, peak=round(progress, 2))
+                prev_peak = _peaks[sym]
                 if progress > prev_peak:
                     _peaks[sym] = progress
 
