@@ -1420,9 +1420,10 @@ async def debug_fix_tpsl(symbol: str) -> dict:
         is_long = pos_amt > 0
         exit_side = "SELL" if is_long else "BUY"
         qty = abs(pos_amt)
-        cfg = get_symbol_config(sym)
-        tp_pct = cfg.get("tp_pct", 0.005)
-        sl_pct = cfg.get("sl_pct", 0.015)
+        from app.modules.indicator_settings_store import get_settings_or_defaults
+        cfg = await get_settings_or_defaults(sym)
+        tp_pct = cfg.get("tp_pct", 1.0) / 100.0  # DB'de yuzde, orana cevir
+        sl_pct = cfg.get("sl_pct", 0.2) / 100.0
 
         if is_long:
             raw_tp = entry_price * (1 + tp_pct)
