@@ -58,10 +58,11 @@ async def execute_trade(
     tf: str = "5m",
     tp_pct: float | None = None,
     sl_pct: float | None = None,
+    prefetch: asyncio.Task | None = None,
 ) -> None:
     """Execute a trade based on signal. Fire-and-forget from webhook.
 
-    tp_pct/sl_pct: per-symbol overrides. If None, falls back to settings.get_strategy(tf).
+    prefetch: pre-fetched (positions, balance) asyncio.Task — sinyal aninda baslatilir.
     """
     start_ms = time.monotonic_ns() // 1_000_000
     ts = int(time.time())
@@ -75,7 +76,7 @@ async def execute_trade(
     lock = _get_lock(symbol)
     async with lock:
         try:
-            await _execute_trade_inner(symbol, side, price, event_id, ts, start_ms, tf, tp_pct=tp_pct, sl_pct=sl_pct)
+            await _execute_trade_inner(symbol, side, price, event_id, ts, start_ms, tf, tp_pct=tp_pct, sl_pct=sl_pct, prefetch=prefetch)
         except Exception as e:
             duration = (time.monotonic_ns() // 1_000_000) - start_ms
             log.error(
@@ -107,6 +108,17 @@ async def execute_trade(
             )
 
 
+# Exchange info cache — startup'ta doldurulur, bellekten okunur
+_exchange_cache: dict[str, dict] = {}
+
+
+async def get_exchange_info_cached(symbol: str) -> dict:
+    """Exchange info cache — step_size, tick_size ayda bir degisir."""
+    if symbol not in _exchange_cache:
+        _exchange_cache[symbol] = await get_exchange_info(symbol)
+    return _exchange_cache[symbol]
+
+
 async def _execute_trade_inner(
     symbol: str,
     side: str,
@@ -117,21 +129,25 @@ async def _execute_trade_inner(
     tf: str = "5m",
     tp_pct: float | None = None,
     sl_pct: float | None = None,
+    prefetch: asyncio.Task | None = None,
 ) -> None:
     """Inner trade logic — called under per-symbol lock."""
 
-    # ── 1. Set leverage to 1x ────────────────────────
-    try:
-        await set_leverage(symbol, leverage=1)
-    except BinanceAPIError as e:
-        # -4028: leverage not changed — that's fine
-        if e.code != -4028:
-            raise
-    except Exception:
-        raise
+    # ── 1. Leverage: startup'ta set edildi, burada atla ──
 
-    # ── 2. Check current position ────────────────────
-    positions = await get_position_risk(symbol)
+    # ── 2. Position + Balance: pre-fetch varsa kullan, yoksa paralel cek ──
+    if prefetch:
+        try:
+            positions, balance = await prefetch
+        except Exception:
+            positions, balance = await asyncio.gather(
+                get_position_risk(symbol), get_usdt_balance(),
+            )
+    else:
+        positions, balance = await asyncio.gather(
+            get_position_risk(symbol), get_usdt_balance(),
+        )
+
     current_pos = None
     for p in positions:
         if p.get("symbol") == symbol:
@@ -141,7 +157,7 @@ async def _execute_trade_inner(
     pos_amt = float(current_pos.get("positionAmt", 0)) if current_pos else 0.0
     closed_previous = False
 
-    # ── 2b. Sembol config — indicator_settings'ten oku (kalici) ──
+    # ── 2b. Sembol config — indicator_settings'ten oku (lokal DB, <1ms) ──
     from app.modules.indicator_settings_store import get_settings_or_defaults
     sym_cfg = await get_settings_or_defaults(symbol)
     reverse_signal = bool(sym_cfg.get("reverse_signal", 0))
@@ -231,14 +247,13 @@ async def _execute_trade_inner(
                 return
 
     # ── 5. Get exchange info for rounding ────────────
-    info = await get_exchange_info(symbol)
+    info = await get_exchange_info_cached(symbol)
     step_size = info["lotSize"]["stepSize"]
     min_qty = info["lotSize"]["minQty"]
     tick_size = info["priceFilter"]["tickSize"]
     price_precision = info["pricePrecision"]
 
-    # ── 6. Get available balance (fresh after close) ─
-    balance = await get_usdt_balance()
+    # ── 6. Balance kontrolu (paralel call'dan geldi) ─
     if balance <= 0:
         duration = (time.monotonic_ns() // 1_000_000) - start_ms
         _clear_trade_pending(symbol)

@@ -178,6 +178,13 @@ class SignalEngine:
             # Pozisyon kontrol
             await self._sync_position()
 
+            # Leverage 1x — bir kez set et (trade_executor'dan kaldirildi)
+            try:
+                from app.modules.binance_client import set_leverage
+                await set_leverage(self.symbol, leverage=1)
+            except Exception:
+                pass  # -4028 veya zaten set
+
             self.warmed_up = True
             await log.ainfo(
                 "signal_engine_warmup_done",
@@ -513,6 +520,8 @@ class SignalEngine:
                         from app.config import settings as app_cfg
                         if app_cfg.trading_enabled:
                             from app.modules.trade_executor import execute_trade
+                            from app.modules.binance_client import get_position_risk as _gpr2, get_usdt_balance as _gub2
+                            _pf = asyncio.ensure_future(asyncio.gather(_gpr2(self.symbol), _gub2()))
                             self.on_trade_pending()
                             event_id = f"se-close-{int(time.time())}"
                             asyncio.create_task(execute_trade(
@@ -521,6 +530,7 @@ class SignalEngine:
                                 price=sig["entry_price"],
                                 event_id=event_id,
                                 tf=self.interval,
+                                prefetch=_pf,
                             ))
                             await log.ainfo("last_signal_executed_after_close", symbol=self.symbol, direction=sig["direction"])
 
@@ -1399,6 +1409,9 @@ async def _engine_loop() -> None:
                     if should_trade:
                         from app.config import settings as app_settings
                         if app_settings.trading_enabled:
+                            # Pre-fetch: position + balance paralel cek (execute_trade beklemeden)
+                            from app.modules.binance_client import get_position_risk as _gpr, get_usdt_balance as _gub
+                            _prefetch = asyncio.ensure_future(asyncio.gather(_gpr(sym), _gub()))
                             engine.on_trade_pending()
                             event_id = f"se-{row_id}-{int(time.time())}"
                             asyncio.create_task(execute_trade(
@@ -1407,6 +1420,7 @@ async def _engine_loop() -> None:
                                 price=signal["entry_price"],
                                 event_id=event_id,
                                 tf=engine.interval,
+                                prefetch=_prefetch,
                             ))
 
         except asyncio.CancelledError:

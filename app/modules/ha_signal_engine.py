@@ -510,12 +510,14 @@ async def _ha_engine_loop() -> None:
                     if should_trade:
                         from app.config import settings as app_settings
                         if app_settings.trading_enabled:
+                            from app.modules.binance_client import get_position_risk as _gpr, get_usdt_balance as _gub
+                            _pf = asyncio.ensure_future(asyncio.gather(_gpr(sym), _gub()))
                             engine.on_trade_pending()
                             event_id = f"ha-{row_id}-{int(time.time())}"
                             asyncio.create_task(execute_trade(
                                 symbol=sym, signal=signal["direction"],
                                 price=signal["entry_price"], event_id=event_id,
-                                tf=engine.interval,
+                                tf=engine.interval, prefetch=_pf,
                             ))
 
     except asyncio.CancelledError:

@@ -157,7 +157,9 @@ async def _handle_event(data: dict[str, Any]) -> None:
                                     from app.config import settings as app_cfg
                                     if app_cfg.trading_enabled:
                                         from app.modules.trade_executor import execute_trade
+                                        from app.modules.binance_client import get_position_risk as _gpr3, get_usdt_balance as _gub3
                                         import asyncio as _aio
+                                        _pf3 = _aio.ensure_future(_aio.gather(_gpr3(symbol), _gub3()))
                                         engine.on_trade_pending()
                                         event_id = f"se-instant-{int(time.time())}"
                                         _aio.create_task(execute_trade(
@@ -166,6 +168,7 @@ async def _handle_event(data: dict[str, Any]) -> None:
                                             price=sig["entry_price"],
                                             event_id=event_id,
                                             tf=engine.interval,
+                                            prefetch=_pf3,
                                         ))
                                         await log.ainfo("last_signal_executed_instant", symbol=symbol, direction=sig["direction"])
                     else:
