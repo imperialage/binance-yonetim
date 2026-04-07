@@ -262,27 +262,8 @@ class HeikinAshiEngine(SignalEngine):
             self._update_ha_candle()
             self.signal_fired_this_bar = False
 
-        # 4. Sinyal kontrolu
-        if self.signal_fired_this_bar:
-            return None
-
-        # 5. HA RSI
-        live_rsi = self._calc_live_rsi(self.ha_candle_close)
-        if live_rsi is None:
-            return None
-
-        if len(self.closed_candles) < 1:
-            return None
-
-        # 6. Diverjans (HA)
-        signal = self._check_divergence(price, live_rsi)
-        if signal:
-            self.signal_fired_this_bar = True
-            self.last_signal_time = time.time()
-            self.last_signal = signal
-            self.last_signal_bar = self.candle_start
-            return signal
-
+        # Pine Script uyumlu: canli tick'te diverjans ARANMAZ
+        # Sadece mum kapanisinda _check_closed_divergence ile kontrol edilir
         return None
 
     # ── Override: _check_divergence (HA) ────────────────
