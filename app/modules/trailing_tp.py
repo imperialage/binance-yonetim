@@ -15,7 +15,10 @@ Ornek: "40:10,70:40,90:70,99:90"
 from __future__ import annotations
 
 import asyncio
+import json as _json
+import os as _os
 import time
+from pathlib import Path as _Path
 from typing import Any
 
 from app.modules.price_stream import get_live_price
@@ -25,9 +28,29 @@ log = get_logger(__name__)
 
 _task: asyncio.Task | None = None
 
-# Sembol bazli peak takibi
-_peaks: dict[str, float] = {}  # symbol → en yuksek kar% (TP mesafesinin yuzdesi)
-_prev_prices: dict[str, float] = {}  # symbol → onceki tick fiyati (flash crash icin)
+# Sembol bazli peak takibi — kalici (JSON dosya)
+_peaks: dict[str, float] = {}
+_prev_prices: dict[str, float] = {}
+_PEAKS_PATH = _Path(_os.getenv("DATA_DIR", "data")) / "trailing_peaks.json"
+
+
+def _load_peaks() -> None:
+    """Startup'ta peak verilerini diskten oku."""
+    global _peaks
+    try:
+        if _PEAKS_PATH.exists():
+            _peaks = _json.loads(_PEAKS_PATH.read_text())
+    except Exception:
+        _peaks = {}
+
+
+def _save_peaks() -> None:
+    """Peak verilerini diske yaz."""
+    try:
+        _PEAKS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _PEAKS_PATH.write_text(_json.dumps(_peaks))
+    except Exception:
+        pass
 
 
 def parse_rules(rules_str: str) -> list[tuple[float, float]]:
@@ -73,7 +96,8 @@ async def _trailing_loop() -> None:
     from app.modules.indicator_settings_store import get_settings_or_defaults
     from app.modules.binance_client import place_market_order, cancel_all_open_orders
 
-    await log.ainfo("trailing_tp_started")
+    _load_peaks()
+    await log.ainfo("trailing_tp_started", loaded_peaks=len(_peaks))
 
     try:
         while True:
@@ -94,6 +118,7 @@ async def _trailing_loop() -> None:
                     # Pozisyon yok — peak sifirla
                     if sym in _peaks:
                         del _peaks[sym]
+                        _save_peaks()
                     continue
 
                 # Ayarlari al
@@ -165,6 +190,7 @@ async def _trailing_loop() -> None:
                                 })
                             _peaks.pop(sym, None)
                             _prev_prices.pop(sym, None)
+                            _save_peaks()
                         except Exception as e:
                             await log.aerror("trailing_tp_flash_error", symbol=sym, error=str(e))
                         continue
@@ -172,12 +198,14 @@ async def _trailing_loop() -> None:
                 # Peak guncelle — yoksa mevcut progress'ten basla (restart korumasi)
                 if sym not in _peaks:
                     _peaks[sym] = progress
+                    _save_peaks()
                     await log.ainfo("trailing_tp_peak_init", symbol=sym, peak=round(progress, 2))
                 prev_peak = _peaks[sym]
                 if progress > prev_peak:
                     _peaks[sym] = progress
+                    _save_peaks()
 
-                current_peak = _peaks.get(sym, 0.0)
+                current_peak = _peaks[sym]
 
                 # Kural kontrol — en yuksek eslesen kurali bul
                 active_rule = None
@@ -232,6 +260,7 @@ async def _trailing_loop() -> None:
 
                     _peaks.pop(sym, None)
                     _prev_prices.pop(sym, None)
+                    _save_peaks()
 
     except asyncio.CancelledError:
         await log.ainfo("trailing_tp_stopped")
