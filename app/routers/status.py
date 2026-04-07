@@ -408,9 +408,18 @@ async def signal_engine_status() -> dict:
     except Exception:
         ha_task_status = "ERROR"
 
+    # Trailing TP durumu
+    trailing_status = {}
+    try:
+        from app.modules.trailing_tp import get_trailing_status
+        trailing_status = get_trailing_status()
+    except Exception:
+        pass
+
     return {
         "status": "RUNNING", "task": task_status, "engines": result, "count": len(result),
         "ha_task": ha_task_status, "ha_engines": ha_result, "ha_count": len(ha_result),
+        "trailing_tp": trailing_status,
     }
 
 

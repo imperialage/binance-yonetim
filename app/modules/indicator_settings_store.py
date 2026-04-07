@@ -50,6 +50,8 @@ _MIGRATIONS = [
     "ALTER TABLE indicator_settings ADD COLUMN sl_enabled INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE indicator_settings ADD COLUMN allowed_directions TEXT NOT NULL DEFAULT 'BOTH'",
     "ALTER TABLE indicator_settings ADD COLUMN ha_enabled INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE indicator_settings ADD COLUMN trailing_tp_enabled INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE indicator_settings ADD COLUMN trailing_tp_rules TEXT NOT NULL DEFAULT '40:10,70:40,90:70,99:90'",
 ]
 
 # Default ayarlar — yeni sembol eklendiginde kullanilir
@@ -71,6 +73,8 @@ DEFAULTS = {
     "sl_enabled": 1,
     "allowed_directions": "BOTH",
     "ha_enabled": 0,
+    "trailing_tp_enabled": 0,
+    "trailing_tp_rules": "40:10,70:40,90:70,99:90",
 }
 
 
@@ -163,8 +167,9 @@ async def upsert_settings(symbol: str, data: dict[str, Any]) -> dict[str, Any]:
             """INSERT INTO indicator_settings
                (symbol, interval, rsi_len, long_thresh, short_thresh, max_gap,
                 entry_buffer, tp_pct, sl_pct, commission, weekend_closed, active, listening,
-                weight, reverse_signal, sl_enabled, allowed_directions, ha_enabled)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                weight, reverse_signal, sl_enabled, allowed_directions, ha_enabled,
+                trailing_tp_enabled, trailing_tp_rules)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 sym,
                 row["interval"],
@@ -184,6 +189,8 @@ async def upsert_settings(symbol: str, data: dict[str, Any]) -> dict[str, Any]:
                 row["sl_enabled"],
                 row["allowed_directions"],
                 row["ha_enabled"],
+                row["trailing_tp_enabled"],
+                row["trailing_tp_rules"],
             ),
         )
         await db.commit()

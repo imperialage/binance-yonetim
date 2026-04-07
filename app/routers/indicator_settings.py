@@ -38,6 +38,8 @@ class IndicatorSettingsBody(BaseModel):
     sl_enabled: int | None = None
     allowed_directions: str | None = None
     ha_enabled: int | None = None
+    trailing_tp_enabled: int | None = None
+    trailing_tp_rules: str | None = None
 
 
 @router.get("/api/indicator-settings")
