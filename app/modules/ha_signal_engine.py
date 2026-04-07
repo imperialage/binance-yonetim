@@ -243,8 +243,8 @@ class HeikinAshiEngine(SignalEngine):
                             ha_close=round(ha_c, 4), real_close=round(real_c, 4),
                             rsi=round(closed_rsi, 2) if closed_rsi else None)
 
-            # Kapanan mum diverjans kontrolu
-            if closed_rsi is not None and not self.signal_fired_this_bar:
+            # Kapanan mum diverjans kontrolu (yeni B mumu — onceki mumun flag'i gecersiz)
+            if closed_rsi is not None:
                 close_signal = self._check_closed_divergence(closed)
                 if close_signal:
                     self.signal_fired_this_bar = True
