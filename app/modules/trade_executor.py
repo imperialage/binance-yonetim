@@ -290,13 +290,10 @@ async def _execute_trade_inner(
         return
 
     # ── 8. Limit order ile giriş + anında SL ──
-    ENTRY_BUFFER = 0.001  # binde 1
     LIMIT_TIMEOUT = 900   # 15 dakika (saniye)
 
-    if side == "BUY":
-        limit_price = round_price(price * (1 - ENTRY_BUFFER), tick_size)
-    else:
-        limit_price = round_price(price * (1 + ENTRY_BUFFER), tick_size)
+    # Entry buffer: sinyal fiyati zaten buffer uygulanmis, limit order tam fiyattan
+    limit_price = round_price(price, tick_size)
 
     # SL fiyatını hesapla (indicator_settings'ten)
     ind_sl_pct = sym_cfg.get("sl_pct", 0.1) / 100.0  # yuzde → oran
