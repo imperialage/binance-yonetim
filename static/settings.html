@@ -182,14 +182,14 @@ async function loadSymbol(){
 
     $('formTitle').textContent=sym+' Ayarlari';
     $('fInterval').value=s.interval||'15m';
-    $('fRsi').value=s.rsi_len||10;
-    $('fLong').value=s.long_thresh||32;
-    $('fShort').value=s.short_thresh||70;
-    $('fGap').value=s.max_gap||12;
-    $('fBuf').value=s.entry_buffer||0.1;
-    $('fTp').value=s.tp_pct||1.0;
-    $('fSl').value=s.sl_pct||0.3;
-    $('fComm').value=s.commission||0.08;
+    $('fRsi').value=s.rsi_len!=null?s.rsi_len:10;
+    $('fLong').value=s.long_thresh!=null?s.long_thresh:32;
+    $('fShort').value=s.short_thresh!=null?s.short_thresh:70;
+    $('fGap').value=s.max_gap!=null?s.max_gap:12;
+    $('fBuf').value=s.entry_buffer!=null?s.entry_buffer:0.1;
+    $('fTp').value=s.tp_pct!=null?s.tp_pct:1.0;
+    $('fSl').value=s.sl_pct!=null?s.sl_pct:0.3;
+    $('fComm').value=s.commission!=null?s.commission:0.08;
     $('fWeight').value=s.weight!=null?s.weight:0.10;
     $('fDir').value=s.allowed_directions||'BOTH';
     $('fWeekend').checked=!!s.weekend_closed;
