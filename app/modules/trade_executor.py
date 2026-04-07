@@ -289,50 +289,48 @@ async def _execute_trade_inner(
         )
         return
 
-    # ── 8. Limit order ile giriş + anında SL ──
+    # ── 8. Giriş emri + SL ──
+    use_market = bool(sym_cfg.get("market_entry", 0))
     LIMIT_TIMEOUT = 900   # 15 dakika (saniye)
 
-    # Entry buffer: sinyal fiyati zaten buffer uygulanmis, limit order tam fiyattan
-    limit_price = round_price(price, tick_size)
+    entry_price = round_price(price, tick_size)
 
     # SL fiyatını hesapla (indicator_settings'ten)
     ind_sl_pct = sym_cfg.get("sl_pct", 0.1) / 100.0  # yuzde → oran
     if side == "BUY":
-        sl_price = round_price(limit_price * (1 - ind_sl_pct), tick_size)
+        sl_price = round_price(entry_price * (1 - ind_sl_pct), tick_size)
         sl_side = "SELL"
     else:
-        sl_price = round_price(limit_price * (1 + ind_sl_pct), tick_size)
+        sl_price = round_price(entry_price * (1 + ind_sl_pct), tick_size)
         sl_side = "BUY"
 
-    # Giriş emri ver
-    order_result = await place_limit_order(symbol, side, quantity, limit_price)
-    order_id = str(order_result.get("orderId", ""))
+    # Giriş emri ver — MARKET veya LIMIT
+    if use_market:
+        order_result = await place_market_order(symbol, side, quantity)
+        order_id = str(order_result.get("orderId", ""))
+        fill_price = float(order_result.get("avgPrice", 0)) or entry_price
+        # SL'yi fill fiyatindan hesapla
+        if side == "BUY":
+            sl_price = round_price(fill_price * (1 - ind_sl_pct), tick_size)
+        else:
+            sl_price = round_price(fill_price * (1 + ind_sl_pct), tick_size)
+        log.info("market_order_placed", symbol=symbol, side=side, qty=quantity,
+                 fill_price=fill_price, order_id=order_id)
+    else:
+        order_result = await place_limit_order(symbol, side, quantity, entry_price)
+        order_id = str(order_result.get("orderId", ""))
+        fill_price = entry_price
+        log.info("limit_order_placed", symbol=symbol, side=side, signal_price=price,
+                 limit_price=entry_price, quantity=quantity, order_id=order_id, timeout=LIMIT_TIMEOUT)
 
-    log.info(
-        "limit_order_placed",
-        symbol=symbol,
-        side=side,
-        signal_price=price,
-        limit_price=limit_price,
-        quantity=quantity,
-        order_id=order_id,
-        timeout=LIMIT_TIMEOUT,
-    )
-
-    # HEMEN SL emri ver — giriş emriyle birlikte Binance'ta bekler
+    # SL emri ver
     sl_order_id = ""
     if sl_enabled:
         try:
             from app.modules.binance_client import place_stop_market_instant
             sl_result = await place_stop_market_instant(symbol, sl_side, quantity, sl_price)
             sl_order_id = str(sl_result.get("algoId", ""))
-            log.info(
-                "sl_instant_with_entry",
-                symbol=symbol,
-                sl_price=sl_price,
-                sl_side=sl_side,
-                sl_order_id=sl_order_id,
-            )
+            log.info("sl_with_entry", symbol=symbol, sl_price=sl_price, sl_side=sl_side, sl_order_id=sl_order_id)
         except Exception as e:
             log.error("sl_instant_failed", symbol=symbol, sl_price=sl_price, error=str(e))
 
@@ -342,7 +340,6 @@ async def _execute_trade_inner(
         from app.modules.ha_signal_engine import get_ha_engine
         engine = get_ha_engine(symbol) or get_engine(symbol)
         if engine:
-            # signal_id'yi event_id'den parse et (format: se-{row_id}-{ts})
             _sig_id = None
             _parts = event_id.split("-")
             if len(_parts) >= 2 and _parts[1].isdigit():
@@ -350,7 +347,7 @@ async def _execute_trade_inner(
             engine.pending_order = {
                 "order_id": order_id,
                 "side": side,
-                "limit_price": limit_price,
+                "limit_price": fill_price,
                 "quantity": quantity,
                 "event_id": event_id,
                 "signal_id": _sig_id,
@@ -371,6 +368,4 @@ async def _execute_trade_inner(
     except Exception:
         pass
 
-    # execute_trade burada BITER
-    # Fill takibi + TP koyma signal_engine.check_pending_fill() tarafindan yapilir
     return

@@ -85,6 +85,7 @@
             <div class="cb-row"><input type="checkbox" id="fSlEnabled" checked><label for="fSlEnabled">Stop Loss Aktif</label></div>
             <div class="cb-row"><input type="checkbox" id="fReverse"><label for="fReverse">Ters Sinyal</label></div>
             <div class="cb-row"><input type="checkbox" id="fHaEnabled"><label for="fHaEnabled">Heikin-Ashi Motor</label></div>
+            <div class="cb-row"><input type="checkbox" id="fMarketEntry"><label for="fMarketEntry">Market Order Giris (Limit yerine aninda doldur)</label></div>
         </div>
     </div>
 
@@ -204,6 +205,7 @@ async function loadSymbol(){
     $('fSlEnabled').checked=s.sl_enabled!==0;
     $('fReverse').checked=!!s.reverse_signal;
     $('fHaEnabled').checked=!!s.ha_enabled;
+    $('fMarketEntry').checked=!!s.market_entry;
     $('fTrailingEnabled').checked=!!s.trailing_tp_enabled;
     $('fTrailingRules').value=s.trailing_tp_rules||'40:10,70:40,90:70,99:90';
     $('fFlashPct').value=s.trailing_tp_flash_pct!=null?s.trailing_tp_flash_pct:1.0;
@@ -239,6 +241,7 @@ async function saveSettings(){
         sl_enabled:$('fSlEnabled').checked?1:0,
         reverse_signal:$('fReverse').checked?1:0,
         ha_enabled:$('fHaEnabled').checked?1:0,
+        market_entry:$('fMarketEntry').checked?1:0,
         trailing_tp_enabled:$('fTrailingEnabled').checked?1:0,
         trailing_tp_rules:$('fTrailingRules').value.trim(),
         trailing_tp_flash_pct:parseFloat($('fFlashPct').value),
@@ -260,7 +263,7 @@ function resetForm(){
     $('fWeight').value=0.10;$('fDir').value='BOTH';
     $('fWeekend').checked=false;$('fActive').checked=true;$('fListening').checked=true;
     $('fSlEnabled').checked=true;$('fReverse').checked=false;
-    $('fHaEnabled').checked=false;$('fTrailingEnabled').checked=false;
+    $('fHaEnabled').checked=false;$('fMarketEntry').checked=false;$('fTrailingEnabled').checked=false;
     $('fTrailingRules').value='40:10,70:40,90:70,99:90';$('fFlashPct').value=1.0;
 }
 

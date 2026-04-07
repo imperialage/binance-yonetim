@@ -41,6 +41,7 @@ class IndicatorSettingsBody(BaseModel):
     trailing_tp_enabled: int | None = None
     trailing_tp_rules: str | None = None
     trailing_tp_flash_pct: float | None = None
+    market_entry: int | None = None
 
 
 @router.get("/api/indicator-settings")
