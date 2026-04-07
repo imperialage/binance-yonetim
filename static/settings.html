@@ -50,38 +50,57 @@
 <div class="form-card" id="settingsForm" style="display:none">
     <div class="form-title" id="formTitle">Ayarlar</div>
 
-    <div class="form-grid">
-        <div class="fg"><label>Grafik Periyodu</label>
-            <select id="fInterval">
-                <option value="1m">1m</option><option value="5m">5m</option>
-                <option value="15m" selected>15m</option><option value="30m">30m</option>
-                <option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option>
-            </select>
+    <!-- GRUP 1: Indikator Ayarlari -->
+    <div style="margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border-secondary)">
+        <div style="font-size:11px;color:var(--accent-gold);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px">Indikator Ayarlari</div>
+        <div class="form-grid">
+            <div class="fg"><label>Grafik Periyodu</label>
+                <select id="fInterval">
+                    <option value="1m">1m</option><option value="5m">5m</option>
+                    <option value="15m" selected>15m</option><option value="30m">30m</option>
+                    <option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option>
+                </select>
+            </div>
+            <div class="fg"><label>RSI Uzunluk</label><input id="fRsi" type="number" value="10"></div>
+            <div class="fg"><label>LONG Esik (&le;)</label><input id="fLong" type="number" value="32" step="1"></div>
+            <div class="fg"><label>SHORT Esik (&ge;)</label><input id="fShort" type="number" value="70" step="1"></div>
+            <div class="fg"><label>Max Gap</label><input id="fGap" type="number" value="12"></div>
+            <div class="fg"><label>Buffer %</label><input id="fBuf" type="number" value="0.1" step="0.05"></div>
+            <div class="fg"><label>TP %</label><input id="fTp" type="number" value="1.0" step="0.1"></div>
+            <div class="fg"><label>SL %</label><input id="fSl" type="number" value="0.3" step="0.05"></div>
+            <div class="fg"><label>Komisyon %</label><input id="fComm" type="number" value="0.08" step="0.01"></div>
+            <div class="fg"><label>Bakiye Agirligi</label><input id="fWeight" type="number" value="0.10" step="0.01" min="0.01" max="1.0"></div>
+            <div class="fg"><label>Yon</label>
+                <select id="fDir">
+                    <option value="BOTH">BOTH (Cift Yon)</option>
+                    <option value="BUY">Sadece LONG</option>
+                    <option value="SELL">Sadece SHORT</option>
+                </select>
+            </div>
         </div>
-        <div class="fg"><label>RSI Uzunluk</label><input id="fRsi" type="number" value="10"></div>
-        <div class="fg"><label>LONG Esik (&le;)</label><input id="fLong" type="number" value="32" step="1"></div>
-        <div class="fg"><label>SHORT Esik (&ge;)</label><input id="fShort" type="number" value="70" step="1"></div>
-        <div class="fg"><label>Max Gap</label><input id="fGap" type="number" value="12"></div>
-        <div class="fg"><label>Buffer %</label><input id="fBuf" type="number" value="0.1" step="0.05"></div>
-        <div class="fg"><label>TP %</label><input id="fTp" type="number" value="1.0" step="0.1"></div>
-        <div class="fg"><label>SL %</label><input id="fSl" type="number" value="0.3" step="0.05"></div>
-        <div class="fg"><label>Komisyon %</label><input id="fComm" type="number" value="0.08" step="0.01"></div>
-        <div class="fg"><label>Bakiye Agirligi</label><input id="fWeight" type="number" value="0.10" step="0.01" min="0.01" max="1.0"></div>
-        <div class="fg"><label>Yon</label>
-            <select id="fDir">
-                <option value="BOTH">BOTH (Cift Yon)</option>
-                <option value="BUY">Sadece LONG</option>
-                <option value="SELL">Sadece SHORT</option>
-            </select>
+        <div style="margin-top:10px">
+            <div class="cb-row"><input type="checkbox" id="fWeekend"><label for="fWeekend">Haftasonu Kapali</label></div>
+            <div class="cb-row"><input type="checkbox" id="fActive" checked><label for="fActive">Islem Aktif</label></div>
+            <div class="cb-row"><input type="checkbox" id="fListening" checked><label for="fListening">Sinyal Dinleme</label></div>
+            <div class="cb-row"><input type="checkbox" id="fSlEnabled" checked><label for="fSlEnabled">Stop Loss Aktif</label></div>
+            <div class="cb-row"><input type="checkbox" id="fReverse"><label for="fReverse">Ters Sinyal</label></div>
+            <div class="cb-row"><input type="checkbox" id="fHaEnabled"><label for="fHaEnabled">Heikin-Ashi Motor</label></div>
         </div>
     </div>
 
-    <div style="margin-top:12px">
-        <div class="cb-row"><input type="checkbox" id="fWeekend"><label for="fWeekend">Haftasonu Kapali (Cuma 20:00 - Pazar 24:00 TR)</label></div>
-        <div class="cb-row"><input type="checkbox" id="fActive" checked><label for="fActive">Islem Aktif</label></div>
-        <div class="cb-row"><input type="checkbox" id="fListening" checked><label for="fListening">Sinyal Dinleme Aktif</label></div>
-        <div class="cb-row"><input type="checkbox" id="fSlEnabled" checked><label for="fSlEnabled">Stop Loss Aktif</label></div>
-        <div class="cb-row"><input type="checkbox" id="fReverse"><label for="fReverse">Ters Sinyal (Pozisyon Ters Cevirme)</label></div>
+    <!-- GRUP 2: Trailing TP Ayarlari -->
+    <div style="margin-bottom:16px">
+        <div style="font-size:11px;color:var(--color-long);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px">Trailing Take-Profit</div>
+        <div class="cb-row" style="margin-bottom:10px"><input type="checkbox" id="fTrailingEnabled"><label for="fTrailingEnabled">Trailing TP Aktif</label></div>
+        <div class="fg" style="margin-bottom:8px">
+            <label>Kurallar <span style="font-weight:400;color:var(--text-dim)">(zirve:kapanış — virgülle ayır)</span></label>
+            <input id="fTrailingRules" type="text" value="40:10,70:40,90:70,99:90" placeholder="40:10,70:40,90:70,99:90">
+        </div>
+        <div style="font-size:10px;color:var(--text-dim);line-height:1.6;padding:8px 10px;background:var(--bg-tertiary);border-radius:var(--radius-sm)">
+            <strong>Ornek:</strong> 40:10 → Kar TP'nin %40'ina ulasti, %10'a duserse kapat<br>
+            70:40 → Kar %70'e ulasti, %40'a duserse kapat<br>
+            99:90 → Kar %99'a ulasti, %90'a duserse kapat
+        </div>
     </div>
 
     <div class="btn-row">
@@ -97,7 +116,7 @@
     <div class="scroll-area">
         <table>
             <thead><tr>
-                <th>Sembol</th><th>TF</th><th>RSI</th><th>L&le;</th><th>S&ge;</th><th>Gap</th><th>Buf%</th><th>TP%</th><th>SL%</th><th>Agrlk</th><th>Yon</th><th>SL</th><th>Ters</th><th>Aktif</th><th>Dinle</th><th></th>
+                <th>Sembol</th><th>TF</th><th>RSI</th><th>L&le;</th><th>S&ge;</th><th>Gap</th><th>TP%</th><th>SL%</th><th>Agrlk</th><th>HA</th><th>Trail</th><th>Aktif</th><th></th>
             </tr></thead>
             <tbody id="allBody"></tbody>
         </table>
@@ -139,19 +158,16 @@ async function loadAll(){
             +'<td>'+s.long_thresh+'</td>'
             +'<td>'+s.short_thresh+'</td>'
             +'<td>'+s.max_gap+'</td>'
-            +'<td>'+s.entry_buffer+'</td>'
             +'<td class="green">'+s.tp_pct+'</td>'
             +'<td class="red">'+s.sl_pct+'</td>'
             +'<td>'+(s.weight!=null?s.weight:'0.10')+'</td>'
-            +'<td>'+(s.allowed_directions||'BOTH')+'</td>'
-            +'<td>'+(s.sl_enabled!==0?'<span class="green">On</span>':'<span class="red">Off</span>')+'</td>'
-            +'<td>'+(s.reverse_signal?'<span class="yellow">Evet</span>':'\u2014')+'</td>'
+            +'<td>'+(s.ha_enabled?'<span style="color:#A371F7">HA</span>':'\u2014')+'</td>'
+            +'<td>'+(s.trailing_tp_enabled?'<span class="green">On</span>':'\u2014')+'</td>'
             +'<td>'+(s.active?'<span class="green">Aktif</span>':'<span class="red">Pasif</span>')+'</td>'
-            +'<td>'+(s.listening?'<span class="green">Dinle</span>':'<span class="red">Kapali</span>')+'</td>'
             +'<td><button class="edit-btn" onclick="selectSym(\''+s.symbol+'\')">Duzenle</button></td>'
             +'</tr>';
     });
-    $('allBody').innerHTML=html||'<tr><td colspan="16" class="empty-state">Henuz ayar yok. Yukaridan sembol secin ve kaydedin.</td></tr>';
+    $('allBody').innerHTML=html||'<tr><td colspan="13" class="empty-state">Henuz ayar yok. Yukaridan sembol secin ve kaydedin.</td></tr>';
     $('totalCount').textContent='('+settings.length+' sembol)';
 }
 
@@ -181,6 +197,9 @@ async function loadSymbol(){
     $('fListening').checked=s.listening!==0;
     $('fSlEnabled').checked=s.sl_enabled!==0;
     $('fReverse').checked=!!s.reverse_signal;
+    $('fHaEnabled').checked=!!s.ha_enabled;
+    $('fTrailingEnabled').checked=!!s.trailing_tp_enabled;
+    $('fTrailingRules').value=s.trailing_tp_rules||'40:10,70:40,90:70,99:90';
 
     $('settingsForm').style.display='block';
     loadAll();
@@ -212,9 +231,15 @@ async function saveSettings(){
         listening:$('fListening').checked?1:0,
         sl_enabled:$('fSlEnabled').checked?1:0,
         reverse_signal:$('fReverse').checked?1:0,
+        ha_enabled:$('fHaEnabled').checked?1:0,
+        trailing_tp_enabled:$('fTrailingEnabled').checked?1:0,
+        trailing_tp_rules:$('fTrailingRules').value.trim(),
     };
+    var token=localStorage.getItem('admin_token')||'';
+    if(!token){token=prompt('Admin Token:');if(!token)return;localStorage.setItem('admin_token',token)}
     try{
-        var resp=await fetch('/api/indicator-settings/'+currentSym,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        var resp=await fetch('/api/indicator-settings/'+currentSym,{method:'PUT',headers:{'Content-Type':'application/json','X-Admin-Token':token},body:JSON.stringify(body)});
+        if(resp.status===401){localStorage.removeItem('admin_token');toast('Gecersiz token',false);return}
         if(resp.ok){toast(currentSym+' kaydedildi',true);loadAll()}
         else{toast('Hata: '+resp.statusText,false)}
     }catch(e){toast('Hata: '+e.message,false)}
@@ -227,6 +252,8 @@ function resetForm(){
     $('fWeight').value=0.10;$('fDir').value='BOTH';
     $('fWeekend').checked=false;$('fActive').checked=true;$('fListening').checked=true;
     $('fSlEnabled').checked=true;$('fReverse').checked=false;
+    $('fHaEnabled').checked=false;$('fTrailingEnabled').checked=false;
+    $('fTrailingRules').value='40:10,70:40,90:70,99:90';
 }
 
 // ── Delete ──
@@ -234,7 +261,9 @@ async function deleteSymbol(){
     if(!currentSym)return;
     if(!confirm(currentSym+' ayarlarini silmek istediginize emin misiniz?'))return;
     try{
-        await fetch('/api/indicator-settings/'+currentSym,{method:'DELETE'});
+        var tk=localStorage.getItem('admin_token')||'';
+        if(!tk){tk=prompt('Admin Token:');if(!tk)return;localStorage.setItem('admin_token',tk)}
+        await fetch('/api/indicator-settings/'+currentSym,{method:'DELETE',headers:{'X-Admin-Token':tk}});
         toast(currentSym+' silindi',true);
         currentSym='';$('symSel').value='';$('settingsForm').style.display='none';
         loadAll();
