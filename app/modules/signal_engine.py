@@ -243,6 +243,10 @@ class SignalEngine:
                         self.position_side = ""
                         if not self.pending_order:
                             self.trade_pending = False
+                    # Entry price ve qty yoksa Binance'tan al (restart/eski pozisyon)
+                    if self.has_position and self.entry_price <= 0:
+                        self.entry_price = float(p.get("entryPrice", 0))
+                        self.entry_qty = abs(amt)
                     # State degisti mi logla
                     if old_pos != self.has_position or old_side != self.position_side:
                         await log.ainfo(
