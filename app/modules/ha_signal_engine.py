@@ -483,6 +483,12 @@ async def _ha_engine_loop() -> None:
                 if signal:
                     dt_str = datetime.now(tz_ist).strftime("%Y-%m-%d %H:%M:%S")
 
+                    # A mumunu her sinyal uretiminde used_a'ya ekle (tekrar kullanilmasin)
+                    a_time = signal.get("candle_a_time")
+                    if a_time:
+                        engine.used_a.add(a_time)
+                        engine._save_used_a()
+
                     async with engine._state_lock:
                         should_trade = await engine.try_execute_signal(signal)
 
