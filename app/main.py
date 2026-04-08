@@ -97,6 +97,8 @@ app.include_router(data_collector.router, tags=["data-collector"])
 app.include_router(st_webhook.router, tags=["st-webhook"])
 app.include_router(indicator_settings.router, tags=["indicator-settings"])
 app.include_router(strategy_report.router, tags=["strategy-report"])
+from app.routers import pine_sim  # noqa: E402
+app.include_router(pine_sim.router, tags=["pine-sim"])
 
 # ── Static files & page routes ────────────────────────
 _static_dir = Path(__file__).resolve().parent.parent / "static"
@@ -164,6 +166,14 @@ async def ha_monitor_page() -> FileResponse:
 async def strategy_page() -> FileResponse:
     return FileResponse(
         str(_static_dir / "strategy.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/pine-monitor")
+async def pine_monitor_page() -> FileResponse:
+    return FileResponse(
+        str(_static_dir / "pine_monitor.html"),
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
 
