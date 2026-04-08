@@ -168,6 +168,21 @@ tr.ob-row td:nth-child(7){color:var(--color-short);font-weight:600}
 <script>
 var SYMS=['XAGUSDT','ETHUSDT','MYXUSDT','BTCUSDT','SOLUSDT','XRPUSDT','DOGEUSDT','AVAXUSDT'];
 var sym,tf,ws,prices={},lastPrice=0,simData=null,liveCandle=null,candleStartTs=0;
+var rsiState=null,rsiLen=10;
+
+// ── Live RSI — Wilder RMA (Pine Script ile birebir) ──
+function calcLiveRsi(price){
+    if(!rsiState||rsiState.avg_gain==null||rsiState.prev_close==null)return null;
+    var delta=price-rsiState.prev_close;
+    var gain=Math.max(delta,0);
+    var loss=Math.max(-delta,0);
+    var len=rsiState.rsi_len||rsiLen;
+    var ag=(rsiState.avg_gain*(len-1)+gain)/len;
+    var al=(rsiState.avg_loss*(len-1)+loss)/len;
+    if(al===0)return 100;
+    var rs=ag/al;
+    return 100-100/(1+rs);
+}
 
 function $(id){return document.getElementById(id)}
 function fmt(n,d){return n==null||isNaN(n)?'--':Number(n).toFixed(d!=null?d:4)}
@@ -400,11 +415,18 @@ function renderAll(){
         +'<div class="cr"><span class="k">Mum</span><span class="v">'+candles.length+'</span></div>'
         +'</div>';
 
+    // Live RSI state — backend'den gelen
+    rsiState=d.rsi_state||null;
+    rsiLen=p.rsi_len;
+
     // Canli mum init (son mum)
     if(candles.length>0){
         var lc=candles[candles.length-1];
         liveCandle={open:lc.open,high:lc.high,low:lc.low,close:lc.close,volume:lc.volume,rsi:lc.rsi};
         candleStartTs=lc.time;
+        // Anlik RSI'yi current close ile yeniden hesapla
+        var liveR=calcLiveRsi(liveCandle.close);
+        if(liveR!=null)liveCandle.rsi=liveR;
         renderLiveCandle();
     }
 }
@@ -453,6 +475,9 @@ function connectWS(){
                     liveCandle.high=Math.max(liveCandle.high,price);
                     liveCandle.low=Math.min(liveCandle.low,price);
                     liveCandle.close=price;
+                    // Canli RSI: Wilder RMA bir adim ileri (Pine Script gibi)
+                    var liveR=calcLiveRsi(price);
+                    if(liveR!=null)liveCandle.rsi=liveR;
                     renderLiveCandle();
                 }
             }

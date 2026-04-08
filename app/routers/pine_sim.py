@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter
 
-from app.modules.rsi_calculator import calculate_rsi
+from app.modules.rsi_calculator import calculate_rsi, calculate_rsi_with_state
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -361,6 +361,22 @@ async def pine_sim(
         sl_pct=sl_pct / 100.0,
         comm_pct=comm_pct / 100.0,
     )
+
+    # ── Live RSI state — son kapanmis mumun (n-2) sonundaki RMA ─
+    # Frontend live tick'te bu state'ten ileri sarak canli RSI hesaplar
+    # Pine Script: live bar icin state = (bar_idx - 1) sonundaki RMA
+    closes_all = [float(k[4]) for k in klines]
+    rsi_state: dict[str, Any] | None = None
+    if len(closes_all) >= rsi_len + 3:
+        # Son mumu (canli) hariç tut → kapanmis mumlar uzerinden state
+        _, _state = calculate_rsi_with_state(closes_all[:-1], rsi_len)
+        rsi_state = {
+            "avg_gain": _state["avg_gain"],
+            "avg_loss": _state["avg_loss"],
+            "prev_close": closes_all[-2],  # son kapanmis mum close'u
+            "rsi_len": rsi_len,
+        }
+    result["rsi_state"] = rsi_state
 
     result["symbol"] = sym
     result["interval"] = interval
