@@ -149,28 +149,7 @@ async def _handle_event(data: dict[str, Any]) -> None:
                             }
                             engine.on_position_closed(exit_info=exit_info)
                             await log.ainfo("signal_engine_position_closed", symbol=symbol, side=side)
-                            # Son sinyal hala gecerli mi? Hemen isleme gir
-                            if engine.last_signal and engine.last_signal_bar == engine.candle_start:
-                                sig = engine.last_signal
-                                should = await engine.try_execute_signal(sig)
-                                if should:
-                                    from app.config import settings as app_cfg
-                                    if app_cfg.trading_enabled:
-                                        from app.modules.trade_executor import execute_trade
-                                        from app.modules.binance_client import get_position_risk as _gpr3, get_usdt_balance as _gub3
-                                        import asyncio as _aio
-                                        _pf3 = _aio.ensure_future(_aio.gather(_gpr3(symbol), _gub3()))
-                                        engine.on_trade_pending()
-                                        event_id = f"se-instant-{int(time.time())}"
-                                        _aio.create_task(execute_trade(
-                                            symbol=symbol,
-                                            signal=sig["direction"],
-                                            price=sig["entry_price"],
-                                            event_id=event_id,
-                                            tf=engine.interval,
-                                            prefetch=_pf3,
-                                        ))
-                                        await log.ainfo("last_signal_executed_instant", symbol=symbol, direction=sig["direction"])
+                            # last_signal mekanizmasi kaldirildi — yeni sinyal beklenir
                     else:
                         async with engine._state_lock:
                             pos_side = "LONG" if side == "BUY" else "SHORT"

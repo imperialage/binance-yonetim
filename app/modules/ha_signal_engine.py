@@ -243,8 +243,8 @@ class HeikinAshiEngine(SignalEngine):
                             ha_close=round(ha_c, 4), real_close=round(real_c, 4),
                             rsi=round(closed_rsi, 2) if closed_rsi else None)
 
-            # Kapanan mum diverjans kontrolu (yeni B mumu — onceki mumun flag'i gecersiz)
-            if closed_rsi is not None:
+            # Kapanan mum diverjans kontrolu — SADECE pozisyon YOKKEN (Pine uyumlu)
+            if closed_rsi is not None and not self.has_position and not self.trade_pending:
                 close_signal = self._check_closed_divergence(closed)
                 if close_signal:
                     self.signal_fired_this_bar = True
@@ -266,7 +266,11 @@ class HeikinAshiEngine(SignalEngine):
         if self.signal_fired_this_bar:
             return None
 
-        # 5. HA RSI
+        # 5. Pozisyon kontrolu — Pine Script uyumlu: pozisyon varsa ARAMA
+        if self.has_position or self.trade_pending:
+            return None
+
+        # 6. HA RSI
         live_rsi = self._calc_live_rsi(self.ha_candle_close)
         if live_rsi is None:
             return None
@@ -274,7 +278,7 @@ class HeikinAshiEngine(SignalEngine):
         if len(self.closed_candles) < 1:
             return None
 
-        # 6. Diverjans (HA) — canli tick + mum kapanisi (normal motor ile ayni)
+        # 7. Diverjans (HA)
         signal = self._check_divergence(price, live_rsi)
         if signal:
             self.signal_fired_this_bar = True

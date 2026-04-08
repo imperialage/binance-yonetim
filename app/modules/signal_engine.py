@@ -515,28 +515,8 @@ class SignalEngine:
                     "realized_pnl": 0,
                 })
                 await log.ainfo("position_closed_detected", symbol=self.symbol)
-
-                # Son sinyal hala bu mumda mi? Hemen isleme gir
-                if self.last_signal and self.last_signal_bar == self.candle_start:
-                    sig = self.last_signal
-                    should = await self.try_execute_signal(sig)
-                    if should:
-                        from app.config import settings as app_cfg
-                        if app_cfg.trading_enabled:
-                            from app.modules.trade_executor import execute_trade
-                            from app.modules.binance_client import get_position_risk as _gpr2, get_usdt_balance as _gub2
-                            _pf = asyncio.ensure_future(asyncio.gather(_gpr2(self.symbol), _gub2()))
-                            self.on_trade_pending()
-                            event_id = f"se-close-{int(time.time())}"
-                            asyncio.create_task(execute_trade(
-                                symbol=self.symbol,
-                                signal=sig["direction"],
-                                price=sig["entry_price"],
-                                event_id=event_id,
-                                tf=self.interval,
-                                prefetch=_pf,
-                            ))
-                            await log.ainfo("last_signal_executed_after_close", symbol=self.symbol, direction=sig["direction"])
+                # last_signal mekanizmasi kaldirildi — Pine Script uyumlu
+                # Pozisyon kapandiginda yeni sinyal beklenir, eski sinyal tetiklenmez
 
             except Exception as e:
                 await log.awarning("check_position_closed_error", symbol=self.symbol, error=str(e))
@@ -847,8 +827,8 @@ class SignalEngine:
                 used_a=len(self.used_a),
             )
 
-            # Kapanan mumu B olarak diverjans kontrol (kapanmis mumlar arasi)
-            if closed_rsi is not None and not self.signal_fired_this_bar:
+            # Kapanan mumu B olarak diverjans kontrol — SADECE pozisyon YOKKEN (Pine uyumlu)
+            if closed_rsi is not None and not self.signal_fired_this_bar and not self.has_position and not self.trade_pending:
                 close_signal = self._check_closed_divergence(closed)
                 if close_signal:
                     self.signal_fired_this_bar = True
@@ -869,7 +849,9 @@ class SignalEngine:
         if self.signal_fired_this_bar:
             return None
 
-        # ── 4. Pozisyon kontrolu YOK — her zaman sinyal ara (Pine Script uyumlu) ──
+        # ── 4. Pozisyon kontrolu — Pine Script uyumlu: pozisyon varsa sinyal ARAMA ──
+        if self.has_position or self.trade_pending:
+            return None
 
         # ── 5. Anlik RSI hesapla ──
         live_rsi = self._calc_live_rsi(price)
