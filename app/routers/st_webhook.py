@@ -236,24 +236,51 @@ async def st_webhook(request: Request) -> JSONResponse:
         dt=dt_str,
         symbol=symbol,
         direction=direction,
-        band="N/A",
+        band=tf,
         price=price,
-        entered=True,
+        entered=settings.trading_enabled,
+        source="webhook",
     )
 
-    # ── 7. Webhook artik islem ACMIYOR — sadece loglama ──
-    # Islem acma tamamen signal_engine.py tarafindan yapiliyor.
-    # Webhook sinyalleri karsilastirma icin logda kaliyor.
+    # ── 7. Trade execution — webhook sinyali → trade_executor ──
+    # Motor (signal_engine / ha_signal_engine) artik islem ACMIYOR.
+    # Tum trade'ler sadece TradingView webhook'tan acilir.
+    # SL emri trade_executor icinde entry ile birlikte instant olarak Binance'a yerlestirilir.
     trade_dispatched = False
-    log.info(
-        "st_webhook_log_only",
-        symbol=symbol,
-        direction=direction,
-        price=price,
-        tf=tf,
-        indicator=indicator,
-        message="Webhook signal logged, trade execution handled by signal_engine",
-    )
+    if settings.trading_enabled:
+        import asyncio as _asyncio
+        from app.modules.trade_executor import execute_trade
+        from app.modules.binance_client import get_position_risk as _gpr, get_usdt_balance as _gub
+        from app.modules.signal_engine import get_engine as _get_engine
+        from app.modules.ha_signal_engine import get_ha_engine as _get_ha_engine
+
+        # Motoru trade_pending durumuna al — fill takibi icin gerekli
+        eng = _get_ha_engine(symbol) or _get_engine(symbol)
+        if eng:
+            eng.on_trade_pending()
+
+        # Pre-fetch: position + balance paralel cek (execute_trade beklemeden)
+        _prefetch = _asyncio.ensure_future(_asyncio.gather(_gpr(symbol), _gub()))
+        event_id = f"tv-{row_id}-{int(time.time())}"
+        _asyncio.create_task(execute_trade(
+            symbol=symbol,
+            signal=direction,
+            price=price,
+            event_id=event_id,
+            tf=tf,
+            prefetch=_prefetch,
+        ))
+        trade_dispatched = True
+        log.info(
+            "st_webhook_trade_dispatched",
+            symbol=symbol, direction=direction, price=price, tf=tf,
+            event_id=event_id, indicator=indicator,
+        )
+    else:
+        log.info(
+            "st_webhook_trading_disabled",
+            symbol=symbol, direction=direction, price=price, tf=tf,
+        )
 
     return JSONResponse(content={
         "status": "accepted",

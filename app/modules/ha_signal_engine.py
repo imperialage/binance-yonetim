@@ -343,7 +343,6 @@ async def _ha_engine_loop() -> None:
     """HA engine ana dongusu — normal engine_loop ile ayni yapida."""
     from datetime import datetime, timezone, timedelta
     from app.modules.st_signal_logger import log_st_signal
-    from app.modules.trade_executor import execute_trade
 
     tz_ist = timezone(timedelta(hours=3))
 
@@ -433,45 +432,27 @@ async def _ha_engine_loop() -> None:
                     # A mumunu her sinyal uretiminde used_a'ya ekle (tekrar kullanilmasin)
                     a_time = signal.get("candle_a_time")
                     if a_time:
-                        engine.used_a.add(a_time)
-                        engine._save_used_a()
-
-                    async with engine._state_lock:
-                        should_trade = await engine.try_execute_signal(signal)
+                        async with engine._state_lock:
+                            engine.used_a.add(a_time)
+                            engine._save_used_a()
 
                     await log.ainfo("ha_signal", symbol=sym,
                                     direction=signal["direction"], entry_price=signal["entry_price"],
                                     rsi_a=signal["rsi_a"], rsi_b=signal["rsi_b"],
-                                    gap=signal["gap"], traded=should_trade)
+                                    gap=signal["gap"], mode="bypass")
 
-                    skip_reason = None
-                    if not should_trade:
-                        if engine.has_position:
-                            skip_reason = "pozisyon_acik"
-                        elif engine.trade_pending:
-                            skip_reason = "emir_bekliyor"
-
-                    row_id = await log_st_signal(
+                    await log_st_signal(
                         dt=dt_str, symbol=sym, direction=signal["direction"],
                         band=engine.interval, price=signal["entry_price"],
-                        entered=should_trade, source="ha_server",
+                        entered=False, source="ha_server",
                         rsi_a=signal["rsi_a"], rsi_b=signal["rsi_b"],
                         gap=signal["gap"], candle_a_time=signal.get("candle_a_time"),
-                        skip_reason=skip_reason,
+                        skip_reason="motor_bypass",
                     )
 
-                    if should_trade:
-                        from app.config import settings as app_settings
-                        if app_settings.trading_enabled:
-                            from app.modules.binance_client import get_position_risk as _gpr, get_usdt_balance as _gub
-                            _pf = asyncio.ensure_future(asyncio.gather(_gpr(sym), _gub()))
-                            engine.on_trade_pending()
-                            event_id = f"ha-{row_id}-{int(time.time())}"
-                            asyncio.create_task(execute_trade(
-                                symbol=sym, signal=signal["direction"],
-                                price=signal["entry_price"], event_id=event_id,
-                                tf=engine.interval, prefetch=_pf,
-                            ))
+                    # MOTOR ISLEM ACMIYOR — sadece sinyal log'u + analiz icin
+                    # Tum trade acma TradingView webhook (st_webhook.py) uzerinden
+                    # SL/TP placement, fill takibi, pozisyon yonetimi yine motorda
 
     except asyncio.CancelledError:
         await log.ainfo("ha_engine_loop_stopped")
