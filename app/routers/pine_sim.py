@@ -14,9 +14,10 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from app.modules.rsi_calculator import calculate_rsi, calculate_rsi_with_state
+from app.modules.pine_live_store import insert_live_signal, query_live_signals
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -392,3 +393,48 @@ async def pine_sim(
         "bars": bars,
     }
     return result
+
+
+# ── Canli sinyal kayit endpoint'leri ─────────────────
+
+
+@router.post("/api/pine-live-signal")
+async def post_pine_live_signal(request: Request) -> dict:
+    """Frontend pine_monitor.html'in canli mum tick'lerinden urettigi sinyali kaydet.
+
+    Body (JSON):
+    {
+        "symbol": "MYXUSDT", "interval": "5m", "direction": "BUY",
+        "entry_price": 0.2456, "tp_price": 0.2483, "sl_price": 0.2447,
+        "rsi_a": 28.5, "rsi_b": 32.1, "gap": 5,
+        "a_time": 1775654700, "bar_time": 1775658000, "tick_price": 0.2455,
+        "rsi_len": 10, "long_thresh": 32, "short_thresh": 70, "max_gap": 12,
+        "entry_buffer": 0.1, "tp_pct": 1.1, "sl_pct": 0.35
+    }
+
+    UNIQUE constraint: ayni (symbol, interval, bar_time, direction) bir kez kaydedilir.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return {"status": "error", "detail": "Invalid JSON"}
+
+    if not body.get("symbol") or not body.get("direction") or not body.get("entry_price"):
+        return {"status": "error", "detail": "Missing required fields"}
+
+    if not body.get("created_at"):
+        body["created_at"] = datetime.now(_TZ_IST).strftime("%Y-%m-%d %H:%M:%S")
+
+    row_id = await insert_live_signal(body)
+    return {"status": "ok", "id": row_id, "created_at": body["created_at"]}
+
+
+@router.get("/api/pine-live-signals")
+async def get_pine_live_signals(
+    symbol: str | None = None,
+    limit: int = 200,
+) -> dict:
+    """Kayitli canli sinyalleri dondur. Sembol filtresi opsiyonel."""
+    limit = max(1, min(limit, 1000))
+    rows = await query_live_signals(symbol=symbol, limit=limit)
+    return {"signals": rows, "count": len(rows)}

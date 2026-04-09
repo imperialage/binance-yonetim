@@ -146,8 +146,35 @@ tr.ob-row td:nth-child(7){color:var(--color-short);font-weight:600}
 <tbody id="candleBody"></tbody>
 </table></div>
 
-<!-- Sinyaller Tablosu -->
-<div class="section-title">Sinyaller <span class="cnt" id="sigCnt">0</span></div>
+<!-- CANLI SINYALLER (tum sembollerden, frontend live tick) -->
+<div class="section-title" style="color:#F0B90B">⚡ Canlı Sinyaller (Tüm Semboller) <span class="cnt" id="liveSigCnt">0</span> <span style="color:#6e7681;font-size:10px;margin-left:8px">— Pine Script live tick davranışı, kalıcı kayıt</span></div>
+<div class="filter-bar" style="margin-bottom:8px">
+    <label>Sembol Filtresi:</label>
+    <select id="liveSigFilter" style="background:var(--bg-input);border:1px solid var(--border-secondary);color:var(--text-primary);padding:4px 8px;border-radius:4px;font-size:11px"><option value="">Hepsi</option></select>
+    <button class="hbtn" onclick="reloadLiveSignals()">Yenile</button>
+    <button class="hbtn hbtn-sec" onclick="clearLocalLiveSignals()">Local Temizle</button>
+    <span style="color:#6e7681;font-size:10px;margin-left:auto" id="liveSigStatus">--</span>
+</div>
+<div class="tbl-wrap"><table>
+<thead><tr>
+    <th>Zaman</th>
+    <th>Sembol</th>
+    <th>TF</th>
+    <th>Yön</th>
+    <th>Tick Fiyatı</th>
+    <th>Giriş</th>
+    <th>TP</th>
+    <th>SL</th>
+    <th>RSI A→B</th>
+    <th>Gap</th>
+    <th>A Mumu</th>
+    <th>Bar Zamanı</th>
+</tr></thead>
+<tbody id="liveSigBody"></tbody>
+</table></div>
+
+<!-- Sinyaller Tablosu (Backtest — geçmiş sim) -->
+<div class="section-title">Backtest Sinyaller (Sim) <span class="cnt" id="sigCnt">0</span></div>
 <div class="tbl-wrap"><table>
 <thead><tr>
     <th>Tarih</th>
@@ -167,8 +194,22 @@ tr.ob-row td:nth-child(7){color:var(--color-short);font-weight:600}
 
 <script>
 var SYMS=['XAGUSDT','ETHUSDT','MYXUSDT','BTCUSDT','SOLUSDT','XRPUSDT','DOGEUSDT','AVAXUSDT'];
+var TF_SEC={'1m':60,'5m':300,'15m':900,'30m':1800,'1h':3600,'4h':14400,'1d':86400};
 var sym,tf,ws,prices={},lastPrice=0,simData=null,liveCandle=null,candleStartTs=0;
 var rsiState=null,rsiLen=10;
+
+// ── MULTI-SYMBOL STATE — tum semboller arka planda canli takip ──
+// symStates[sym] = {
+//   closedCandles: [{time,open,high,low,close,rsi}, ...],
+//   liveCandle: {time,open,high,low,close},
+//   rsiState: {avg_gain, avg_loss, prev_close, rsi_len},
+//   params: {rsi_len, long_thresh, ...},
+//   usedA: Set,                  // bar_time'ları
+//   signalFiredThisBar: bool,
+//   ready: bool,                  // backend'den ilk veri geldi mi
+// }
+var symStates={};
+var liveSignals=[];  // canli sinyal listesi (frontend cache)
 
 // ── Live RSI — Wilder RMA (Pine Script ile birebir) ──
 function calcLiveRsi(price){
@@ -179,6 +220,20 @@ function calcLiveRsi(price){
     var len=rsiState.rsi_len||rsiLen;
     var ag=(rsiState.avg_gain*(len-1)+gain)/len;
     var al=(rsiState.avg_loss*(len-1)+loss)/len;
+    if(al===0)return 100;
+    var rs=ag/al;
+    return 100-100/(1+rs);
+}
+
+// Genelleştirilmiş live RSI: state nesnesi ve fiyat alır
+function calcLiveRsiFor(state,price){
+    if(!state||state.avg_gain==null||state.prev_close==null)return null;
+    var delta=price-state.prev_close;
+    var gain=Math.max(delta,0);
+    var loss=Math.max(-delta,0);
+    var len=state.rsi_len||10;
+    var ag=(state.avg_gain*(len-1)+gain)/len;
+    var al=(state.avg_loss*(len-1)+loss)/len;
     if(al===0)return 100;
     var rs=ag/al;
     return 100-100/(1+rs);
@@ -260,7 +315,7 @@ function initUI(){
     $('tfSel').onchange=function(){tf=this.value;saveState();loadData()};
 }
 
-// ── Data load ──
+// ── Data load — secili sembol icin (backtest tablosu) ──
 async function loadData(){
     var p=readParamsFromUI();
     var u='/api/pine-sim?symbol='+sym+'&interval='+tf
@@ -282,11 +337,277 @@ async function loadData(){
             $('candleBody').innerHTML='<tr><td colspan="9" style="text-align:center;color:#F6465D;padding:20px">'+simData.error+'</td></tr>';
             return;
         }
+        // State'i de doldur (canli takip icin)
+        buildSymStateFromSim(sym,simData,p);
         renderAll();
         $('loadStatus').textContent='Guncellendi: '+new Date().toLocaleTimeString();
     }catch(e){
         $('candleBody').innerHTML='<tr><td colspan="9" style="text-align:center;color:#F6465D;padding:20px">Hata: '+e.message+'</td></tr>';
     }
+}
+
+// ── Bir sembol icin state hazirla (sim verisinden) ──
+function buildSymStateFromSim(s,d,p){
+    var candles=d.candles||[];
+    if(candles.length<2)return;
+    // Son mum = canli (Binance acik mum), oncekiler kapanmis
+    var live=candles[candles.length-1];
+    var closed=candles.slice(0,-1);
+    // usedA: sim icindeki entry'leri kullanilmis say
+    var usedA=new Set();
+    (d.signals||[]).forEach(function(sig){
+        if(sig.a_time)usedA.add(sig.a_time);
+    });
+    symStates[s]={
+        closedCandles:closed,
+        liveCandle:{
+            time:live.time,
+            open:live.open,
+            high:live.high,
+            low:live.low,
+            close:live.close,
+            volume:live.volume||0,
+        },
+        rsiState:d.rsi_state,
+        params:p,
+        usedA:usedA,
+        signalFiredThisBar:false,
+        ready:true,
+    };
+}
+
+// ── Tum sembolleri arka planda baslat ──
+async function initAllSymbols(){
+    var jobs=SYMS.map(async function(s){
+        var p=getSymParams(s);
+        var u='/api/pine-sim?symbol='+s+'&interval='+tf
+            +'&rsi_len='+p.rsi_len
+            +'&long_thresh='+p.long_thresh
+            +'&short_thresh='+p.short_thresh
+            +'&max_gap='+p.max_gap
+            +'&entry_buffer_pct='+p.entry_buffer
+            +'&tp_pct='+p.tp_pct
+            +'&sl_pct='+p.sl_pct
+            +'&comm_pct='+p.comm_pct
+            +'&bars='+Math.min(p.bars,300);
+        try{
+            var r=await fetch(u);
+            var d=await r.json();
+            if(!d.error)buildSymStateFromSim(s,d,p);
+        }catch(e){console.warn('initSym '+s+' err',e)}
+    });
+    await Promise.all(jobs);
+    populateLiveSigFilter();
+}
+
+// ── Yeni mum başladı: state'i ileri sar (Wilder RMA + closed_candles) ──
+function advanceSymCandle(s,newBarStart,price){
+    var st=symStates[s];if(!st||!st.ready)return;
+    // Eski live mumu kapanmis olarak isle
+    var lc=st.liveCandle;
+    if(!lc)return;
+    // RSI state ileri sar (closed mum close uzerinden)
+    var len=(st.params.rsi_len)||10;
+    var rs=st.rsiState||{};
+    if(rs.avg_gain!=null&&rs.prev_close!=null){
+        var delta=lc.close-rs.prev_close;
+        var gain=Math.max(delta,0);
+        var loss=Math.max(-delta,0);
+        var newAg=(rs.avg_gain*(len-1)+gain)/len;
+        var newAl=(rs.avg_loss*(len-1)+loss)/len;
+        var rsiVal=newAl===0?100:100-100/(1+newAg/newAl);
+        // Kapanan mumu listeye ekle
+        st.closedCandles.push({
+            time:lc.time,open:lc.open,high:lc.high,low:lc.low,close:lc.close,volume:lc.volume||0,rsi:rsiVal
+        });
+        if(st.closedCandles.length>300)st.closedCandles.shift();
+        // State'i ileri sar
+        st.rsiState={
+            avg_gain:newAg,
+            avg_loss:newAl,
+            prev_close:lc.close,
+            rsi_len:len,
+        };
+    }
+    // Yeni live mum
+    st.liveCandle={
+        time:newBarStart,open:price,high:price,low:price,close:price,volume:0,
+    };
+    st.signalFiredThisBar=false;
+}
+
+// ── Pine Script Hidden RSI Divergence — live tick check (per symbol) ──
+function checkLiveDivergence(s){
+    var st=symStates[s];
+    if(!st||!st.ready||st.signalFiredThisBar)return null;
+    if(!st.closedCandles||st.closedCandles.length<1)return null;
+    var live=st.liveCandle;
+    if(!live)return null;
+    var liveRsi=calcLiveRsiFor(st.rsiState,live.close);
+    if(liveRsi==null)return null;
+    var p=st.params;
+    var n=st.closedCandles.length;
+    var maxGap=Math.min(p.max_gap,n);
+    var buf=p.entry_buffer/100;
+    // SHORT (Pine: once SHORT)
+    for(var i=1;i<=maxGap;i++){
+        var ai=n-i;
+        if(ai<0)continue;
+        var a=st.closedCandles[ai];
+        if(!a||a.rsi==null)continue;
+        if(st.usedA.has(a.time))continue;
+        if(a.rsi>=p.short_thresh && live.high>a.high && liveRsi<a.rsi){
+            return {
+                direction:'SELL',
+                entry_price:live.high*(1-buf),
+                rsi_a:Math.round(a.rsi*100)/100,
+                rsi_b:Math.round(liveRsi*100)/100,
+                gap:i,
+                a_time:a.time,
+                a_high:a.high,
+                bar_time:live.time,
+            };
+        }
+    }
+    // LONG
+    for(var j=1;j<=maxGap;j++){
+        var ai2=n-j;
+        if(ai2<0)continue;
+        var a2=st.closedCandles[ai2];
+        if(!a2||a2.rsi==null)continue;
+        if(st.usedA.has(a2.time))continue;
+        if(a2.rsi<=p.long_thresh && live.low<a2.low && liveRsi>a2.rsi){
+            return {
+                direction:'BUY',
+                entry_price:live.low*(1+buf),
+                rsi_a:Math.round(a2.rsi*100)/100,
+                rsi_b:Math.round(liveRsi*100)/100,
+                gap:j,
+                a_time:a2.time,
+                a_low:a2.low,
+                bar_time:live.time,
+            };
+        }
+    }
+    return null;
+}
+
+// ── Canli sinyal yakalandi: backend'e gonder + local cache ──
+async function captureLiveSignal(s,sig){
+    var st=symStates[s];if(!st)return;
+    var p=st.params;
+    var tpPrice=sig.direction==='BUY'?sig.entry_price*(1+p.tp_pct/100):sig.entry_price*(1-p.tp_pct/100);
+    var slPrice=sig.direction==='BUY'?sig.entry_price*(1-p.sl_pct/100):sig.entry_price*(1+p.sl_pct/100);
+    var nowTs=Math.floor(Date.now()/1000);
+    var dt=new Date().toLocaleString('tr-TR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    var record={
+        created_at:new Date().toISOString().slice(0,19).replace('T',' '),
+        symbol:s,
+        interval:tf,
+        direction:sig.direction,
+        entry_price:sig.entry_price,
+        tp_price:tpPrice,
+        sl_price:slPrice,
+        rsi_a:sig.rsi_a,
+        rsi_b:sig.rsi_b,
+        gap:sig.gap,
+        a_time:sig.a_time,
+        bar_time:sig.bar_time,
+        tick_price:st.liveCandle?st.liveCandle.close:null,
+        rsi_len:p.rsi_len,
+        long_thresh:p.long_thresh,
+        short_thresh:p.short_thresh,
+        max_gap:p.max_gap,
+        entry_buffer:p.entry_buffer,
+        tp_pct:p.tp_pct,
+        sl_pct:p.sl_pct,
+    };
+    // Backend kaydet (kalici)
+    try{
+        await fetch('/api/pine-live-signal',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify(record),
+        });
+    }catch(e){console.warn('live signal post err',e)}
+    // Local cache + UI
+    liveSignals.unshift(record);
+    if(liveSignals.length>500)liveSignals.length=500;
+    saveLocalLiveSignals();
+    renderLiveSignals();
+}
+
+// ── Local cache (LocalStorage) ──
+function saveLocalLiveSignals(){
+    try{localStorage.setItem('pine_mon_live_sigs',JSON.stringify(liveSignals.slice(0,500)))}catch(e){}
+}
+function loadLocalLiveSignals(){
+    try{
+        var s=localStorage.getItem('pine_mon_live_sigs');
+        if(s)liveSignals=JSON.parse(s)||[];
+    }catch(e){liveSignals=[]}
+}
+function clearLocalLiveSignals(){
+    if(!confirm('Local canli sinyal cache temizlensin mi? (Backend DB silinmez)'))return;
+    liveSignals=[];
+    saveLocalLiveSignals();
+    renderLiveSignals();
+}
+
+// ── Backend'den canli sinyal cek (sayfa acildiginda) ──
+async function reloadLiveSignals(){
+    try{
+        var f=$('liveSigFilter').value;
+        var u='/api/pine-live-signals?limit=300'+(f?'&symbol='+f:'');
+        var r=await fetch(u);
+        var d=await r.json();
+        if(d.signals){
+            liveSignals=d.signals;
+            saveLocalLiveSignals();
+            renderLiveSignals();
+            $('liveSigStatus').textContent='Backend: '+d.count+' kayıt | '+new Date().toLocaleTimeString();
+        }
+    }catch(e){
+        $('liveSigStatus').textContent='Hata: '+e.message;
+    }
+}
+
+function populateLiveSigFilter(){
+    var sel=$('liveSigFilter');
+    var current=sel.value;
+    var h='<option value="">Hepsi</option>';
+    SYMS.forEach(function(s){h+='<option value="'+s+'"'+(s===current?' selected':'')+'>'+s.replace('USDT','')+'</option>'});
+    sel.innerHTML=h;
+}
+
+function renderLiveSignals(){
+    var f=$('liveSigFilter').value;
+    var rows=liveSignals.filter(function(r){return !f||r.symbol===f});
+    var html='';
+    rows.slice(0,200).forEach(function(r){
+        var dirCls=r.direction==='BUY'?'b-buy':'b-sell';
+        var dirIcon=r.direction==='BUY'?'▲':'▼';
+        var pp=dec(r.entry_price);
+        var dt=r.created_at||'';
+        var aDate=r.a_time?new Date(r.a_time*1000).toLocaleString('tr-TR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+        var bDate=r.bar_time?new Date(r.bar_time*1000).toLocaleString('tr-TR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+        html+='<tr>'
+            +'<td style="color:var(--text-dim);font-size:10px">'+dt+'</td>'
+            +'<td><strong>'+r.symbol.replace('USDT','')+'</strong></td>'
+            +'<td style="color:#F0B90B;font-size:10px">'+(r.interval||'')+'</td>'
+            +'<td><span class="badge '+dirCls+'">'+dirIcon+' '+r.direction+'</span></td>'
+            +'<td class="yellow">'+fmt(r.tick_price,pp)+'</td>'
+            +'<td class="yellow">'+fmt(r.entry_price,pp)+'</td>'
+            +'<td class="green">'+fmt(r.tp_price,pp)+'</td>'
+            +'<td class="red">'+fmt(r.sl_price,pp)+'</td>'
+            +'<td class="purple">'+fmt(r.rsi_a,1)+'→'+fmt(r.rsi_b,1)+'</td>'
+            +'<td>'+(r.gap||'')+'</td>'
+            +'<td style="color:var(--text-dim);font-size:10px">'+aDate+'</td>'
+            +'<td style="color:var(--text-dim);font-size:10px">'+bDate+'</td>'
+            +'</tr>';
+    });
+    $('liveSigBody').innerHTML=html||'<tr><td colspan="12" style="text-align:center;color:#6e7681;padding:20px">Henüz canlı sinyal yok</td></tr>';
+    $('liveSigCnt').textContent=rows.length;
 }
 
 // ── Render ──
@@ -454,7 +775,31 @@ function tickCandleTimer(){
     $('candleTimer').textContent=m+':'+(s<10?'0':'')+s;
 }
 
-// ── WebSocket ──
+// ── Tum semboller icin tick handler — yeni mum + canli divergence ──
+function processTickForSymbol(s,price){
+    var st=symStates[s];
+    if(!st||!st.ready||!st.liveCandle)return;
+    var ivSec=TF_SEC[tf]||300;
+    var now=Math.floor(Date.now()/1000);
+    var expectedBarStart=Math.floor(now/ivSec)*ivSec;
+    // Yeni mum başladı mı? (2sn buffer — clock skew için)
+    if(expectedBarStart>st.liveCandle.time && now-expectedBarStart>2){
+        advanceSymCandle(s,expectedBarStart,price);
+    }
+    // Live mum güncelle
+    st.liveCandle.high=Math.max(st.liveCandle.high,price);
+    st.liveCandle.low=Math.min(st.liveCandle.low,price);
+    st.liveCandle.close=price;
+    // Live divergence check
+    var sig=checkLiveDivergence(s);
+    if(sig){
+        st.signalFiredThisBar=true;
+        st.usedA.add(sig.a_time);
+        captureLiveSignal(s,sig);
+    }
+}
+
+// ── WebSocket — TUM semboller icin tick isle ──
 function connectWS(){
     var p=location.protocol==='https:'?'wss:':'ws:';
     ws=new WebSocket(p+'//'+location.host+'/ws/prices');
@@ -462,6 +807,13 @@ function connectWS(){
     ws.onmessage=function(e){
         try{
             prices=JSON.parse(e.data);
+            // Tum semboller icin tick isle
+            for(var k in prices){
+                var pf=parseFloat(prices[k]);
+                if(isNaN(pf))continue;
+                processTickForSymbol(k,pf);
+            }
+            // Secili sembol UI guncellemesi
             var v=prices[sym];
             if(v!=null){
                 var price=parseFloat(v);
@@ -475,13 +827,12 @@ function connectWS(){
                     liveCandle.high=Math.max(liveCandle.high,price);
                     liveCandle.low=Math.min(liveCandle.low,price);
                     liveCandle.close=price;
-                    // Canli RSI: Wilder RMA bir adim ileri (Pine Script gibi)
                     var liveR=calcLiveRsi(price);
                     if(liveR!=null)liveCandle.rsi=liveR;
                     renderLiveCandle();
                 }
             }
-        }catch(x){}
+        }catch(x){console.warn('ws msg err',x)}
     };
     ws.onclose=function(){$('ld').classList.remove('on');setTimeout(connectWS,3000)};
     ws.onerror=function(){ws.close()};
@@ -492,10 +843,18 @@ sym='MYXUSDT';tf='5m';
 loadState();
 initUI();
 loadParamsToUI();
+loadLocalLiveSignals();
+populateLiveSigFilter();
+$('liveSigFilter').onchange=renderLiveSignals;
+renderLiveSignals();
 loadData();
+initAllSymbols();      // Tum semboller arka planda
+reloadLiveSignals();   // Backend'den canli sinyalleri çek
 connectWS();
 setInterval(tickCandleTimer,1000);
-setInterval(loadData,60000); // 1 dakikada bir yenile
+setInterval(loadData,60000);            // Secili sembol full refresh 60sn
+setInterval(initAllSymbols,300000);     // Tum semboller drift fix 5dk
+setInterval(reloadLiveSignals,120000);  // Backend canli sinyalleri 2dk
 </script>
 </body>
 </html>

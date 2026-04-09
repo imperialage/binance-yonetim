@@ -27,6 +27,7 @@ from app.modules.data_collector import start_default_collections, stop_all_colle
 from app.modules.st_signal_logger import init_st_signal_db, close_st_signal_db
 from app.modules.st_stats_updater import start_st_stats_updater, stop_st_stats_updater
 from app.modules.indicator_settings_store import init_indicator_settings_db, close_indicator_settings_db
+from app.modules.pine_live_store import init_pine_live_db, close_pine_live_db
 from app.modules.order_stream import start_order_stream, stop_order_stream
 from app.modules.signal_engine import start_signal_engines, stop_signal_engines
 from app.routers import admin, backtest, chart, data_collector, events, latest, status, webhook, ws
@@ -48,6 +49,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await init_candle_db()
     await init_st_signal_db()
     await init_indicator_settings_db()
+    await init_pine_live_db()
     start_scheduler()
     start_st_stats_updater()
     start_price_stream()
@@ -69,6 +71,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await stop_scheduler()
     await close_binance()
     await close_redis()
+    await close_pine_live_db()
     await close_indicator_settings_db()
     await close_st_signal_db()
     await close_candle_db()

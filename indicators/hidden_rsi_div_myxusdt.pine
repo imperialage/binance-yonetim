@@ -1,0 +1,294 @@
+//@version=6
+indicator("Hidden RSI Divergence Visual myxusdt", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ── PARAMETRELER ──
+rsiLen       = input.int(10, "RSI Uzunlugu")
+longThresh   = input.float(32, "LONG Esik (RSI <=)", minval=1, step=0.5)
+shortThresh  = input.float(70, "SHORT Esik (RSI >=)", minval=1, step=0.5)
+maxGap       = input.int(12, "Max Mum Arasi")
+entryBuffer  = input.float(0.1, "Giris Buffer %", minval=0.0, step=0.01) / 100
+tpPct        = input.float(1.1, "TP %", minval=0.01, step=0.01) / 100
+slPct        = input.float(0.35, "SL %", minval=0.01, step=0.01) / 100
+commPct      = input.float(0.08, "Komisyon %", minval=0.0, step=0.01) / 100
+initialCap   = input.float(200000, "Sermaye $")
+showA        = input.bool(true, "Mum A")
+showB        = input.bool(true, "Mum B")
+showLines    = input.bool(true, "Cizgiler")
+forceClose   = input.bool(false, "Acik Pozisyonu Kapat")
+
+grpDate      = "Tarih Araligi"
+useDateFilter = input.bool(true, "Tarih Filtresi", group=grpDate)
+dateStart    = input.time(timestamp("2026-01-01 00:00"), "Baslangic", group=grpDate)
+dateEnd      = input.time(timestamp("2026-12-31 23:59"), "Bitis", group=grpDate)
+
+rsi = ta.rsi(close, rsiLen)
+bool inDateRange = not useDateFilter or (time >= dateStart and time <= dateEnd)
+
+var int state = 0
+var float entry = 0.0
+var float tp = 0.0
+var float sl = 0.0
+var int entryBarIdx = 0
+var int entryTime = 0
+
+var int nTrades = 0
+var int nWin = 0
+var int nLoss = 0
+var int nTP = 0
+var int nSL = 0
+var int nRev = 0
+var float sumPnl = 0.0
+var float sumWin = 0.0
+var float sumLoss = 0.0
+var float peak = 0.0
+var float maxDD = 0.0
+var int firstTradeTime = 0
+
+var array<int> usedA = array.new<int>(0)
+checkUsed(idx) =>
+    r = false
+    if array.size(usedA) > 0
+        for j = 0 to array.size(usedA) - 1
+            if array.get(usedA, j) == idx
+                r := true
+                break
+    r
+
+if useDateFilter and time < dateStart
+    state := 0
+    firstTradeTime := 0
+    nTrades := 0
+    nWin := 0
+    nLoss := 0
+    nTP := 0
+    nSL := 0
+    nRev := 0
+    sumPnl := 0.0
+    sumWin := 0.0
+    sumLoss := 0.0
+    peak := 0.0
+    maxDD := 0.0
+    if array.size(usedA) > 0
+        array.clear(usedA)
+
+float eq = initialCap + sumPnl
+bool didClose = false
+
+// Manuel kapatma — sadece son barda calisir, acik pozisyon varsa kapatir
+if forceClose and barstate.islast and state != 0
+    state := 0
+    didClose := true
+
+if state == 1 and bar_index > entryBarIdx and inDateRange
+    if low <= sl
+        float pct = (sl - entry) / entry * 100 - commPct * 100
+        float dol = eq * pct / 100
+        sumPnl += dol
+        nTrades += 1
+        nSL += 1
+        nLoss += 1
+        sumLoss += dol
+        label.new(bar_index, sl, "✗SL " + str.tostring(sl, format.mintick) + " (" + str.tostring(pct, "#.#") + "%)\n" + str.format("{0,date,dd.MM HH:mm}", entryTime) + "→" + str.format("{0,date,dd.MM HH:mm}", time), color=color.new(#F6465D, 0), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+        if showLines
+            line.new(entryBarIdx, entry, bar_index, entry, color=color.new(#F0B90B, 30), width=1)
+            line.new(entryBarIdx, tp, bar_index, tp, color=color.new(#0ECB81, 40), width=1, style=line.style_dotted)
+            line.new(entryBarIdx, sl, bar_index, sl, color=color.new(#F6465D, 40), width=1, style=line.style_dotted)
+        state := 0
+        didClose := true
+    else if high >= tp
+        float pct = (tp - entry) / entry * 100 - commPct * 100
+        float dol = eq * pct / 100
+        sumPnl += dol
+        nTrades += 1
+        nTP += 1
+        nWin += 1
+        sumWin += dol
+        label.new(bar_index, tp, "✓TP " + str.tostring(tp, format.mintick) + " (+" + str.tostring(pct, "#.#") + "%)\n" + str.format("{0,date,dd.MM HH:mm}", entryTime) + "→" + str.format("{0,date,dd.MM HH:mm}", time), color=color.new(#0ECB81, 0), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+        if showLines
+            line.new(entryBarIdx, entry, bar_index, entry, color=color.new(#F0B90B, 30), width=1)
+            line.new(entryBarIdx, tp, bar_index, tp, color=color.new(#0ECB81, 40), width=1, style=line.style_dotted)
+            line.new(entryBarIdx, sl, bar_index, sl, color=color.new(#F6465D, 40), width=1, style=line.style_dotted)
+        state := 0
+        didClose := true
+
+else if state == -1 and bar_index > entryBarIdx and inDateRange
+    if high >= sl
+        float pct = (entry - sl) / entry * 100 - commPct * 100
+        float dol = eq * pct / 100
+        sumPnl += dol
+        nTrades += 1
+        nSL += 1
+        nLoss += 1
+        sumLoss += dol
+        label.new(bar_index, sl, "✗SL " + str.tostring(sl, format.mintick) + " (" + str.tostring(pct, "#.#") + "%)\n" + str.format("{0,date,dd.MM HH:mm}", entryTime) + "→" + str.format("{0,date,dd.MM HH:mm}", time), color=color.new(#F6465D, 0), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+        if showLines
+            line.new(entryBarIdx, entry, bar_index, entry, color=color.new(#F0B90B, 30), width=1)
+            line.new(entryBarIdx, tp, bar_index, tp, color=color.new(#0ECB81, 40), width=1, style=line.style_dotted)
+            line.new(entryBarIdx, sl, bar_index, sl, color=color.new(#F6465D, 40), width=1, style=line.style_dotted)
+        state := 0
+        didClose := true
+    else if low <= tp
+        float pct = (entry - tp) / entry * 100 - commPct * 100
+        float dol = eq * pct / 100
+        sumPnl += dol
+        nTrades += 1
+        nTP += 1
+        nWin += 1
+        sumWin += dol
+        label.new(bar_index, tp, "✓TP " + str.tostring(tp, format.mintick) + " (+" + str.tostring(pct, "#.#") + "%)\n" + str.format("{0,date,dd.MM HH:mm}", entryTime) + "→" + str.format("{0,date,dd.MM HH:mm}", time), color=color.new(#0ECB81, 0), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+        if showLines
+            line.new(entryBarIdx, entry, bar_index, entry, color=color.new(#F0B90B, 30), width=1)
+            line.new(entryBarIdx, tp, bar_index, tp, color=color.new(#0ECB81, 40), width=1, style=line.style_dotted)
+            line.new(entryBarIdx, sl, bar_index, sl, color=color.new(#F6465D, 40), width=1, style=line.style_dotted)
+        state := 0
+        didClose := true
+
+if state != 0 and useDateFilter and time > dateEnd
+    state := 0
+    didClose := true
+
+eq := initialCap + sumPnl
+if eq > peak
+    peak := eq
+if peak - eq > maxDD
+    maxDD := peak - eq
+
+bool sigLong = false
+bool sigShort = false
+float sigPrice = na
+int sigAbar = na
+float sigArsi = na
+float sigBrsi = na
+int sigGap = na
+
+if state == 0 and not didClose and inDateRange
+    for i = 1 to maxGap
+        int ai = bar_index - i
+        if checkUsed(ai)
+            continue
+        if not na(rsi[i]) and rsi[i] >= shortThresh and high > high[i] and rsi < rsi[i]
+            sigShort := true
+            sigPrice := high * (1 - entryBuffer)
+            sigAbar := ai
+            sigArsi := rsi[i]
+            sigBrsi := rsi
+            sigGap := i
+            break
+    if not sigShort
+        for i = 1 to maxGap
+            int ai = bar_index - i
+            if checkUsed(ai)
+                continue
+            if not na(rsi[i]) and rsi[i] <= longThresh and low < low[i] and rsi > rsi[i]
+                sigLong := true
+                sigPrice := low * (1 + entryBuffer)
+                sigAbar := ai
+                sigArsi := rsi[i]
+                sigBrsi := rsi
+                sigGap := i
+                break
+
+if sigLong and state == 0
+    state := 1
+    entry := sigPrice
+    tp := entry * (1 + tpPct)
+    sl := entry * (1 - slPct)
+    entryBarIdx := bar_index
+    entryTime := time
+    if firstTradeTime == 0
+        firstTradeTime := time
+    array.push(usedA, sigAbar)
+    if array.size(usedA) > 500
+        array.shift(usedA)
+    if showA
+        label.new(sigAbar, low[sigGap], "A " + str.tostring(sigArsi, "#.#"), color=color.new(#3B82F6, 0), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+    if showB
+        label.new(bar_index, low, "B " + str.tostring(sigBrsi, "#.#") + " ↕" + str.tostring(sigGap), color=color.new(#F0B90B, 0), textcolor=color.black, style=label.style_label_up, size=size.tiny)
+    if showLines
+        line.new(sigAbar, low[sigGap], bar_index, low, color=color.new(#0ECB81, 30), width=2, style=line.style_dashed)
+    label.new(bar_index, entry, "▲ LONG " + str.tostring(entry, format.mintick), color=color.new(#0ECB81, 0), textcolor=color.white, style=label.style_label_up, size=size.small)
+
+if sigShort and state == 0
+    state := -1
+    entry := sigPrice
+    tp := entry * (1 - tpPct)
+    sl := entry * (1 + slPct)
+    entryBarIdx := bar_index
+    entryTime := time
+    if firstTradeTime == 0
+        firstTradeTime := time
+    array.push(usedA, sigAbar)
+    if array.size(usedA) > 500
+        array.shift(usedA)
+    if showA
+        label.new(sigAbar, high[sigGap], "A " + str.tostring(sigArsi, "#.#"), color=color.new(#3B82F6, 0), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+    if showB
+        label.new(bar_index, high, "B " + str.tostring(sigBrsi, "#.#") + " ↕" + str.tostring(sigGap), color=color.new(#F0B90B, 0), textcolor=color.black, style=label.style_label_down, size=size.tiny)
+    if showLines
+        line.new(sigAbar, high[sigGap], bar_index, high, color=color.new(#F6465D, 30), width=2, style=line.style_dashed)
+    label.new(bar_index, entry, "▼ SHORT " + str.tostring(entry, format.mintick), color=color.new(#F6465D, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
+
+bgcolor(state == 1 ? color.new(#0ECB81, 95) : state == -1 ? color.new(#F6465D, 95) : na)
+
+bool newLong = sigLong and state == 1 and state[1] != 1
+bool newShort = sigShort and state == -1 and state[1] != -1
+
+plotshape(newLong, "BUY", shape.triangleup, location.belowbar, #0ECB81, size=size.tiny)
+plotshape(newShort, "SELL", shape.triangledown, location.abovebar, #F6465D, size=size.tiny)
+
+if newLong
+    alert('{"secret":"test_secret_2025","indicator":"HiddenRSIDivergence","signal":"BUY","price":"' + str.tostring(entry) + '","symbol":"' + syminfo.ticker + '","tf":"' + timeframe.period + '"}', alert.freq_once_per_bar)
+if newShort
+    alert('{"secret":"test_secret_2025","indicator":"HiddenRSIDivergence","signal":"SELL","price":"' + str.tostring(entry) + '","symbol":"' + syminfo.ticker + '","tf":"' + timeframe.period + '"}', alert.freq_once_per_bar)
+
+alertcondition(newLong, "BUY Sinyal", "Hidden RSI Divergence — BUY")
+alertcondition(newShort, "SELL Sinyal", "Hidden RSI Divergence — SELL")
+alertcondition(newLong or newShort, "BUY veya SELL", "Hidden RSI Divergence — Sinyal")
+
+var table tbl = table.new(position.top_right, 2, 16, bgcolor=color.new(#0B0E11, 5), border_width=1, border_color=color.new(#2B3139, 0))
+if barstate.islast
+    eq2 = initialCap + sumPnl
+    nPct = initialCap > 0 ? sumPnl / initialCap * 100 : 0.0
+    wr   = nTrades > 0 ? nWin * 100.0 / nTrades : 0.0
+    gl   = math.abs(sumLoss)
+    pf   = gl > 0 ? sumWin / gl : 0.0
+    aW   = nWin > 0 ? sumWin / nWin : 0.0
+    aL   = nLoss > 0 ? sumLoss / nLoss : 0.0
+    ex   = nTrades > 0 ? sumPnl / nTrades : 0.0
+    ddP  = initialCap > 0 ? maxDD / initialCap * 100 : 0.0
+    color cBg = color.new(#111827, 0)
+    color cL = color.new(#848E9C, 0)
+    sz = size.small
+    table.cell(tbl, 0, 0, "HIDDEN RSI DIV", text_color=#F0B90B, text_size=size.normal, bgcolor=color.new(#1E2329, 0))
+    table.cell(tbl, 1, 0, syminfo.ticker + " " + timeframe.period, text_color=cL, text_size=size.normal, bgcolor=color.new(#1E2329, 0))
+    table.cell(tbl, 0, 1, "Donem", text_color=cL, text_size=sz, bgcolor=cBg)
+    string dateInfo = useDateFilter ? str.format("{0,date,dd.MM.yy}", dateStart) + " → " + str.format("{0,date,dd.MM.yy}", dateEnd) : (firstTradeTime > 0 ? str.format("{0,date,dd.MM.yy}", firstTradeTime) + " → " + str.format("{0,date,dd.MM.yy}", time) : "—")
+    table.cell(tbl, 1, 1, dateInfo, text_color=color.white, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 0, 2, "Net Kar", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 2, str.tostring(sumPnl, "#,##0") + " $ (" + str.tostring(nPct, "#.#") + "%)", text_color=sumPnl >= 0 ? #0ECB81 : #F6465D, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 0, 3, "Sermaye", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 3, str.tostring(eq2, "#,##0") + " $", text_color=color.white, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 0, 4, "Toplam Islem", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 4, str.tostring(nTrades), text_color=color.white, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 0, 5, "Kazanan / Kaybeden", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 5, str.tostring(nWin) + " / " + str.tostring(nLoss), text_color=color.white, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 0, 6, "TP Sayisi", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 6, str.tostring(nTP), text_color=#0ECB81, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 0, 7, "SL Sayisi", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 7, str.tostring(nSL), text_color=#F6465D, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 0, 8, "Ters Sinyal", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 8, str.tostring(nRev), text_color=color.orange, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 0, 9, "Win Rate", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 9, str.tostring(wr, "#.#") + "%", text_color=wr >= 55 ? #0ECB81 : wr >= 50 ? #F0B90B : #F6465D, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 0, 10, "Profit Factor", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 10, str.tostring(pf, "#.##"), text_color=pf >= 2 ? #0ECB81 : pf >= 1.5 ? #F0B90B : #F6465D, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 0, 11, "Ort Kazanc / Kayip", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 11, str.tostring(aW, "#,##0") + " / " + str.tostring(aL, "#,##0") + " $", text_color=color.white, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 0, 12, "Beklenti", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 12, str.tostring(ex, "#,##0") + " $/islem", text_color=ex > 0 ? #0ECB81 : #F6465D, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 0, 13, "Max DD", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 13, str.tostring(maxDD, "#,##0") + " $ (" + str.tostring(ddP, "#.#") + "%)", text_color=#F6465D, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 0, 14, "RSI", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 14, str.tostring(rsi, "#.#"), text_color=rsi >= shortThresh ? #F6465D : rsi <= longThresh ? #0ECB81 : cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 0, 15, "Pozisyon", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 15, state == 1 ? "LONG" : state == -1 ? "SHORT" : "—", text_color=state == 1 ? #0ECB81 : state == -1 ? #F6465D : cL, text_size=sz, bgcolor=cBg)
