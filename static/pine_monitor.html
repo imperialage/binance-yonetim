@@ -347,31 +347,58 @@ async function loadData(){
 }
 
 // ── Bir sembol icin state hazirla (sim verisinden) ──
+// ONEMLI: Eski state varsa ve ayni mumdaysak usedA + signalFiredThisBar KORUNUR.
+// Aksi halde refresh sirasinda ayni canli mumda tekrar sinyal uretilir.
 function buildSymStateFromSim(s,d,p){
     var candles=d.candles||[];
     if(candles.length<2)return;
-    // Son mum = canli (Binance acik mum), oncekiler kapanmis
     var live=candles[candles.length-1];
     var closed=candles.slice(0,-1);
-    // usedA: sim icindeki entry'leri kullanilmis say
-    var usedA=new Set();
-    (d.signals||[]).forEach(function(sig){
-        if(sig.a_time)usedA.add(sig.a_time);
-    });
-    symStates[s]={
-        closedCandles:closed,
-        liveCandle:{
+
+    var oldState=symStates[s];
+    var usedA,signalFiredThisBar,liveCandleObj;
+
+    if(oldState&&oldState.liveCandle&&oldState.liveCandle.time===live.time){
+        // AYNI canli mum — state'i KORU (refresh sirasinda kayip olmasin)
+        usedA=oldState.usedA;
+        signalFiredThisBar=oldState.signalFiredThisBar;
+        // liveCandle: high/low/close korunur (tick'lerle birikti), open ve time aynı
+        liveCandleObj={
+            time:live.time,
+            open:live.open,
+            high:Math.max(oldState.liveCandle.high,live.high),
+            low:Math.min(oldState.liveCandle.low,live.low),
+            close:oldState.liveCandle.close,  // tick'ten gelen son fiyat
+            volume:live.volume||oldState.liveCandle.volume||0,
+        };
+    }else{
+        // Yeni mum (veya ilk yukleme) — usedA backend sim'den, fired=false
+        usedA=new Set();
+        (d.signals||[]).forEach(function(sig){
+            if(sig.a_time)usedA.add(sig.a_time);
+        });
+        // Eski state'in usedA'sindan da live yakalanmislari ekle (kalici olsunlar)
+        if(oldState&&oldState.usedA){
+            oldState.usedA.forEach(function(t){usedA.add(t)});
+        }
+        signalFiredThisBar=false;
+        liveCandleObj={
             time:live.time,
             open:live.open,
             high:live.high,
             low:live.low,
             close:live.close,
             volume:live.volume||0,
-        },
+        };
+    }
+
+    symStates[s]={
+        closedCandles:closed,
+        liveCandle:liveCandleObj,
         rsiState:d.rsi_state,
         params:p,
         usedA:usedA,
-        signalFiredThisBar:false,
+        signalFiredThisBar:signalFiredThisBar,
         ready:true,
     };
 }
@@ -492,9 +519,20 @@ function checkLiveDivergence(s){
     return null;
 }
 
+// ── Duplike check — ayni mum/yon/sembol icin tekrar yazma ──
+function isDuplicateLiveSignal(s,sig){
+    return liveSignals.some(function(r){
+        return r.symbol===s
+            && r.bar_time===sig.bar_time
+            && r.direction===sig.direction
+            && r.interval===tf;
+    });
+}
+
 // ── Canli sinyal yakalandi: backend'e gonder + local cache ──
 async function captureLiveSignal(s,sig){
     var st=symStates[s];if(!st)return;
+    if(isDuplicateLiveSignal(s,sig))return;  // ayni bar/yon zaten var
     var p=st.params;
     var tpPrice=sig.direction==='BUY'?sig.entry_price*(1+p.tp_pct/100):sig.entry_price*(1-p.tp_pct/100);
     var slPrice=sig.direction==='BUY'?sig.entry_price*(1-p.sl_pct/100):sig.entry_price*(1+p.sl_pct/100);
