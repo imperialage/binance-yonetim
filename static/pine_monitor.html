@@ -290,12 +290,34 @@ function readParamsFromUI(){
 function applyParams(){
     var p=readParamsFromUI();
     saveSymParams(sym,p);
+    pushParamsToBackend(sym,p);
     loadData();
 }
 function resetParams(){
     saveSymParams(sym,DEFAULTS);
+    pushParamsToBackend(sym,DEFAULTS);
     loadParamsToUI();
     loadData();
+}
+
+// Backend live engine icin parametre push (sayfa kapali olsa da calissin)
+async function pushParamsToBackend(s,p){
+    try{
+        await fetch('/api/pine-params',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify(Object.assign({},p,{symbol:s,interval:tf,active:1})),
+        });
+    }catch(e){console.warn('pine params push err',e)}
+}
+
+// Sayfa acilisinda tum sembollerin parametrelerini backend'e push (default + saved)
+async function pushAllParamsToBackend(){
+    var jobs=SYMS.map(function(s){
+        var p=getSymParams(s);
+        return pushParamsToBackend(s,p);
+    });
+    await Promise.all(jobs);
 }
 
 // ── State save ──
@@ -887,6 +909,7 @@ $('liveSigFilter').onchange=renderLiveSignals;
 renderLiveSignals();
 loadData();
 initAllSymbols();      // Tum semboller arka planda
+pushAllParamsToBackend();  // Backend live engine'i bilgilendir (TUM semboller, 7/24 calissin)
 reloadLiveSignals();   // Backend'den canli sinyalleri çek
 connectWS();
 setInterval(tickCandleTimer,1000);

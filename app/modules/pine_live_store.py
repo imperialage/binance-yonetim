@@ -54,6 +54,26 @@ _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_pls_bar ON pine_live_signals(symbol, bar_time);",
 ]
 
+# ── Sembol bazli parametreler (frontend pine_monitor'den gelir) ──
+_CREATE_PARAMS_TABLE = """
+CREATE TABLE IF NOT EXISTS pine_params (
+    symbol        TEXT NOT NULL,
+    interval      TEXT NOT NULL DEFAULT '5m',
+    rsi_len       INTEGER NOT NULL DEFAULT 10,
+    long_thresh   REAL NOT NULL DEFAULT 32,
+    short_thresh  REAL NOT NULL DEFAULT 70,
+    max_gap       INTEGER NOT NULL DEFAULT 12,
+    entry_buffer  REAL NOT NULL DEFAULT 0.1,
+    tp_pct        REAL NOT NULL DEFAULT 1.1,
+    sl_pct        REAL NOT NULL DEFAULT 0.35,
+    comm_pct      REAL NOT NULL DEFAULT 0.08,
+    bars          INTEGER NOT NULL DEFAULT 500,
+    active        INTEGER NOT NULL DEFAULT 1,
+    updated_at    TEXT NOT NULL,
+    PRIMARY KEY(symbol, interval)
+);
+"""
+
 
 async def get_db() -> aiosqlite.Connection:
     global _db
@@ -69,10 +89,87 @@ async def get_db() -> aiosqlite.Connection:
 async def init_pine_live_db() -> None:
     db = await get_db()
     await db.execute(_CREATE_TABLE)
+    await db.execute(_CREATE_PARAMS_TABLE)
     for idx in _CREATE_INDEXES:
         await db.execute(idx)
     await db.commit()
     await log.ainfo("pine_live_db_ready", path=str(DB_PATH))
+
+
+# ── Parametre yonetimi ───────────────────────────────
+
+
+async def upsert_params(symbol: str, interval: str, params: dict) -> None:
+    """Sembol+interval parametrelerini kaydet/guncelle."""
+    from datetime import datetime, timezone, timedelta
+    tz_ist = timezone(timedelta(hours=3))
+    now = datetime.now(tz_ist).strftime("%Y-%m-%d %H:%M:%S")
+    db = await get_db()
+    try:
+        await db.execute(
+            """INSERT INTO pine_params
+               (symbol, interval, rsi_len, long_thresh, short_thresh, max_gap,
+                entry_buffer, tp_pct, sl_pct, comm_pct, bars, active, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(symbol, interval) DO UPDATE SET
+                 rsi_len=excluded.rsi_len,
+                 long_thresh=excluded.long_thresh,
+                 short_thresh=excluded.short_thresh,
+                 max_gap=excluded.max_gap,
+                 entry_buffer=excluded.entry_buffer,
+                 tp_pct=excluded.tp_pct,
+                 sl_pct=excluded.sl_pct,
+                 comm_pct=excluded.comm_pct,
+                 bars=excluded.bars,
+                 active=excluded.active,
+                 updated_at=excluded.updated_at""",
+            (
+                symbol.upper(),
+                interval,
+                int(params.get("rsi_len", 10)),
+                float(params.get("long_thresh", 32)),
+                float(params.get("short_thresh", 70)),
+                int(params.get("max_gap", 12)),
+                float(params.get("entry_buffer", 0.1)),
+                float(params.get("tp_pct", 1.1)),
+                float(params.get("sl_pct", 0.35)),
+                float(params.get("comm_pct", 0.08)),
+                int(params.get("bars", 500)),
+                int(params.get("active", 1)),
+                now,
+            ),
+        )
+        await db.commit()
+    except Exception as e:
+        await log.aerror("pine_params_upsert_error", error=str(e))
+
+
+async def get_params(symbol: str, interval: str = "5m") -> dict | None:
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT * FROM pine_params WHERE symbol = ? AND interval = ?",
+            (symbol.upper(), interval),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        await log.aerror("pine_params_get_error", error=str(e))
+        return None
+
+
+async def get_all_active_params() -> list[dict]:
+    """Aktif tum sembol+interval parametrelerini don."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT * FROM pine_params WHERE active = 1 ORDER BY symbol, interval"
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        await log.aerror("pine_params_get_all_error", error=str(e))
+        return []
 
 
 async def insert_live_signal(data: dict) -> int | None:

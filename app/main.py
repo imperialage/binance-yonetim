@@ -28,6 +28,7 @@ from app.modules.st_signal_logger import init_st_signal_db, close_st_signal_db
 from app.modules.st_stats_updater import start_st_stats_updater, stop_st_stats_updater
 from app.modules.indicator_settings_store import init_indicator_settings_db, close_indicator_settings_db
 from app.modules.pine_live_store import init_pine_live_db, close_pine_live_db
+from app.modules.pine_live_engine import start_pine_live_engine, stop_pine_live_engine
 from app.modules.order_stream import start_order_stream, stop_order_stream
 from app.modules.signal_engine import start_signal_engines, stop_signal_engines
 from app.routers import admin, backtest, chart, data_collector, events, latest, status, webhook, ws
@@ -59,7 +60,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     start_default_collections()
     start_daily_metrics_updater()
     start_trailing_tp()
+    start_pine_live_engine()
     yield
+    await stop_pine_live_engine()
     await stop_trailing_tp()
     await stop_daily_metrics_updater()
     await stop_ha_engine_loop()

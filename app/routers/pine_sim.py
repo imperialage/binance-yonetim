@@ -17,7 +17,13 @@ import httpx
 from fastapi import APIRouter, Request
 
 from app.modules.rsi_calculator import calculate_rsi, calculate_rsi_with_state
-from app.modules.pine_live_store import insert_live_signal, query_live_signals
+from app.modules.pine_live_store import (
+    insert_live_signal,
+    query_live_signals,
+    upsert_params,
+    get_params,
+    get_all_active_params,
+)
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -438,3 +444,61 @@ async def get_pine_live_signals(
     limit = max(1, min(limit, 1000))
     rows = await query_live_signals(symbol=symbol, limit=limit)
     return {"signals": rows, "count": len(rows)}
+
+
+# ── Pine Params (backend live engine icin) ──────────
+
+
+@router.post("/api/pine-params")
+async def post_pine_params(request: Request) -> dict:
+    """Sembol+interval icin pine parametrelerini kaydet (frontend pine_monitor'den).
+
+    Body: {symbol, interval, rsi_len, long_thresh, short_thresh, max_gap,
+           entry_buffer, tp_pct, sl_pct, comm_pct, bars, active}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return {"status": "error", "detail": "Invalid JSON"}
+
+    symbol = body.get("symbol", "").upper()
+    interval = body.get("interval", "5m")
+    if not symbol:
+        return {"status": "error", "detail": "symbol required"}
+
+    await upsert_params(symbol, interval, body)
+    return {"status": "ok", "symbol": symbol, "interval": interval}
+
+
+@router.get("/api/pine-params")
+async def get_all_pine_params() -> dict:
+    rows = await get_all_active_params()
+    return {"params": rows, "count": len(rows)}
+
+
+@router.get("/api/pine-params/{symbol}")
+async def get_pine_params_for_symbol(symbol: str, interval: str = "5m") -> dict:
+    row = await get_params(symbol, interval)
+    return {"params": row}
+
+
+@router.get("/api/pine-live-engine-status")
+async def get_pine_live_engine_status() -> dict:
+    """Backend live engine'in mevcut durumu — debug icin."""
+    from app.modules.pine_live_engine import get_all_states
+    states = get_all_states()
+    out = []
+    for key, st in states.items():
+        out.append({
+            "symbol": st.symbol,
+            "interval": st.interval,
+            "warmed_up": st.warmed_up,
+            "rsi_warmed_up": st.rsi_warmed_up,
+            "closed_candles": len(st.closed_candles),
+            "live_candle_time": st.live_candle.get("time") if st.live_candle else None,
+            "live_close": st.live_candle.get("close") if st.live_candle else None,
+            "signal_fired_this_bar": st.signal_fired_this_bar,
+            "used_a_count": len(st.used_a),
+            "params": st.params,
+        })
+    return {"engines": out, "count": len(out)}
