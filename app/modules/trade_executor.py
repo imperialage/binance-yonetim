@@ -314,25 +314,18 @@ async def _execute_trade_inner(
 
     entry_price = round_price(price, tick_size)
 
-    # SL fiyatını hesapla — webhook'tan geldiyse onu kullan, yoksa indicator_settings'ten
-    if webhook_sl:
-        sl_price_calc = round_price(webhook_sl, tick_size)
-    else:
-        ind_sl_pct = sym_cfg.get("sl_pct", 0.1) / 100.0  # yuzde → oran
-        sl_price_calc = round_price(entry_price * (1 - ind_sl_pct), tick_size) if side == "BUY" else round_price(entry_price * (1 + ind_sl_pct), tick_size)
+    # SL fiyati SADECE webhook'tan (Pine Script) — baska kaynaktan gelmez
+    sl_price_calc = round_price(webhook_sl, tick_size) if webhook_sl else None
     sl_side = "SELL" if side == "BUY" else "BUY"
+    if not sl_price_calc:
+        sl_enabled = False  # webhook'tan SL gelmezse SL emri VERILMEZ
 
     # Giriş emri ver — MARKET veya LIMIT
     if use_market:
         order_result = await place_market_order(symbol, side, quantity)
         order_id = str(order_result.get("orderId", ""))
         fill_price = float(order_result.get("avgPrice", 0)) or entry_price
-        # SL'yi fill fiyatindan yeniden hesapla (webhook SL varsa onu koru)
-        if webhook_sl:
-            sl_price_calc = round_price(webhook_sl, tick_size)
-        else:
-            ind_sl_pct_m = sym_cfg.get("sl_pct", 0.1) / 100.0
-            sl_price_calc = round_price(fill_price * (1 - ind_sl_pct_m), tick_size) if side == "BUY" else round_price(fill_price * (1 + ind_sl_pct_m), tick_size)
+        # SL: webhook fiyati korunur — fill price'dan yeniden hesaplanmaz
         log.info("market_order_placed", symbol=symbol, side=side, qty=quantity,
                  fill_price=fill_price, order_id=order_id)
     else:

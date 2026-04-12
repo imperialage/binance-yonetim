@@ -635,21 +635,11 @@ class SignalEngine:
             )
             sym_cfg = await get_settings_or_defaults(self.symbol)
 
-            # TP: webhook mutlak fiyat varsa kullan, yoksa yuzde ile hesapla
+            # TP/SL SADECE webhook'tan (Pine Script) — baska kaynaktan GELMEZ
             webhook_tp_val = po.get("webhook_tp_price")
-            if webhook_tp_val:
-                tp_price = round_price(webhook_tp_val, tick_size)
-            else:
-                tp_pct = sym_cfg.get("tp_pct", 1.0) / 100.0
-                tp_price = round_price(entry_price * (1 + tp_pct), tick_size) if is_long else round_price(entry_price * (1 - tp_pct), tick_size)
-
-            # SL: webhook mutlak fiyat varsa kullan, yoksa yuzde ile hesapla
             webhook_sl_val = po.get("webhook_sl_price")
-            if webhook_sl_val:
-                sl_price = round_price(webhook_sl_val, tick_size)
-            else:
-                sl_pct = sym_cfg.get("sl_pct", 0.3) / 100.0
-                sl_price = round_price(entry_price * (1 - sl_pct), tick_size) if is_long else round_price(entry_price * (1 + sl_pct), tick_size)
+            tp_price = round_price(webhook_tp_val, tick_size) if webhook_tp_val else None
+            sl_price = round_price(webhook_sl_val, tick_size) if webhook_sl_val else None
 
             exit_side = "SELL" if is_long else "BUY"
 
@@ -660,8 +650,8 @@ class SignalEngine:
             except Exception:
                 pass
 
-            # Yeni SL'yi tekrar koy (cancel_all ile silindi)
-            if sl_enabled:
+            # Yeni SL'yi tekrar koy (cancel_all ile silindi) — SADECE webhook'tan geldiyse
+            if sl_enabled and sl_price:
                 try:
                     from app.modules.binance_client import place_stop_market_instant
                     await place_stop_market_instant(self.symbol, exit_side, qty, sl_price)
@@ -671,30 +661,35 @@ class SignalEngine:
                 except Exception as e:
                     self.sl_confirmed = False
                     await log.aerror("sl_re_place_failed", symbol=self.symbol, error=str(e))
+            elif not sl_price:
+                await log.ainfo("sl_skipped_no_webhook_price", symbol=self.symbol)
 
-            # TP koy
-            try:
-                await place_take_profit_market_order(self.symbol, exit_side, qty, tp_price)
-                self.tp_confirmed = True
-                self.tp_price = tp_price
-                await log.ainfo("tp_placed", symbol=self.symbol, tp_price=tp_price)
-            except Exception as e:
-                err = str(e)
-                await log.aerror("tp_place_failed", symbol=self.symbol, error=err)
-                if "-2021" in err:
-                    # Fiyat TP'yi asmis — market ile kapat (karda)
-                    try:
-                        await cancel_all_open_orders(self.symbol)
-                        await place_market_order(self.symbol, exit_side, qty, reduce_only=True)
-                        _p = get_live_price(self.symbol) or tp_price
-                        self.on_position_closed(exit_info={"avg_price": _p, "qty": qty, "order_type": "TAKE_PROFIT_MARKET", "realized_pnl": 0, "exit_reason": "TP"})
-                        await log.ainfo("tp_passed_market_close", symbol=self.symbol)
-                    except Exception as e2:
-                        await log.aerror("tp_passed_close_failed", symbol=self.symbol, error=str(e2))
-                    return
+            # TP koy — SADECE webhook'tan geldiyse
+            if not tp_price:
+                await log.ainfo("tp_skipped_no_webhook_price", symbol=self.symbol)
+            else:
+                try:
+                    await place_take_profit_market_order(self.symbol, exit_side, qty, tp_price)
+                    self.tp_confirmed = True
+                    self.tp_price = tp_price
+                    await log.ainfo("tp_placed", symbol=self.symbol, tp_price=tp_price)
+                except Exception as e:
+                    err = str(e)
+                    await log.aerror("tp_place_failed", symbol=self.symbol, error=err)
+                    if "-2021" in err:
+                        # Fiyat TP'yi asmis — market ile kapat (karda)
+                        try:
+                            await cancel_all_open_orders(self.symbol)
+                            await place_market_order(self.symbol, exit_side, qty, reduce_only=True)
+                            _p = get_live_price(self.symbol) or tp_price
+                            self.on_position_closed(exit_info={"avg_price": _p, "qty": qty, "order_type": "TAKE_PROFIT_MARKET", "realized_pnl": 0, "exit_reason": "TP"})
+                            await log.ainfo("tp_passed_market_close", symbol=self.symbol)
+                        except Exception as e2:
+                            await log.aerror("tp_passed_close_failed", symbol=self.symbol, error=str(e2))
+                        return
 
-            # SL — zaten giris emriyle birlikte konulduysa atla, konmadiysa yedek olarak koy
-            if not self.sl_confirmed and sl_enabled:
+            # SL yedek — SADECE webhook SL varsa ve henuz konmadiysa
+            if not self.sl_confirmed and sl_enabled and sl_price:
                 try:
                     await place_stop_market_order(self.symbol, exit_side, qty, sl_price)
                     self.sl_confirmed = True
@@ -1109,20 +1104,13 @@ async def _tpsl_watchdog() -> None:
 
             from app.modules.binance_client import round_price
 
-            if engine.tp_price > 0:
-                tp_price = engine.tp_price
-            else:
-                tp_pct = settings.get("tp_pct", 1.0) / 100.0
-                tp_price = round_price(entry_price * (1 + tp_pct), tick_size) if is_long else round_price(entry_price * (1 - tp_pct), tick_size)
+            # TP/SL SADECE webhook'tan (Pine Script) — engine'de kayitliysa onu kullan
+            # indicator_settings'ten hesaplama YAPILMAZ (tek kaynak: webhook)
+            tp_price = engine.tp_price if engine.tp_price > 0 else None
+            sl_price = engine.sl_price if engine.sl_price > 0 else None
 
-            if engine.sl_price > 0:
-                sl_price = engine.sl_price
-            else:
-                sl_pct = settings.get("sl_pct", 0.3) / 100.0
-                sl_price = round_price(entry_price * (1 - sl_pct), tick_size) if is_long else round_price(entry_price * (1 + sl_pct), tick_size)
-
-            # 4. Eksik emirleri koy
-            if not has_tp:
+            # 4. Eksik emirleri koy — SADECE webhook fiyati varsa
+            if not has_tp and tp_price:
                 try:
                     await place_take_profit_market_order(sym, exit_side, qty, tp_price)
                     engine.tp_confirmed = True
@@ -1133,8 +1121,10 @@ async def _tpsl_watchdog() -> None:
                     if "-2021" in err_str:
                         await _watchdog_market_close(sym, exit_side, qty, "TP_PASSED")
                         continue
+            elif not has_tp and not tp_price:
+                await log.awarning("watchdog_tp_no_price", symbol=sym, msg="TP fiyati yok (webhook gelmemis)")
 
-            if not has_sl and sl_needed:
+            if not has_sl and sl_needed and sl_price:
                 try:
                     await place_stop_market_order(sym, exit_side, qty, sl_price)
                     engine.sl_confirmed = True
@@ -1145,6 +1135,8 @@ async def _tpsl_watchdog() -> None:
                     if "-2021" in err_str:
                         await _watchdog_market_close(sym, exit_side, qty, "SL_PASSED")
                         continue
+            elif not has_sl and sl_needed and not sl_price:
+                await log.awarning("watchdog_sl_no_price", symbol=sym, msg="SL fiyati yok (webhook gelmemis)")
 
             if not has_tp or (not has_sl and sl_needed):
                 await log.awarning(
