@@ -59,6 +59,8 @@ async def execute_trade(
     tp_pct: float | None = None,
     sl_pct: float | None = None,
     prefetch: asyncio.Task | None = None,
+    webhook_tp: float | None = None,
+    webhook_sl: float | None = None,
 ) -> None:
     """Execute a trade based on signal. Fire-and-forget from webhook.
 
@@ -76,7 +78,7 @@ async def execute_trade(
     lock = _get_lock(symbol)
     async with lock:
         try:
-            await _execute_trade_inner(symbol, side, price, event_id, ts, start_ms, tf, tp_pct=tp_pct, sl_pct=sl_pct, prefetch=prefetch)
+            await _execute_trade_inner(symbol, side, price, event_id, ts, start_ms, tf, tp_pct=tp_pct, sl_pct=sl_pct, prefetch=prefetch, webhook_tp=webhook_tp, webhook_sl=webhook_sl)
         except Exception as e:
             duration = (time.monotonic_ns() // 1_000_000) - start_ms
             log.error(
@@ -130,6 +132,8 @@ async def _execute_trade_inner(
     tp_pct: float | None = None,
     sl_pct: float | None = None,
     prefetch: asyncio.Task | None = None,
+    webhook_tp: float | None = None,
+    webhook_sl: float | None = None,
 ) -> None:
     """Inner trade logic — called under per-symbol lock."""
 
@@ -310,25 +314,25 @@ async def _execute_trade_inner(
 
     entry_price = round_price(price, tick_size)
 
-    # SL fiyatını hesapla (indicator_settings'ten)
-    ind_sl_pct = sym_cfg.get("sl_pct", 0.1) / 100.0  # yuzde → oran
-    if side == "BUY":
-        sl_price = round_price(entry_price * (1 - ind_sl_pct), tick_size)
-        sl_side = "SELL"
+    # SL fiyatını hesapla — webhook'tan geldiyse onu kullan, yoksa indicator_settings'ten
+    if webhook_sl:
+        sl_price_calc = round_price(webhook_sl, tick_size)
     else:
-        sl_price = round_price(entry_price * (1 + ind_sl_pct), tick_size)
-        sl_side = "BUY"
+        ind_sl_pct = sym_cfg.get("sl_pct", 0.1) / 100.0  # yuzde → oran
+        sl_price_calc = round_price(entry_price * (1 - ind_sl_pct), tick_size) if side == "BUY" else round_price(entry_price * (1 + ind_sl_pct), tick_size)
+    sl_side = "SELL" if side == "BUY" else "BUY"
 
     # Giriş emri ver — MARKET veya LIMIT
     if use_market:
         order_result = await place_market_order(symbol, side, quantity)
         order_id = str(order_result.get("orderId", ""))
         fill_price = float(order_result.get("avgPrice", 0)) or entry_price
-        # SL'yi fill fiyatindan hesapla
-        if side == "BUY":
-            sl_price = round_price(fill_price * (1 - ind_sl_pct), tick_size)
+        # SL'yi fill fiyatindan yeniden hesapla (webhook SL varsa onu koru)
+        if webhook_sl:
+            sl_price_calc = round_price(webhook_sl, tick_size)
         else:
-            sl_price = round_price(fill_price * (1 + ind_sl_pct), tick_size)
+            ind_sl_pct_m = sym_cfg.get("sl_pct", 0.1) / 100.0
+            sl_price_calc = round_price(fill_price * (1 - ind_sl_pct_m), tick_size) if side == "BUY" else round_price(fill_price * (1 + ind_sl_pct_m), tick_size)
         log.info("market_order_placed", symbol=symbol, side=side, qty=quantity,
                  fill_price=fill_price, order_id=order_id)
     else:
@@ -343,11 +347,11 @@ async def _execute_trade_inner(
     if sl_enabled:
         try:
             from app.modules.binance_client import place_stop_market_instant
-            sl_result = await place_stop_market_instant(symbol, sl_side, quantity, sl_price)
+            sl_result = await place_stop_market_instant(symbol, sl_side, quantity, sl_price_calc)
             sl_order_id = str(sl_result.get("algoId", ""))
-            log.info("sl_with_entry", symbol=symbol, sl_price=sl_price, sl_side=sl_side, sl_order_id=sl_order_id)
+            log.info("sl_with_entry", symbol=symbol, sl_price=sl_price_calc, sl_side=sl_side, sl_order_id=sl_order_id)
         except Exception as e:
-            log.error("sl_instant_failed", symbol=symbol, sl_price=sl_price, error=str(e))
+            log.error("sl_instant_failed", symbol=symbol, sl_price=sl_price_calc, error=str(e))
 
     # ── 8b. Signal engine'e bilgi ver — fill takibi + TP oradan yapilacak ──
     try:
@@ -369,17 +373,19 @@ async def _execute_trade_inner(
                 "tick_size": tick_size,
                 "sl_enabled": sl_enabled,
                 "sl_order_id": sl_order_id,
-                "sl_price": sl_price,
+                "sl_price": sl_price_calc,
                 "start_time": time.time(),
                 "timeout": LIMIT_TIMEOUT,
                 "signal_price": price,
                 "balance": balance,
                 "closed_previous": closed_previous,
+                "webhook_tp_price": webhook_tp,
+                "webhook_sl_price": webhook_sl,
             }
             engine.trade_pending = True
             if sl_order_id:
                 engine.sl_confirmed = True
-                engine.sl_price = sl_price
+                engine.sl_price = sl_price_calc
     except Exception:
         pass
 

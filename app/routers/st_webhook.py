@@ -48,6 +48,10 @@ class STWebhookPayload(BaseModel):
     direction: str | None = Field(default=None, description="BUY or SELL (yeni format)")
     time: str | int | None = Field(default=None, description="Signal time (yeni format)")
 
+    # Webhook TP/SL (Pine Script'ten gelen mutlak fiyat degerleri)
+    tp: float | str | None = Field(default=None, description="Take profit price from Pine Script")
+    sl: float | str | None = Field(default=None, description="Stop loss price from Pine Script")
+
     # Ortak
     tf: str | None = Field(default=None, description="Timeframe: 5, 5m, 15m, 1h, etc.")
 
@@ -162,6 +166,10 @@ async def st_webhook(request: Request) -> JSONResponse:
             content={"detail": f"Invalid price: {payload.price}"},
         )
 
+    # Webhook TP/SL (Pine Script'ten gelen mutlak fiyatlar, opsiyonel)
+    webhook_tp = _parse_price(payload.tp) if payload.tp else None
+    webhook_sl = _parse_price(payload.sl) if payload.sl else None
+
     # TF normalize (default: config'deki ilk TF)
     raw_tf = payload.tf or settings.trading_timeframes.split(",")[0].strip() or "5m"
     tf = normalize_tf(raw_tf)
@@ -269,6 +277,8 @@ async def st_webhook(request: Request) -> JSONResponse:
             event_id=event_id,
             tf=tf,
             prefetch=_prefetch,
+            webhook_tp=webhook_tp,
+            webhook_sl=webhook_sl,
         ))
         trade_dispatched = True
         log.info(

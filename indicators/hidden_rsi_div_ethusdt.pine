@@ -206,7 +206,7 @@ if sigLong and state == 0
         label.new(bar_index, low, "B " + str.tostring(sigBrsi, "#.#") + " ↕" + str.tostring(sigGap), color=color.new(#F0B90B, 0), textcolor=color.black, style=label.style_label_up, size=size.tiny)
     if showLines
         line.new(sigAbar, low[sigGap], bar_index, low, color=color.new(#0ECB81, 30), width=2, style=line.style_dashed)
-    label.new(bar_index, entry, "▲ LONG " + str.tostring(entry, format.mintick), color=color.new(#0ECB81, 0), textcolor=color.white, style=label.style_label_up, size=size.small)
+    label.new(bar_index, entry, "▲ LONG " + str.tostring(entry, format.mintick) + "\nTP " + str.tostring(tp, format.mintick) + " | SL " + str.tostring(sl, format.mintick) + "\n" + str.format("{0,date,dd.MM HH:mm:ss}", time), color=color.new(#0ECB81, 0), textcolor=color.white, style=label.style_label_up, size=size.small)
 
 if sigShort and state == 0
     state := -1
@@ -226,7 +226,7 @@ if sigShort and state == 0
         label.new(bar_index, high, "B " + str.tostring(sigBrsi, "#.#") + " ↕" + str.tostring(sigGap), color=color.new(#F0B90B, 0), textcolor=color.black, style=label.style_label_down, size=size.tiny)
     if showLines
         line.new(sigAbar, high[sigGap], bar_index, high, color=color.new(#F6465D, 30), width=2, style=line.style_dashed)
-    label.new(bar_index, entry, "▼ SHORT " + str.tostring(entry, format.mintick), color=color.new(#F6465D, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
+    label.new(bar_index, entry, "▼ SHORT " + str.tostring(entry, format.mintick) + "\nTP " + str.tostring(tp, format.mintick) + " | SL " + str.tostring(sl, format.mintick) + "\n" + str.format("{0,date,dd.MM HH:mm:ss}", time), color=color.new(#F6465D, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
 
 bgcolor(state == 1 ? color.new(#0ECB81, 95) : state == -1 ? color.new(#F6465D, 95) : na)
 
@@ -237,9 +237,9 @@ plotshape(newLong, "BUY", shape.triangleup, location.belowbar, #0ECB81, size=siz
 plotshape(newShort, "SELL", shape.triangledown, location.abovebar, #F6465D, size=size.tiny)
 
 if newLong
-    alert('{"secret":"test_secret_2025","indicator":"HiddenRSIDivergence","signal":"BUY","price":"' + str.tostring(entry) + '","symbol":"' + syminfo.ticker + '","tf":"' + timeframe.period + '"}', alert.freq_once_per_bar)
+    alert('{"secret":"test_secret_2025","indicator":"HiddenRSIDivergence","signal":"BUY","price":"' + str.tostring(entry) + '","tp":"' + str.tostring(tp) + '","sl":"' + str.tostring(sl) + '","symbol":"' + syminfo.ticker + '","tf":"' + timeframe.period + '"}', alert.freq_once_per_bar)
 if newShort
-    alert('{"secret":"test_secret_2025","indicator":"HiddenRSIDivergence","signal":"SELL","price":"' + str.tostring(entry) + '","symbol":"' + syminfo.ticker + '","tf":"' + timeframe.period + '"}', alert.freq_once_per_bar)
+    alert('{"secret":"test_secret_2025","indicator":"HiddenRSIDivergence","signal":"SELL","price":"' + str.tostring(entry) + '","tp":"' + str.tostring(tp) + '","sl":"' + str.tostring(sl) + '","symbol":"' + syminfo.ticker + '","tf":"' + timeframe.period + '"}', alert.freq_once_per_bar)
 
 alertcondition(newLong, "BUY Sinyal", "Hidden RSI Divergence — BUY")
 alertcondition(newShort, "SELL Sinyal", "Hidden RSI Divergence — SELL")

@@ -626,7 +626,7 @@ class SignalEngine:
 
             self.pending_order = None
 
-            # TP/SL hesapla
+            # TP/SL hesapla — webhook'tan geldiyse onu kullan, yoksa indicator_settings'ten
             from app.modules.indicator_settings_store import get_settings_or_defaults
             from app.modules.binance_client import (
                 round_price, place_take_profit_market_order,
@@ -634,17 +634,24 @@ class SignalEngine:
                 cancel_all_open_orders,
             )
             sym_cfg = await get_settings_or_defaults(self.symbol)
-            tp_pct = sym_cfg.get("tp_pct", 1.0) / 100.0
-            sl_pct = sym_cfg.get("sl_pct", 0.3) / 100.0
 
-            if is_long:
-                tp_price = round_price(entry_price * (1 + tp_pct), tick_size)
-                sl_price = round_price(entry_price * (1 - sl_pct), tick_size)
-                exit_side = "SELL"
+            # TP: webhook mutlak fiyat varsa kullan, yoksa yuzde ile hesapla
+            webhook_tp_val = po.get("webhook_tp_price")
+            if webhook_tp_val:
+                tp_price = round_price(webhook_tp_val, tick_size)
             else:
-                tp_price = round_price(entry_price * (1 - tp_pct), tick_size)
-                sl_price = round_price(entry_price * (1 + sl_pct), tick_size)
-                exit_side = "BUY"
+                tp_pct = sym_cfg.get("tp_pct", 1.0) / 100.0
+                tp_price = round_price(entry_price * (1 + tp_pct), tick_size) if is_long else round_price(entry_price * (1 - tp_pct), tick_size)
+
+            # SL: webhook mutlak fiyat varsa kullan, yoksa yuzde ile hesapla
+            webhook_sl_val = po.get("webhook_sl_price")
+            if webhook_sl_val:
+                sl_price = round_price(webhook_sl_val, tick_size)
+            else:
+                sl_pct = sym_cfg.get("sl_pct", 0.3) / 100.0
+                sl_price = round_price(entry_price * (1 - sl_pct), tick_size) if is_long else round_price(entry_price * (1 + sl_pct), tick_size)
+
+            exit_side = "SELL" if is_long else "BUY"
 
             # Eski TP/SL emirlerini temizle (yeni SL zaten giris emriyle kondu)
             try:
@@ -1090,10 +1097,8 @@ async def _tpsl_watchdog() -> None:
             if engine.tp_confirmed and engine.sl_confirmed:
                 continue  # hepsi teyitli, sorun yok
 
-            # 3. Settings'ten TP/SL fiyatlarını hesapla
+            # 3. TP/SL fiyatlarını hesapla — engine'de kayitli varsa onu kullan (webhook'tan gelmis olabilir)
             settings = await get_settings_or_defaults(sym)
-            tp_pct = settings.get("tp_pct", 1.0) / 100.0
-            sl_pct = settings.get("sl_pct", 0.3) / 100.0
 
             # tick_size al
             try:
@@ -1104,12 +1109,17 @@ async def _tpsl_watchdog() -> None:
 
             from app.modules.binance_client import round_price
 
-            if is_long:
-                tp_price = round_price(entry_price * (1 + tp_pct), tick_size)
-                sl_price = round_price(entry_price * (1 - sl_pct), tick_size)
+            if engine.tp_price > 0:
+                tp_price = engine.tp_price
             else:
-                tp_price = round_price(entry_price * (1 - tp_pct), tick_size)
-                sl_price = round_price(entry_price * (1 + sl_pct), tick_size)
+                tp_pct = settings.get("tp_pct", 1.0) / 100.0
+                tp_price = round_price(entry_price * (1 + tp_pct), tick_size) if is_long else round_price(entry_price * (1 - tp_pct), tick_size)
+
+            if engine.sl_price > 0:
+                sl_price = engine.sl_price
+            else:
+                sl_pct = settings.get("sl_pct", 0.3) / 100.0
+                sl_price = round_price(entry_price * (1 - sl_pct), tick_size) if is_long else round_price(entry_price * (1 + sl_pct), tick_size)
 
             # 4. Eksik emirleri koy
             if not has_tp:

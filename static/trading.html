@@ -882,8 +882,9 @@ tr.clickable:hover{background:#1c212888}
       if(hasPos){
         var entry=parseFloat(p.entryPrice);
         var upnl=parseFloat(p.unRealizedProfit||0);
-        var pnlPct=entry>0?((isLong?(price-entry):(entry-price))/entry*100):0;
-        if(!price) pnlPct=(upnl/(Math.abs(amt)*entry))*100;
+        // PnL yuzdesi: gercek PnL'i notional'a bol — Binance'in upnl'i ile birebir uyumlu
+        var notional=Math.abs(amt)*entry;
+        var pnlPct=notional>0?(upnl/notional)*100:0;
 
         html+='<div class="pos-info">';
         html+='<div class="pos-row"><span class="k">Pozisyon</span><span class="v"><span class="pos-side '+(isLong?'long':'short')+'">'+(isLong?'LONG':'SHORT')+'</span> '+fmt(Math.abs(amt),4)+'</span></div>';
