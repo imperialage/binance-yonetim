@@ -84,6 +84,20 @@ SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
         "sl_pct": 0.003,   # %0.3
         "weight": 0.03,
     },
+    "DOTUSDT": {
+        "bad_hours": set(),
+        "allowed_directions": {"BUY", "SELL"},
+        "tp_pct": 0.010,
+        "sl_pct": 0.003,
+        "weight": 0.03,
+    },
+    "NEARUSDT": {
+        "bad_hours": set(),
+        "allowed_directions": {"BUY", "SELL"},
+        "tp_pct": 0.010,
+        "sl_pct": 0.003,
+        "weight": 0.03,
+    },
 }
 
 # Tanımsız semboller için fallback
@@ -166,7 +180,7 @@ class Settings(BaseSettings):
     rate_limit_max_events: int = 30
 
     # ── Data Collector ─────────────────────────────
-    collector_symbols: str = "XRPUSDT,BTCUSDT,AVAXUSDT,DOGEUSDT,ETHUSDT,SOLUSDT,XAGUSDT,MYXUSDT,ZECUSDT,1000PEPEUSDT"
+    collector_symbols: str = "XRPUSDT,BTCUSDT,AVAXUSDT,DOGEUSDT,ETHUSDT,SOLUSDT,XAGUSDT,MYXUSDT,ZECUSDT,1000PEPEUSDT,DOTUSDT,NEARUSDT"
     collector_interval: str = "5m"
 
     # ── Binance Futures Trading ─────────────────────
@@ -177,7 +191,7 @@ class Settings(BaseSettings):
     stop_loss_pct: float = 0.015      # 1.5% stop-loss (grid search optimal)
     take_profit_pct: float = 0.005    # 0.5% take-profit (grid search optimal)
     binance_proxy_url: str = ""       # SOCKS5 proxy for static IP
-    trading_symbols: str = "XRPUSDT,BTCUSDT,AVAXUSDT,DOGEUSDT,ETHUSDT,SOLUSDT,XAGUSDT,MYXUSDT,ZECUSDT,1000PEPEUSDT"  # Comma-separated whitelist
+    trading_symbols: str = "XRPUSDT,BTCUSDT,AVAXUSDT,DOGEUSDT,ETHUSDT,SOLUSDT,XAGUSDT,MYXUSDT,ZECUSDT,1000PEPEUSDT,DOTUSDT,NEARUSDT"  # Comma-separated whitelist
 
     # Per-timeframe strategy overrides
     trading_timeframes: str = "5m"      # Active TFs: "5m" or "1m" or "1m,5m"
