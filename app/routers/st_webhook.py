@@ -248,6 +248,8 @@ async def st_webhook(request: Request) -> JSONResponse:
         price=price,
         entered=settings.trading_enabled,
         source="webhook",
+        webhook_tp=webhook_tp,
+        webhook_sl=webhook_sl,
     )
 
     # ── 7. Trade execution — webhook sinyali → trade_executor ──

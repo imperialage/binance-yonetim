@@ -46,6 +46,8 @@ _SIGNAL_LOG_MIGRATIONS = [
     "ALTER TABLE signal_log ADD COLUMN rsi_b REAL",
     "ALTER TABLE signal_log ADD COLUMN gap INTEGER",
     "ALTER TABLE signal_log ADD COLUMN candle_a_time INTEGER",
+    "ALTER TABLE signal_log ADD COLUMN webhook_tp REAL",
+    "ALTER TABLE signal_log ADD COLUMN webhook_sl REAL",
 ]
 
 _CREATE_SIGNAL_STATS = """
@@ -124,6 +126,8 @@ async def log_st_signal(
     rsi_b: float | None = None,
     gap: int | None = None,
     candle_a_time: int | None = None,
+    webhook_tp: float | None = None,
+    webhook_sl: float | None = None,
 ) -> int:
     """Insert a signal record. Returns the row id."""
     db = await get_db()
@@ -132,8 +136,9 @@ async def log_st_signal(
             """INSERT INTO signal_log
                (datetime, symbol, direction, band, price, vol_ratio,
                 entered, skip_filter, skip_reason,
-                source, rsi_a, rsi_b, gap, candle_a_time)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                source, rsi_a, rsi_b, gap, candle_a_time,
+                webhook_tp, webhook_sl)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 dt,
                 symbol.upper(),
@@ -149,6 +154,8 @@ async def log_st_signal(
                 rsi_b,
                 gap,
                 candle_a_time,
+                webhook_tp,
+                webhook_sl,
             ),
         )
         await db.commit()
