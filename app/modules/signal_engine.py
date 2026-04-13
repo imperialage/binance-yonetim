@@ -247,6 +247,28 @@ class SignalEngine:
                     if self.has_position and self.entry_price <= 0:
                         self.entry_price = float(p.get("entryPrice", 0))
                         self.entry_qty = abs(amt)
+                    # TP/SL fiyatlari kayipsa (deploy restart) → Binance open algo orders'tan recover
+                    if self.has_position and (self.tp_price <= 0 or self.sl_price <= 0):
+                        try:
+                            from app.modules.binance_client import get_algo_orders_history
+                            algo_orders = await get_algo_orders_history(self.symbol)
+                            for ao in algo_orders:
+                                if ao.get("algoStatus") != "WORKING":
+                                    continue
+                                trigger = float(ao.get("triggerPrice", 0))
+                                if trigger <= 0:
+                                    continue
+                                ao_type = ao.get("type", "")
+                                if ao_type == "TAKE_PROFIT_MARKET" and self.tp_price <= 0:
+                                    self.tp_price = trigger
+                                    self.tp_confirmed = True
+                                    await log.ainfo("tp_recovered_from_binance", symbol=self.symbol, tp=trigger)
+                                elif ao_type == "STOP_MARKET" and self.sl_price <= 0:
+                                    self.sl_price = trigger
+                                    self.sl_confirmed = True
+                                    await log.ainfo("sl_recovered_from_binance", symbol=self.symbol, sl=trigger)
+                        except Exception as e:
+                            await log.awarning("tpsl_recovery_failed", symbol=self.symbol, error=str(e))
                     # State degisti mi logla
                     if old_pos != self.has_position or old_side != self.position_side:
                         await log.ainfo(
