@@ -1402,7 +1402,10 @@ async def debug_reset_directions() -> dict:
 
 @router.get("/debug/fix-tpsl/{symbol}")
 async def debug_fix_tpsl(symbol: str) -> dict:
-    """Test: cancel old orders + place new TP/SL for open position."""
+    """DEVRE DISI — webhook modunda TP/SL sisteme mudahale etmesin.
+    TP/SL sadece Pine Script webhook'tan gelir."""
+    return {"error": "fix-tpsl devre disi. TP/SL sadece webhook (Pine Script) ile yonetilir.", "symbol": symbol.upper()}
+    # ---- Eski kod asagida (devre disi) ----"""
     from app.modules.binance_client import (
         cancel_all_open_orders, get_exchange_info, get_position_risk,
         place_stop_market_order, place_take_profit_market_order, round_price,

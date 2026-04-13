@@ -1223,10 +1223,10 @@ async def _engine_loop() -> None:
 
     await log.ainfo("signal_engine_started", symbols=list(_engines.keys()))
 
-    # Startup: orphan limit emirleri temizle + TP/SL watchdog
+    # Startup: orphan limit emirleri temizle (watchdog DEVRE DISI — webhook modu)
     await _cleanup_orphan_limit_orders()
-    await _tpsl_watchdog()
-    await log.ainfo("signal_engine_startup_watchdog_done")
+    # _tpsl_watchdog() — DEVRE DISI: TP/SL sadece webhook'tan gelir
+    await log.ainfo("signal_engine_startup_done_no_watchdog")
 
     # Pozisyon sync periyodik (30sn)
     last_pos_sync = time.time()
@@ -1266,10 +1266,11 @@ async def _engine_loop() -> None:
                 for engine in _engines.values():
                     await engine._sync_position()
 
-            # TP/SL watchdog (10sn) — yedek guevenlik
-            if now - last_tpsl_check > TPSL_CHECK_INTERVAL:
-                last_tpsl_check = now
-                await _tpsl_watchdog()
+            # TP/SL watchdog DEVRE DISI — webhook modunda sisteme mudahale etmesin
+            # TP/SL sadece webhook'tan (Pine Script) gelir, watchdog karismasin
+            # if now - last_tpsl_check > TPSL_CHECK_INTERVAL:
+            #     last_tpsl_check = now
+            #     await _tpsl_watchdog()
 
             # Periyodik settings reload (60sn)
             if now - last_settings_reload > SETTINGS_RELOAD_INTERVAL:
