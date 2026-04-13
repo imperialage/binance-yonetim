@@ -253,7 +253,7 @@ class SignalEngine:
                             from app.modules.binance_client import get_algo_orders_history
                             algo_orders = await get_algo_orders_history(self.symbol)
                             for ao in algo_orders:
-                                if ao.get("algoStatus") != "WORKING":
+                                if ao.get("algoStatus") not in ("WORKING", "NEW"):
                                     continue
                                 trigger = float(ao.get("triggerPrice", 0))
                                 if trigger <= 0:
