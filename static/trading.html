@@ -848,33 +848,11 @@ tr.clickable:hover{background:#1c212888}
       var slOn=cfg.sl_enabled!==false;
       var revOn=cfg.reverse_signal===true;
 
-      // Toggle row 1: Trading + Listening
-      html+='<div class="toggle-row">';
-      html+='<div class="toggle-wrap" onclick="toggleEnabled(\''+sym+'\')" title="Islem Acma/Kapatma">';
-      html+='<div class="mini-toggle '+(isEnabled?'on':'off')+'"><div class="mini-toggle-dot"></div></div>';
-      html+='<span class="toggle-label">'+(isEnabled?'Islem Aktif':'Islem Kapali')+'</span></div>';
-      html+='<div class="toggle-wrap" onclick="toggleListening(\''+sym+'\')" title="Sinyal Dinleme">';
-      html+='<div class="mini-toggle listen '+(isListening?'on':'off')+'"><div class="mini-toggle-dot"></div></div>';
-      html+='<span class="toggle-label">'+(isListening?'Sinyal Dinliyor':'Sinyal Kapali')+'</span></div>';
-      html+='</div>';
+      // Toggle'lar GIZLI — webhook modunda gerek yok
+      // (islem aktif, sinyal dinliyor, SL aktif, ters sinyal — hepsi gizli)
 
-      // Toggle row 2: SL + Reverse Signal
-      html+='<div class="toggle-row">';
-      html+='<div class="toggle-wrap" onclick="toggleSlEnabled(\''+sym+'\')" title="Stop Loss Acma/Kapatma">';
-      html+='<div class="mini-toggle sl-toggle '+(slOn?'on':'off')+'"><div class="mini-toggle-dot"></div></div>';
-      html+='<span class="toggle-label">'+(slOn?'SL Aktif':'SL Kapali')+'</span></div>';
-      html+='<div class="toggle-wrap" onclick="toggleReverseSignal(\''+sym+'\')" title="Ters sinyal geldiginde pozisyonu kapat ve yeni ac">';
-      html+='<div class="mini-toggle reverse-toggle '+(revOn?'on':'off')+'"><div class="mini-toggle-dot"></div></div>';
-      html+='<span class="toggle-label">'+(revOn?'Ters Sinyal':'Ters Sinyal Kapali')+'</span></div>';
-      html+='</div>';
-
-      // Config tags — clickable
+      // Config tags — sadece weight gorunur
       html+='<div class="sym-config">';
-      var dirColor=dirsStr==='SELL'?'sell-only':dirsStr==='BUY'?'buy-only':'both-dir';
-      html+='<span class="sym-tag '+dirColor+' clickable-tag" onclick="editDirections(\''+sym+'\')">'+dirsStr+'</span>';
-      html+='<span class="sym-tag tp clickable-tag" onclick="editField(\''+sym+'\',\'tp_pct\','+(tpPct*100).toFixed(1)+',\'TP %\')">TP '+(tpPct*100).toFixed(1)+'%</span>';
-      var slTagClass=slOn?'sl clickable-tag':'sl-off';
-      html+='<span class="sym-tag '+slTagClass+'"'+(slOn?' onclick="editField(\''+sym+'\',\'sl_pct\','+(slPct*100).toFixed(1)+',\'SL %\')"':'')+'>SL '+(slOn?(slPct*100).toFixed(1)+'%':'OFF')+'</span>';
       html+='<span class="sym-tag weight clickable-tag" onclick="editField(\''+sym+'\',\'weight\','+(weight*100).toFixed(1)+',\'Bakiye Agirligi %\')">'+((weight)*100).toFixed(0)+'%</span>';
       html+='</div>';
 
@@ -891,11 +869,12 @@ tr.clickable:hover{background:#1c212888}
         html+='<div class="pos-row"><span class="k">Giris</span><span class="v">'+fmt(entry,entry>=100?2:4)+'</span></div>';
         html+='<div class="pos-row"><span class="k">PnL</span><span class="v '+(upnl>=0?'pnl-positive':'pnl-negative')+'">'+fmtUSD(upnl)+' ('+(pnlPct>=0?'+':'')+fmt(pnlPct,2)+'%)</span></div>';
 
-        var tpPrice=isLong?entry*(1+tpPct):entry*(1-tpPct);
-        var slPrice=isLong?entry*(1-slPct):entry*(1+slPct);
+        // TP/SL: Engine'den gelen gercek Binance degerleri (webhook/Pine Script kaynakli)
+        var tpPrice=p.engine_tp_price||(isLong?entry*(1+tpPct):entry*(1-tpPct));
+        var slPrice=p.engine_sl_price||(isLong?entry*(1-slPct):entry*(1+slPct));
         var currentPrice=price||parseFloat(p.markPrice||0);
         var progressPct=0;
-        if(currentPrice&&entry){
+        if(currentPrice&&entry&&tpPrice){
           if(isLong) progressPct=((currentPrice-entry)/(tpPrice-entry))*100;
           else progressPct=((entry-currentPrice)/(entry-tpPrice))*100;
         }
@@ -906,16 +885,12 @@ tr.clickable:hover{background:#1c212888}
         html+='<div class="mini-progress"><div class="mini-progress-fill '+fillClass+'" style="width:'+Math.min(Math.abs(progressPct),100)+'%"></div></div>';
         html+='</div>';
 
-        // Action buttons
+        // Sadece "Pozisyonu Kapat" butonu (Yeni Islem gizli)
         html+='<div style="display:flex;gap:8px;margin-top:10px">';
-        html+='<button class="card-btn btn-open" onclick="openTradeModal(\''+sym+'\')">Yeni Islem</button>';
         html+='<button class="card-btn btn-close" onclick="closePosition(\''+sym+'\')">Pozisyonu Kapat</button>';
         html+='</div>';
       }else{
         html+='<div class="no-pos">Pozisyon yok</div>';
-        html+='<div style="margin-top:8px">';
-        html+='<button class="card-btn btn-open" onclick="openTradeModal(\''+sym+'\')">Yeni Islem</button>';
-        html+='</div>';
       }
 
       html+='</div>';

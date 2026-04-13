@@ -534,6 +534,10 @@ async def debug_diagnosis() -> dict:
             except Exception as e:
                 pos_results.append(e)
 
+        # Engine'den gercek TP/SL fiyatlari
+        from app.modules.signal_engine import get_engine
+        from app.modules.ha_signal_engine import get_ha_engine
+
         positions_map: dict = {}
         for sym, pos_list in zip(trading_syms, pos_results):
             if isinstance(pos_list, Exception):
@@ -541,6 +545,10 @@ async def debug_diagnosis() -> dict:
             for p in pos_list:
                 if p.get("symbol") == sym:
                     sym_cfg = get_symbol_config(sym)
+                    # Engine'den gercek TP/SL al (webhook'tan gelen birebir degerler)
+                    eng = get_ha_engine(sym) or get_engine(sym)
+                    engine_tp = eng.tp_price if eng and eng.tp_price > 0 else None
+                    engine_sl = eng.sl_price if eng and eng.sl_price > 0 else None
                     positions_map[sym] = {
                         "positionAmt": p.get("positionAmt"),
                         "entryPrice": p.get("entryPrice"),
@@ -550,6 +558,8 @@ async def debug_diagnosis() -> dict:
                         "tp_pct": sym_cfg.get("tp_pct", 0.005),
                         "sl_pct": sym_cfg.get("sl_pct", 0.015),
                         "weight": sym_cfg.get("weight", 0.10),
+                        "engine_tp_price": engine_tp,
+                        "engine_sl_price": engine_sl,
                     }
                     break
 
