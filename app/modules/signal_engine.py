@@ -120,7 +120,7 @@ class SignalEngine:
                 resp = await client.get(BINANCE_URL, params={
                     "symbol": self.symbol,
                     "interval": self.interval,
-                    "limit": 200,
+                    "limit": 1000,
                 })
                 resp.raise_for_status()
                 klines = resp.json()
