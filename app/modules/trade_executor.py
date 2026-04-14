@@ -379,6 +379,11 @@ async def _execute_trade_inner(
             if sl_order_id:
                 engine.sl_confirmed = True
                 engine.sl_price = sl_price_calc
+            # Bar-close validation — mum kapanisinda sinyal dogrulama icin
+            from app.modules.signal_engine import INTERVAL_SECONDS
+            iv_sec = INTERVAL_SECONDS.get(tf, 300)
+            engine.webhook_entry_bar_time = (int(time.time()) // iv_sec) * iv_sec
+            engine.webhook_entry_direction = side
     except Exception:
         pass
 

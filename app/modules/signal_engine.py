@@ -99,6 +99,10 @@ class SignalEngine:
         # Pending order — fill takibi icin (trade_executor'dan gelir)
         self.pending_order: dict | None = None
 
+        # Bar-close validation — webhook pozisyonunu mum kapanisinda dogrula
+        self.webhook_entry_bar_time: int = 0
+        self.webhook_entry_direction: str = ""  # "BUY" or "SELL"
+
     # ── Warmup ──────────────────────────────────────────
     async def warmup(self) -> None:
         """Binance'tan 200 mum cek, RSI hesapla, closed_candles doldur."""
@@ -315,6 +319,8 @@ class SignalEngine:
         self.entry_event_id = ""
         self.entry_signal_id = None
         self.pending_order = None
+        self.webhook_entry_bar_time = 0
+        self.webhook_entry_direction = ""
         # algo_ids.json temizle — eski TP/SL ID'leri kalmasin
         try:
             from app.modules.binance_client import _load_algo_ids, _save_algo_ids
@@ -482,6 +488,32 @@ class SignalEngine:
         # check_pending_fill TP/SL koyacak
         if not self.pending_order:
             self.trade_pending = False
+
+    async def _bar_close_invalidate(self) -> None:
+        """Mum kapanisinda sinyal gecersiz → pozisyonu market close."""
+        try:
+            from app.modules.binance_client import place_market_order, cancel_all_open_orders, get_position_risk
+            positions = await get_position_risk(self.symbol)
+            pos_amt = 0.0
+            for p in positions:
+                if p.get("symbol") == self.symbol:
+                    pos_amt = float(p.get("positionAmt", 0))
+                    break
+            if pos_amt == 0:
+                return
+            await cancel_all_open_orders(self.symbol)
+            close_side = "SELL" if pos_amt > 0 else "BUY"
+            await place_market_order(self.symbol, close_side, abs(pos_amt), reduce_only=True)
+            self.on_position_closed(exit_info={
+                "avg_price": get_live_price(self.symbol) or 0,
+                "qty": abs(pos_amt),
+                "order_type": "MARKET",
+                "realized_pnl": 0,
+                "exit_reason": "BAR_CLOSE_INVALIDATED",
+            })
+            await log.ainfo("bar_close_signal_invalidated", symbol=self.symbol, pos_amt=pos_amt)
+        except Exception as e:
+            await log.aerror("bar_close_invalidate_failed", symbol=self.symbol, error=str(e))
 
     def on_trade_pending(self) -> None:
         """execute_trade cagrildi, fill bekleniyor."""
@@ -853,6 +885,26 @@ class SignalEngine:
 
             # Pine Script uyumlu: kapanan mum B olarak tekrar test edilmiyor
             # Sadece canli mum (sonraki bar) B olarak _check_divergence'da test edilir
+
+            # ── Bar close validation — webhook pozisyonunu dogrula ──
+            if self.has_position and self.webhook_entry_bar_time > 0:
+                old_candle_start = self.candle_start
+                if self.webhook_entry_bar_time == old_candle_start:
+                    # Pozisyon bu mumda acildi — kapanan mumun verileriyle divergence check
+                    sig = self._check_divergence(real_close, closed_rsi) if closed_rsi is not None else None
+                    signal_still_valid = (sig is not None and sig["direction"] == self.webhook_entry_direction)
+                    if not signal_still_valid:
+                        await log.ainfo("bar_close_validation_failed", symbol=self.symbol,
+                                        direction=self.webhook_entry_direction,
+                                        closed_rsi=round(closed_rsi, 2) if closed_rsi else None)
+                        await self._bar_close_invalidate()
+                        self.webhook_entry_bar_time = 0
+                        self.webhook_entry_direction = ""
+                    else:
+                        await log.ainfo("bar_close_validation_passed", symbol=self.symbol,
+                                        direction=self.webhook_entry_direction)
+                        self.webhook_entry_bar_time = 0
+                        self.webhook_entry_direction = ""
 
             # Yeni mum baslat
             self.candle_start = new_candle_start

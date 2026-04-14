@@ -245,6 +245,26 @@ class HeikinAshiEngine(SignalEngine):
 
             # Pine Script uyumlu: kapanan mum B olarak tekrar test edilmiyor
 
+            # ── Bar close validation — webhook pozisyonunu dogrula ──
+            if self.has_position and self.webhook_entry_bar_time > 0:
+                old_candle_start = self.candle_start
+                if self.webhook_entry_bar_time == old_candle_start:
+                    # Pozisyon bu mumda acildi — kapanan mumun HA verileriyle divergence check
+                    sig = self._check_divergence(real_c, closed_rsi) if closed_rsi is not None else None
+                    signal_still_valid = (sig is not None and sig["direction"] == self.webhook_entry_direction)
+                    if not signal_still_valid:
+                        await log.ainfo("bar_close_validation_failed", symbol=self.symbol,
+                                        direction=self.webhook_entry_direction,
+                                        closed_rsi=round(closed_rsi, 2) if closed_rsi else None)
+                        await self._bar_close_invalidate()
+                        self.webhook_entry_bar_time = 0
+                        self.webhook_entry_direction = ""
+                    else:
+                        await log.ainfo("bar_close_validation_passed", symbol=self.symbol,
+                                        direction=self.webhook_entry_direction)
+                        self.webhook_entry_bar_time = 0
+                        self.webhook_entry_direction = ""
+
             # Yeni mum
             self.candle_start = new_candle_start
             self.candle_open = price

@@ -134,6 +134,7 @@ tr.clickable:hover{background:#1c212888}
 .clickable-tag:hover{border-color:#58a6ff!important;background:#58a6ff15!important}
 .sym-tag.buy-only{color:#3fb950;background:#3fb95010;border-color:#3fb95030}
 .sym-tag.both-dir{color:#58a6ff;background:#58a6ff10;border-color:#58a6ff30}
+.sym-tag.tf{color:#d2a8ff;background:#d2a8ff10;border-color:#d2a8ff30;font-weight:600}
 
 /* Card buttons */
 .card-btn{flex:1;padding:8px 12px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid #21262d;font-family:inherit;transition:all .2s}
@@ -688,6 +689,18 @@ tr.clickable:hover{background:#1c212888}
     updateSymConfig(sym,'allowed_directions',newDirs);
   };
 
+  // ── TF (interval) edit ──
+  window.editTF=function(sym,currentTF){
+    var options=['1m','5m','15m','30m','1h','4h','1d'];
+    var idx=options.indexOf(currentTF);
+    if(idx<0) idx=2; // default 15m
+    var choice=prompt('Zaman Dilimi secin ('+sym+'):\n1=1m  2=5m  3=15m  4=30m  5=1h  6=4h  7=1d\nMevcut: '+currentTF, (idx+1).toString());
+    if(choice===null) return;
+    var ci=parseInt(choice)-1;
+    if(ci<0||ci>=options.length){showToast('Gecersiz secim','error');return;}
+    updateSymConfig(sym,'interval',options[ci]);
+  };
+
   // ── Manual close ──
   window.closePosition=function(sym){
     if(!confirm(sym+' pozisyonunu kapatmak istediginize emin misiniz?\nTP/SL emirleri de iptal edilecek.')) return;
@@ -851,9 +864,11 @@ tr.clickable:hover{background:#1c212888}
       // Toggle'lar GIZLI — webhook modunda gerek yok
       // (islem aktif, sinyal dinliyor, SL aktif, ters sinyal — hepsi gizli)
 
-      // Config tags — sadece weight gorunur
+      // Config tags — weight + TF gorunur
+      var tfVal=cfg.interval||'15m';
       html+='<div class="sym-config">';
       html+='<span class="sym-tag weight clickable-tag" onclick="editField(\''+sym+'\',\'weight\','+(weight*100).toFixed(1)+',\'Bakiye Agirligi %\')">'+((weight)*100).toFixed(0)+'%</span>';
+      html+='<span class="sym-tag tf clickable-tag" onclick="editTF(\''+sym+'\',\''+tfVal+'\')">'+tfVal+'</span>';
       html+='</div>';
 
       // Position info
