@@ -891,7 +891,8 @@ class SignalEngine:
                 old_candle_start = self.candle_start
                 if self.webhook_entry_bar_time == old_candle_start:
                     # Pozisyon bu mumda acildi — kapanan mumun verileriyle divergence check
-                    sig = self._check_divergence(real_close, closed_rsi) if closed_rsi is not None else None
+                    # usedA ATLANIR: mevcut A mumu zaten usedA'da, tekrar bulabilmeli
+                    sig = self._check_divergence_for_validation(real_close, closed_rsi) if closed_rsi is not None else None
                     signal_still_valid = (sig is not None and sig["direction"] == self.webhook_entry_direction)
                     if not signal_still_valid:
                         await log.ainfo("bar_close_validation_failed", symbol=self.symbol,
@@ -941,6 +942,36 @@ class SignalEngine:
             self.last_signal_bar = self.candle_start
             return signal
 
+        return None
+
+    def _check_divergence_for_validation(self, current_price: float, live_rsi: float) -> dict | None:
+        """Bar close validation icin divergence check — usedA ATLANIR.
+
+        Mevcut pozisyonun A mumu zaten usedA'da, bunu tekrar bulmak icin
+        usedA kontrolunu atlamak gerekir. Sadece koşullari (RSI, high/low) kontrol eder.
+        """
+        n = len(self.closed_candles)
+        search_range = min(self.max_gap, n)
+        allowed = self.settings.get("allowed_directions", "BOTH")
+        if allowed in ("BOTH", "SELL"):
+            for gap in range(1, search_range + 1):
+                a = self.closed_candles[n - gap]
+                if a["rsi"] is None:
+                    continue
+                # usedA KONTROL EDILMEZ — validation icin
+                if (a["rsi"] >= self.short_thresh
+                        and self.candle_high > a["high"]
+                        and live_rsi < a["rsi"]):
+                    return {"direction": "SELL"}
+        if allowed in ("BOTH", "BUY"):
+            for gap in range(1, search_range + 1):
+                a = self.closed_candles[n - gap]
+                if a["rsi"] is None:
+                    continue
+                if (a["rsi"] <= self.long_thresh
+                        and self.candle_low < a["low"]
+                        and live_rsi > a["rsi"]):
+                    return {"direction": "BUY"}
         return None
 
     # ── Divergence tespiti ───────────────────────────────

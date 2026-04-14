@@ -250,7 +250,8 @@ class HeikinAshiEngine(SignalEngine):
                 old_candle_start = self.candle_start
                 if self.webhook_entry_bar_time == old_candle_start:
                     # Pozisyon bu mumda acildi — kapanan mumun HA verileriyle divergence check
-                    sig = self._check_divergence(real_c, closed_rsi) if closed_rsi is not None else None
+                    # usedA ATLANIR: mevcut A mumu zaten usedA'da, tekrar bulabilmeli
+                    sig = self._check_divergence_for_validation(real_c, closed_rsi) if closed_rsi is not None else None
                     signal_still_valid = (sig is not None and sig["direction"] == self.webhook_entry_direction)
                     if not signal_still_valid:
                         await log.ainfo("bar_close_validation_failed", symbol=self.symbol,
