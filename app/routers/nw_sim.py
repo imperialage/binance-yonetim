@@ -78,9 +78,10 @@ def simulate_nw_color_flip(
     if n < x_0 + 2:
         return {"candles": [], "signals": [], "trades": [], "stats": {}}
 
-    # Pine Script'te close = normal mum close (HA degil)
-    # HA grafiginde bile ta.rsi(close) ve rqKernel(close) gercek close kullanir
-    closes = [c["real_close"] for c in ha_candles]
+    # TradingView HA chart'ta close = HA close
+    # Pine Script'te rqKernel(close) → HA close kullanir
+    # Entry fiyati da HA close (simulasyon TradingView ile birebir)
+    closes = [c["close"] for c in ha_candles]
 
     # NW kernel hesapla
     yhat = [0.0] * n
