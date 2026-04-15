@@ -412,7 +412,7 @@ async def _pine_live_loop() -> None:
             now = time.time()
 
             # 30sn'de bir aktif sembol/parametre listesini yenile
-            if now - last_sync > 30:
+            if now - last_sync > 60:  # 30 → 60sn (rate limit onlemi)
                 last_sync = now
                 await _sync_active_symbols()
 

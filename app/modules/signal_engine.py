@@ -1313,11 +1313,11 @@ async def _engine_loop() -> None:
 
     # Pozisyon sync periyodik (30sn)
     last_pos_sync = time.time()
-    POS_SYNC_INTERVAL = 30
+    POS_SYNC_INTERVAL = 60  # 30 → 60sn (8+ sembol, rate limit onlemi)
 
     # Fill takip periyodik (2sn) — pending order varsa Binance'tan kontrol
     last_fill_check = time.time()
-    FILL_CHECK_INTERVAL = 2
+    FILL_CHECK_INTERVAL = 5  # 2 → 5sn (rate limit onlemi)
 
     # TP/SL watchdog periyodik (10sn) — yedek guevenlik
     last_tpsl_check = time.time()

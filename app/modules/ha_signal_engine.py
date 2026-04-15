@@ -394,7 +394,7 @@ async def _ha_engine_loop() -> None:
             now = time.time()
 
             # Fill takip + pozisyon kapanma (2sn)
-            if now - last_fill_check > 2:
+            if now - last_fill_check > 5:  # 2 → 5sn (rate limit onlemi)
                 last_fill_check = now
                 for engine in _ha_engines.values():
                     if engine.trade_pending:
@@ -403,7 +403,7 @@ async def _ha_engine_loop() -> None:
                         await engine.check_position_closed()
 
             # Pozisyon sync (30sn)
-            if now - last_pos_sync > 30:
+            if now - last_pos_sync > 60:  # 30 → 60sn (rate limit onlemi)
                 last_pos_sync = now
                 for engine in _ha_engines.values():
                     await engine._sync_position()
