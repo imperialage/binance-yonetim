@@ -214,17 +214,34 @@ async def nw_sim(
     sym = symbol.upper()
     bars = max(50, min(bars, 1500))
 
+    # HA warmup icin cok daha fazla mum cek (HA zincirleme hesap, ilk mumdan baslayarak
+    # birikici — az mumla baslarsa TradingView'dan sapar)
+    # 3000 mum = HA warmup + gosterilecek mumlar
+    warmup_bars = 3000
+    iv_ms = INTERVAL_MS.get(interval, 300_000)
     end_ms = int(time.time() * 1000)
-    start_ms = end_ms - (bars + x_0 + 50) * INTERVAL_MS.get(interval, 300_000)
+    start_ms = end_ms - (warmup_bars + x_0 + 50) * iv_ms
 
     try:
+        import asyncio as _asyncio
+        all_klines: list = []
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get("https://fapi.binance.com/fapi/v1/klines", params={
-                "symbol": sym, "interval": interval,
-                "startTime": start_ms, "endTime": end_ms, "limit": 1500,
-            })
-            resp.raise_for_status()
-            klines = resp.json()
+            current = start_ms
+            while current < end_ms:
+                resp = await client.get("https://fapi.binance.com/fapi/v1/klines", params={
+                    "symbol": sym, "interval": interval,
+                    "startTime": current, "endTime": end_ms, "limit": 1500,
+                })
+                resp.raise_for_status()
+                batch = resp.json()
+                if not batch:
+                    break
+                all_klines.extend(batch)
+                current = int(batch[-1][0]) + iv_ms
+                if len(batch) < 1500:
+                    break
+                await _asyncio.sleep(0.2)
+        klines = all_klines
     except Exception as e:
         return {"error": str(e), "candles": [], "signals": [], "trades": [], "stats": {}}
 
@@ -241,7 +258,17 @@ async def nw_sim(
         comm_pct=comm_pct / 100.0,
     )
 
+    # Sadece son 'bars' mumu frontend'e don (warmup mumlari gizle)
+    total_candles = len(result.get("candles", []))
+    if total_candles > bars:
+        cutoff_idx = total_candles - bars
+        result["candles"] = result["candles"][cutoff_idx:]
+        # Sinyaller ve trade'leri de filtrele (idx >= cutoff)
+        result["signals"] = [s for s in result.get("signals", []) if s["idx"] >= cutoff_idx]
+        result["trades"] = [t for t in result.get("trades", []) if t["exit_idx"] >= cutoff_idx]
+
     result["symbol"] = sym
     result["interval"] = interval
+    result["total_ha_candles"] = total_candles
     result["params"] = {"h": h, "alpha": alpha, "x_0": x_0, "comm_pct": comm_pct, "bars": bars}
     return result
