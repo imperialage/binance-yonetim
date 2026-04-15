@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NW Color Flip — HA Monitor</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>
+body{font-size:13px}
+.hbtn{padding:5px 14px;border-radius:var(--radius-sm);font-size:11px;font-weight:700;cursor:pointer;border:none;font-family:inherit;background:var(--accent-gold);color:var(--bg-primary)}
+.hbtn:hover{opacity:0.85}
+.hbtn-sec{background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border-secondary)}
+.live-price-bar{margin-left:auto;display:flex;align-items:center;gap:6px}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);margin-bottom:var(--space-lg)}
+.card-title{font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+.cr{display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px}
+.cr .k{color:var(--text-dim)}.cr .v{font-weight:600;font-variant-numeric:tabular-nums}
+.nw-tag{background:#d2a8ff20;color:#d2a8ff;font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;margin-left:6px}
+.ha-tag{background:#A371F720;color:#A371F7;font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;margin-left:4px}
+.pgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.pgrid .pi{display:flex;flex-direction:column;gap:2px}
+.pgrid label{font-size:9px;color:var(--text-dim);font-weight:600;text-transform:uppercase}
+.pgrid input{background:var(--bg-input);border:1px solid var(--border-secondary);color:var(--text-primary);padding:4px 6px;border-radius:4px;font-size:11px;font-family:inherit}
+.pgrid input:focus{outline:none;border-color:var(--accent-gold)}
+.tbl-wrap{overflow-x:auto;overflow-y:auto;max-height:600px;margin-bottom:20px;border:1px solid var(--border-primary);border-radius:var(--radius-lg)}
+.tbl-wrap thead{position:sticky;top:0;z-index:1}
+.tbl-wrap table{background:var(--bg-secondary)}
+tr.r-buy{background:rgba(14,203,129,0.05);border-left:3px solid var(--color-long)}
+tr.r-sell{background:rgba(246,70,93,0.05);border-left:3px solid var(--color-short)}
+tr.r-flip{background:rgba(210,168,255,0.08);border-left:3px solid #d2a8ff}
+.b-buy{background:var(--color-long-bg);color:var(--color-long)}
+.b-sell{background:var(--color-short-bg);color:var(--color-short)}
+.b-up{background:rgba(14,203,129,0.12);color:var(--color-long);font-size:9px;padding:1px 5px;border-radius:3px}
+.b-down{background:rgba(246,70,93,0.12);color:var(--color-short);font-size:9px;padding:1px 5px;border-radius:3px}
+.sig-detail{font-size:10px;padding:4px 8px 4px 14px;color:#d2a8ff}
+@media(max-width:900px){.cards{grid-template-columns:1fr}.pgrid{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+
+<header class="app-header">
+    <span class="logo">NW Monitor</span><span class="nw-tag">Color Flip</span><span class="ha-tag">Heikin-Ashi</span>
+    <nav class="nav-links">
+        <a href="/trading">Trading</a>
+        <a href="/ha-monitor">HA Monitor</a>
+        <a href="/pine-monitor">Pine Monitor</a>
+        <a href="/monitor">Monitor</a>
+    </nav>
+    <select id="symSel"></select>
+    <select id="tfSel">
+        <option value="1m">1m</option>
+        <option value="5m" selected>5m</option>
+        <option value="15m">15m</option>
+        <option value="30m">30m</option>
+        <option value="1h">1h</option>
+        <option value="4h">4h</option>
+    </select>
+    <div class="live-price-bar">
+        <span class="conn-dot" id="ld"></span>
+        <span style="font-size:11px;color:var(--text-dim)" id="liveTime">--</span>
+        <span class="live-price live-price-lg price-flat" id="lp">--</span>
+    </div>
+</header>
+
+<div class="container">
+
+<div class="cards">
+    <!-- HA Canli Mum -->
+    <div class="card" style="border-color:#d2a8ff30">
+        <div class="card-title">HA Canli Mum <span id="candleTimer" style="color:#d2a8ff;font-size:14px;font-weight:800">--</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:6px">
+            <div class="cr"><span class="k">HA Open</span><span class="v" id="lcO">--</span></div>
+            <div class="cr"><span class="k">HA High</span><span class="v green" id="lcH">--</span></div>
+            <div class="cr"><span class="k">HA Low</span><span class="v red" id="lcL">--</span></div>
+            <div class="cr"><span class="k">HA Close</span><span class="v" id="lcC" style="font-size:15px;font-weight:800">--</span></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:10px;color:#6e7681">NW Trend</span>
+            <span id="lcNW" style="font-size:14px;font-weight:700;color:#d2a8ff">--</span>
+            <span style="font-size:10px;color:#6e7681">Real</span>
+            <span id="lcReal" style="font-size:12px;color:#848E9C">--</span>
+        </div>
+    </div>
+
+    <!-- Simülasyon İstatistik -->
+    <div class="card">
+        <div class="card-title">Simülasyon Sonuçları</div>
+        <div id="statsInfo" style="font-size:11px">--</div>
+    </div>
+</div>
+
+<!-- Kernel Ayarlari -->
+<div class="card" style="margin-bottom:12px">
+    <div class="card-title">
+        <span>Kernel Ayarlari (<span id="parmSym">--</span>)</span>
+        <span style="display:flex;gap:6px">
+            <button class="hbtn hbtn-sec" onclick="resetParams()">Varsayilan</button>
+            <button class="hbtn" onclick="applyParams()">Uygula & Yenile</button>
+        </span>
+    </div>
+    <div class="pgrid">
+        <div class="pi"><label>Lookback (h)</label><input id="pH" type="number" min="1" step="1" value="8"></div>
+        <div class="pi"><label>Weighting (α)</label><input id="pAlpha" type="number" step="0.25" value="8"></div>
+        <div class="pi"><label>Start Bar</label><input id="pX0" type="number" min="1" step="1" value="25"></div>
+        <div class="pi"><label>Komisyon %</label><input id="pCom" type="number" step="0.01" value="0.08"></div>
+        <div class="pi"><label>Mum Sayisi</label><input id="pBars" type="number" min="100" max="1500" step="50" value="500"></div>
+    </div>
+</div>
+
+<!-- Mum Tablosu -->
+<div class="section-title">HA Mum Geçmişi <span class="cnt" id="candleCnt">0</span></div>
+<div class="tbl-wrap"><table>
+<thead><tr>
+    <th>Tarih</th><th>HA Open</th><th>HA High</th><th>HA Low</th><th>HA Close</th><th>Real</th><th>NW</th><th>Trend</th><th>Olay</th>
+</tr></thead>
+<tbody id="candleBody"></tbody>
+</table></div>
+
+<!-- İşlemler Tablosu -->
+<div class="section-title">İşlemler <span class="cnt" id="tradeCnt">0</span></div>
+<div class="tbl-wrap"><table>
+<thead><tr>
+    <th>Giriş</th><th>Çıkış</th><th>Yön</th><th>Giriş $</th><th>Çıkış $</th><th>PnL %</th><th>Süre</th>
+</tr></thead>
+<tbody id="tradeBody"></tbody>
+</table></div>
+
+</div>
+
+<script>
+var SYMS=['XAGUSDT','ETHUSDT','MYXUSDT','BTCUSDT','SOLUSDT','XRPUSDT','DOGEUSDT','AVAXUSDT','ZECUSDT','1000PEPEUSDT','DOTUSDT','NEARUSDT'];
+var sym='MYXUSDT',tf='5m',ws,prices={},lastPrice=0,simData=null;
+var DEFAULTS={h:8,alpha:8,x_0:25,comm_pct:0.08,bars:500};
+
+function $(id){return document.getElementById(id)}
+function fmt(n,d){return n==null||isNaN(n)?'--':Number(n).toFixed(d!=null?d:4)}
+function dec(p){return p>=100?2:p>=1?4:6}
+
+// LocalStorage
+function getParams(s){try{var a=JSON.parse(localStorage.getItem('nw_mon_params')||'{}');return Object.assign({},DEFAULTS,a[s]||{})}catch(e){return Object.assign({},DEFAULTS)}}
+function saveParams(s,p){try{var a=JSON.parse(localStorage.getItem('nw_mon_params')||'{}');a[s]=p;localStorage.setItem('nw_mon_params',JSON.stringify(a))}catch(e){}}
+function loadParamsToUI(){var p=getParams(sym);$('pH').value=p.h;$('pAlpha').value=p.alpha;$('pX0').value=p.x_0;$('pCom').value=p.comm_pct;$('pBars').value=p.bars;$('parmSym').textContent=sym}
+function readParams(){return{h:parseInt($('pH').value)||8,alpha:parseFloat($('pAlpha').value)||8,x_0:parseInt($('pX0').value)||25,comm_pct:parseFloat($('pCom').value)||0.08,bars:parseInt($('pBars').value)||500}}
+function applyParams(){var p=readParams();saveParams(sym,p);loadData()}
+function resetParams(){saveParams(sym,DEFAULTS);loadParamsToUI();loadData()}
+
+// State
+function saveState(){localStorage.setItem('nw_mon_state',JSON.stringify({sym:sym,tf:tf}))}
+function loadState(){try{var s=JSON.parse(localStorage.getItem('nw_mon_state'));if(s){sym=s.sym||'MYXUSDT';tf=s.tf||'5m'}}catch(e){}}
+
+function initUI(){
+    var h='';SYMS.forEach(function(s){h+='<option value="'+s+'"'+(s===sym?' selected':'')+'>'+s.replace('USDT','')+'</option>'});
+    $('symSel').innerHTML=h;$('tfSel').value=tf;
+    $('symSel').onchange=function(){sym=this.value;saveState();loadParamsToUI();loadData()};
+    $('tfSel').onchange=function(){tf=this.value;saveState();loadData()};
+}
+
+async function loadData(){
+    var p=readParams();
+    var u='/api/nw-sim?symbol='+sym+'&interval='+tf+'&h='+p.h+'&alpha='+p.alpha+'&x_0='+p.x_0+'&comm_pct='+p.comm_pct+'&bars='+p.bars;
+    try{
+        $('candleBody').innerHTML='<tr><td colspan="9" style="text-align:center;color:#d2a8ff;padding:20px">Yukleniyor...</td></tr>';
+        var r=await fetch(u);simData=await r.json();
+        if(simData.error){$('candleBody').innerHTML='<tr><td colspan="9" style="color:#F6465D;padding:20px">'+simData.error+'</td></tr>';return}
+        renderAll();
+    }catch(e){$('candleBody').innerHTML='<tr><td colspan="9" style="color:#F6465D;padding:20px">Hata: '+e.message+'</td></tr>'}
+}
+
+function renderAll(){
+    if(!simData||!simData.candles)return;
+    var d=simData;
+    var candles=d.candles||[];
+    var sigByIdx={},tradeEntryByIdx={},tradeExitByIdx={};
+    (d.signals||[]).forEach(function(s){sigByIdx[s.idx]=s});
+    (d.trades||[]).forEach(function(t){tradeEntryByIdx[t.entry_idx]=t;tradeExitByIdx[t.exit_idx]=t});
+
+    // Stats
+    var st=d.stats||{};
+    var pnlCls=st.sum_pnl_pct>=0?'green':'red';
+    var wrCls=st.win_rate>=50?'green':'red';
+    $('statsInfo').innerHTML=
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">'
+        +'<div class="cr"><span class="k">Sinyal</span><span class="v">'+(st.n_signals||0)+'</span></div>'
+        +'<div class="cr"><span class="k">İşlem</span><span class="v">'+(st.n_trades||0)+'</span></div>'
+        +'<div class="cr"><span class="k">Kazanç / Kayıp</span><span class="v">'+(st.n_win||0)+' / '+(st.n_loss||0)+'</span></div>'
+        +'<div class="cr"><span class="k">Win Rate</span><span class="v '+wrCls+'">'+fmt(st.win_rate,1)+'%</span></div>'
+        +'<div class="cr"><span class="k">Net PnL</span><span class="v '+pnlCls+'">'+fmt(st.sum_pnl_pct,2)+'%</span></div>'
+        +'<div class="cr"><span class="k">Profit Factor</span><span class="v">'+fmt(st.profit_factor,2)+'</span></div>'
+        +'<div class="cr"><span class="k">Ort K / Z</span><span class="v">'+fmt(st.avg_win,2)+'% / '+fmt(st.avg_loss,2)+'%</span></div>'
+        +'<div class="cr"><span class="k">Açık Pozisyon</span><span class="v">'+(st.open_position?(st.open_side+' @'+fmt(st.open_entry,dec(st.open_entry||0))):'Yok')+'</span></div>'
+        +'</div>';
+
+    // Candle table
+    var html='';
+    for(var i=candles.length-1;i>=0;i--){
+        var c=candles[i];var sig=sigByIdx[i];var tExit=tradeExitByIdx[i];var tEntry=tradeEntryByIdx[i];
+        var pp=dec(c.close);
+        var tarih=new Date(c.time*1000).toLocaleString('tr-TR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+        var trendCls=c.trend==='UP'?'b-up':'b-down';
+        var olay='';
+
+        if(tExit){
+            var rCls=tExit.pnl_pct>=0?'green':'red';
+            var icon=tExit.pnl_pct>=0?'✓':'✗';
+            olay+='<span class="badge '+(tExit.pnl_pct>=0?'b-buy':'b-sell')+'">'+icon+' '+fmt(tExit.pnl_pct,2)+'%</span> ';
+        }
+        if(sig){
+            var sCls=sig.direction==='BUY'?'b-buy':'b-sell';
+            var sIcon=sig.direction==='BUY'?'▲':'▼';
+            olay+='<span class="badge '+sCls+'">'+sIcon+' '+sig.direction+' '+fmt(sig.entry_price,pp)+'</span>';
+        }
+
+        // Exit detay satiri
+        if(tExit){
+            html+='<tr class="'+(tExit.pnl_pct>=0?'r-buy':'r-sell')+'"><td colspan="9" class="sig-detail">'
+                +'<span style="font-weight:700">'+(tExit.pnl_pct>=0?'KAZANÇ':'KAYIP')+'</span> '
+                +tExit.direction+' '+tExit.entry_date+' → '+tExit.exit_date+' | '
+                +'Giriş: <span class="yellow">'+fmt(tExit.entry_price,pp)+'</span> → '
+                +'Çıkış: <span class="yellow">'+fmt(tExit.exit_price,pp)+'</span> | '
+                +'PnL: <span class="'+rCls+'">'+fmt(tExit.pnl_pct,2)+'%</span>'
+                +'</td></tr>';
+        }
+        if(sig){
+            html+='<tr class="r-flip"><td colspan="9" class="sig-detail">'
+                +'<span style="color:#d2a8ff;font-weight:700">FLIP</span> '
+                +sIcon+' '+sig.direction+' @ <span class="yellow">'+fmt(sig.entry_price,pp)+'</span> | '
+                +'NW: '+fmt(sig.nw_prev,pp)+' → '+fmt(sig.nw_value,pp)
+                +'</td></tr>';
+        }
+
+        var rowCls=c.flip?'r-flip':'';
+        html+='<tr class="'+rowCls+'">'
+            +'<td style="color:var(--text-dim);font-size:10px">'+tarih+'</td>'
+            +'<td>'+fmt(c.open,pp)+'</td>'
+            +'<td class="green">'+fmt(c.high,pp)+'</td>'
+            +'<td class="red">'+fmt(c.low,pp)+'</td>'
+            +'<td>'+fmt(c.close,pp)+'</td>'
+            +'<td style="color:var(--text-dim)">'+fmt(c.real_close,pp)+'</td>'
+            +'<td style="color:#d2a8ff">'+(c.nw!=null?fmt(c.nw,pp):'—')+'</td>'
+            +'<td><span class="'+trendCls+'">'+c.trend+'</span></td>'
+            +'<td>'+olay+'</td>'
+            +'</tr>';
+    }
+    $('candleBody').innerHTML=html||'<tr><td colspan="9" style="text-align:center;color:#6e7681;padding:20px">Veri yok</td></tr>';
+    $('candleCnt').textContent=candles.length;
+
+    // Trades table
+    var th='';
+    (d.trades||[]).slice().reverse().forEach(function(t){
+        var pp2=dec(t.entry_price);var pCls=t.pnl_pct>=0?'green':'red';
+        var dirCls=t.direction==='BUY'?'b-buy':'b-sell';
+        var durSec=t.exit_time-t.entry_time;var durStr=durSec>=3600?fmt(durSec/3600,1)+'h':durSec>=60?Math.round(durSec/60)+'m':durSec+'s';
+        th+='<tr>'
+            +'<td style="color:var(--text-dim);font-size:10px">'+t.entry_date+'</td>'
+            +'<td style="color:var(--text-dim);font-size:10px">'+t.exit_date+'</td>'
+            +'<td><span class="badge '+dirCls+'">'+(t.direction==='BUY'?'▲L':'▼S')+'</span></td>'
+            +'<td class="yellow">'+fmt(t.entry_price,pp2)+'</td>'
+            +'<td class="yellow">'+fmt(t.exit_price,pp2)+'</td>'
+            +'<td class="'+pCls+'">'+fmt(t.pnl_pct,2)+'%</td>'
+            +'<td style="color:var(--text-dim)">'+durStr+'</td>'
+            +'</tr>';
+    });
+    $('tradeBody').innerHTML=th||'<tr><td colspan="7" style="text-align:center;color:#6e7681;padding:20px">İşlem yok</td></tr>';
+    $('tradeCnt').textContent=(d.trades||[]).length;
+
+    // Live candle (son mum)
+    if(candles.length>0){
+        var lc=candles[candles.length-1];var pp3=dec(lc.close);
+        $('lcO').textContent=fmt(lc.open,pp3);$('lcH').textContent=fmt(lc.high,pp3);
+        $('lcL').textContent=fmt(lc.low,pp3);$('lcC').textContent=fmt(lc.close,pp3);
+        $('lcReal').textContent=fmt(lc.real_close,pp3);
+        $('lcNW').textContent=lc.nw!=null?fmt(lc.nw,pp3)+' ('+lc.trend+')':'—';
+        $('lcNW').style.color=lc.trend==='UP'?'#0ECB81':'#F6465D';
+    }
+}
+
+// WebSocket
+function connectWS(){
+    var p=location.protocol==='https:'?'wss:':'ws:';
+    ws=new WebSocket(p+'//'+location.host+'/ws/prices');
+    ws.onopen=function(){$('ld').classList.add('on')};
+    ws.onmessage=function(e){try{
+        prices=JSON.parse(e.data);var v=prices[sym];
+        if(v!=null){var price=parseFloat(v);var el=$('lp');
+            el.className='live-price live-price-lg '+(price>lastPrice?'price-up':price<lastPrice?'price-down':'price-flat');
+            el.textContent=fmt(price,dec(price));lastPrice=price;
+            $('liveTime').textContent=new Date().toLocaleTimeString('tr-TR');
+        }
+    }catch(x){}};
+    ws.onclose=function(){$('ld').classList.remove('on');setTimeout(connectWS,3000)};
+    ws.onerror=function(){ws.close()};
+}
+
+function tickTimer(){
+    var tfSec={'1m':60,'5m':300,'15m':900,'30m':1800,'1h':3600,'4h':14400}[tf]||300;
+    var now=Math.floor(Date.now()/1000);var remain=tfSec-((now)%tfSec);
+    var m=Math.floor(remain/60),s=remain%60;
+    $('candleTimer').textContent=m+':'+(s<10?'0':'')+s;
+}
+
+// Init
+loadState();initUI();loadParamsToUI();loadData();connectWS();
+setInterval(tickTimer,1000);setInterval(loadData,60000);
+</script>
+</body>
+</html>

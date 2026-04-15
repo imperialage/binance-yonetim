@@ -105,6 +105,8 @@ app.include_router(indicator_settings.router, tags=["indicator-settings"])
 app.include_router(strategy_report.router, tags=["strategy-report"])
 from app.routers import pine_sim  # noqa: E402
 app.include_router(pine_sim.router, tags=["pine-sim"])
+from app.routers import nw_sim  # noqa: E402
+app.include_router(nw_sim.router, tags=["nw-sim"])
 
 # ── Static files & page routes ────────────────────────
 _static_dir = Path(__file__).resolve().parent.parent / "static"
@@ -180,6 +182,14 @@ async def strategy_page() -> FileResponse:
 async def pine_monitor_page() -> FileResponse:
     return FileResponse(
         str(_static_dir / "pine_monitor.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/nw-monitor")
+async def nw_monitor_page() -> FileResponse:
+    return FileResponse(
+        str(_static_dir / "nw_monitor.html"),
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
 
