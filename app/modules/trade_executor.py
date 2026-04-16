@@ -13,6 +13,7 @@ from app.modules.binance_client import (
     get_exchange_info,
     get_order_status,
     get_position_risk,
+    get_total_wallet_balance,
     get_usdt_balance,
     place_limit_order,
     place_market_order,
@@ -140,17 +141,25 @@ async def _execute_trade_inner(
     # ── 1. Leverage: startup'ta set edildi, burada atla ──
 
     # ── 2. Position + Balance: pre-fetch varsa kullan, yoksa paralel cek ──
+    # balance = TOPLAM cuzdan bakiyesi (acik pozisyonlarin margin'i dahil)
+    # Weight hesabi toplam bakiye uzerinden → her sembol bagimsiz alan alir
     if prefetch:
         try:
             positions, balance = await prefetch
         except Exception:
             positions, balance = await asyncio.gather(
-                get_position_risk(symbol), get_usdt_balance(),
+                get_position_risk(symbol), get_total_wallet_balance(),
             )
     else:
         positions, balance = await asyncio.gather(
-            get_position_risk(symbol), get_usdt_balance(),
+            get_position_risk(symbol), get_total_wallet_balance(),
         )
+
+    # Kullanilabilir bakiye (margin acigi icin)
+    try:
+        available_balance = await get_usdt_balance()
+    except Exception:
+        available_balance = balance
 
     current_pos = None
     for p in positions:
@@ -287,9 +296,21 @@ async def _execute_trade_inner(
         )
         return
 
-    # EV-weighted capital allocation — her sembol kendi ağırlığı kadar bakiye kullanır
+    # Weight hesabi — TOPLAM cuzdan bakiyesi uzerinden (acik pozisyonlardan bagimsiz)
+    # Boylece %20 MYX + %50 ETH = toplam %70, her biri kendi dilimini alir
     sym_weight = sym_cfg.get("weight", 0.10)
     usable_balance = balance * sym_weight * 0.98
+
+    # Margin yetersizlik uyarisi
+    if usable_balance > available_balance:
+        log.warning(
+            "insufficient_available_balance",
+            symbol=symbol, side=side,
+            total_balance=balance, available=available_balance,
+            required=usable_balance, weight=sym_weight,
+            msg="Weight toplami acik pozisyonlardan dolayi bakiyeyi asmis olabilir",
+        )
+
     raw_qty = usable_balance / price
     quantity = round_step_size(raw_qty, step_size)
 
