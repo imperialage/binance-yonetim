@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HA Monitor — MYX</title>
+<title>HA Monitor — Tüm Semboller</title>
 <link rel="stylesheet" href="/static/styles.css">
 <style>
 body{font-size:13px}
@@ -47,11 +47,14 @@ tr.ob-row td:nth-child(8){color:var(--color-short);font-weight:600}
     <a href="/trading">Trading</a>
     <a href="/settings">Ayarlar</a>
   </nav>
+  <select id="symSel" style="margin-right:4px"></select>
   <select id="tfSel">
-    <option value="1m">1m</option>
     <option value="5m" selected>5m</option>
     <option value="15m">15m</option>
+    <option value="30m">30m</option>
     <option value="1h">1h</option>
+    <option value="4h">4h</option>
+    <option value="1d">1g</option>
   </select>
   <div class="live-price-bar">
     <span class="conn-dot" id="ld"></span>
@@ -129,6 +132,7 @@ tr.ob-row td:nth-child(8){color:var(--color-short);font-weight:600}
 </div>
 
 <script>
+var SYMS=['XAGUSDT','ETHUSDT','MYXUSDT','BTCUSDT','SOLUSDT','XRPUSDT','DOGEUSDT','AVAXUSDT','ZECUSDT','1000PEPEUSDT','DOTUSDT','NEARUSDT'];
 var sym='MYXUSDT',tf='5m',ws,prices={},lastPrice=0,chartData=null,adminToken='',dbSignals=[];
 
 function $(id){return document.getElementById(id)}
@@ -136,7 +140,17 @@ function fmt(n,d){return n==null||isNaN(n)?'--':Number(n).toFixed(d!=null?d:4)}
 function fmtK(n){if(n==null)return'--';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(0)+'K';return n.toFixed(0)}
 function dec(p){return p>=100?2:p>=1?4:6}
 
-$('tfSel').onchange=function(){tf=this.value;loadData()};
+// LocalStorage state
+function saveState(){localStorage.setItem('ha_mon_state',JSON.stringify({sym:sym,tf:tf}))}
+function loadState(){try{var s=JSON.parse(localStorage.getItem('ha_mon_state'));if(s){sym=s.sym||'MYXUSDT';tf=s.tf||'5m'}}catch(e){}}
+
+function initSymSel(){
+  var h='';SYMS.forEach(function(s){h+='<option value="'+s+'"'+(s===sym?' selected':'')+'>'+s.replace('USDT','').replace('1000','1K ')+'</option>'});
+  $('symSel').innerHTML=h;
+  $('symSel').onchange=function(){sym=this.value;saveState();loadSettingsAndData()};
+}
+
+$('tfSel').onchange=function(){tf=this.value;saveState();loadData()};
 
 async function loadSettingsAndData(){
   try{
@@ -203,7 +217,18 @@ async function loadEngineStatus(){
         +'<div class="cr"><span class="k">Used A</span><span class="v">'+eng.used_a_count+'</span></div>'
         +'<div class="cr"><span class="k">Pozisyon</span><span class="v">'+(eng.has_position?eng.position_side:'Yok')+'</span></div>';
     }else{
-      $('engineInfo').innerHTML='<span style="color:#F6465D">HA motor bulunamadi — ha_enabled=1 set edin</span>';
+      // Normal engine kontrol
+      var eng2=(d.engines||[]).find(function(e){return e.symbol===sym});
+      if(eng2){
+        $('engineInfo').innerHTML=
+          '<div class="cr"><span class="k">Motor</span><span class="v" style="color:#F0B90B">NORMAL (HA değil)</span></div>'
+          +'<div class="cr"><span class="k">Durum</span><span class="v">'+(eng2.warmed_up?'AKTIF':'WARMUP')+'</span></div>'
+          +'<div class="cr"><span class="k">Mumlar</span><span class="v">'+eng2.closed_candles+'</span></div>'
+          +'<div class="cr"><span class="k">Pozisyon</span><span class="v">'+(eng2.has_position?eng2.position_side:'Yok')+'</span></div>'
+          +'<div style="font-size:10px;color:#6e7681;margin-top:4px">Not: Bu sembol HA motor kullanmıyor. HA mumları sadece görsel.</div>';
+      }else{
+        $('engineInfo').innerHTML='<span style="color:#F6465D">Motor bulunamadı</span>';
+      }
     }
   }catch(e){}
 }
@@ -449,7 +474,7 @@ function startRSIPolling(){
 setInterval(function(){
   if(!chartData||!chartData.candles||!chartData.candles.length)return;
   var lc=chartData.candles[chartData.candles.length-1];
-  var sec={'1m':60,'5m':300,'15m':900,'30m':1800,'1h':3600}[tf]||300;
+  var sec={'1m':60,'5m':300,'15m':900,'30m':1800,'1h':3600,'4h':14400,'1d':86400}[tf]||300;
   var now=Math.floor(Date.now()/1000);var el=now-lc.time;
   var rem=Math.max(0,sec-el);
   $('candleTimer').textContent=Math.floor(rem/60)+':'+('0'+(rem%60)).slice(-2);
@@ -467,7 +492,12 @@ $('fEnd').value=$('fStart').value;
 $('todayLabel').textContent=('0'+d.getDate()).slice(-2)+'.'+('0'+(d.getMonth()+1)).slice(-2)+'.'+d.getFullYear();
 adminToken=localStorage.getItem('admin_token')||'';
 
-loadSettingsAndData();connectWS();
+// Init
+loadState();
+initSymSel();
+$('tfSel').value=tf;
+loadSettingsAndData();
+connectWS();
 </script>
 </body>
 </html>
