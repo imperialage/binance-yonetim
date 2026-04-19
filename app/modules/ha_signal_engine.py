@@ -245,26 +245,25 @@ class HeikinAshiEngine(SignalEngine):
 
             # Pine Script uyumlu: kapanan mum B olarak tekrar test edilmiyor
 
-            # ── Bar close validation — webhook pozisyonunu dogrula ──
-            if self.has_position and self.webhook_entry_bar_time > 0:
-                old_candle_start = self.candle_start
-                if self.webhook_entry_bar_time == old_candle_start:
-                    # Pozisyon bu mumda acildi — kapanan mumun HA verileriyle divergence check
-                    # usedA ATLANIR: mevcut A mumu zaten usedA'da, tekrar bulabilmeli
-                    sig = self._check_divergence_for_validation(real_c, closed_rsi) if closed_rsi is not None else None
-                    signal_still_valid = (sig is not None and sig["direction"] == self.webhook_entry_direction)
-                    if not signal_still_valid:
-                        await log.ainfo("bar_close_validation_failed", symbol=self.symbol,
-                                        direction=self.webhook_entry_direction,
-                                        closed_rsi=round(closed_rsi, 2) if closed_rsi else None)
-                        await self._bar_close_invalidate()
-                        self.webhook_entry_bar_time = 0
-                        self.webhook_entry_direction = ""
-                    else:
-                        await log.ainfo("bar_close_validation_passed", symbol=self.symbol,
-                                        direction=self.webhook_entry_direction)
-                        self.webhook_entry_bar_time = 0
-                        self.webhook_entry_direction = ""
+            # ── Bar close validation — HER mum kapanisinda sinyal dogrula ──
+            # HA motor direkt trade actigi icin, sadece giris mumunda degil
+            # HER mum kapanisinda sinyal hala gecerli mi kontrol et.
+            # Sinyal sonduyse → pozisyonu kapat, yeni sinyal bekle.
+            if self.has_position and self.position_side:
+                sig = self._check_divergence_for_validation(real_c, closed_rsi) if closed_rsi is not None else None
+                signal_still_valid = (sig is not None and sig["direction"] == ("BUY" if self.position_side == "LONG" else "SELL"))
+                if not signal_still_valid:
+                    await log.ainfo("bar_close_validation_failed", symbol=self.symbol,
+                                    direction=self.position_side,
+                                    closed_rsi=round(closed_rsi, 2) if closed_rsi else None,
+                                    bar_time=self.candle_start)
+                    await self._bar_close_invalidate()
+                else:
+                    await log.ainfo("bar_close_validation_passed", symbol=self.symbol,
+                                    direction=self.position_side)
+                # Giris mumu tracking sifirla (artik her mumda kontrol ediliyor)
+                self.webhook_entry_bar_time = 0
+                self.webhook_entry_direction = ""
 
             # Yeni mum
             self.candle_start = new_candle_start
