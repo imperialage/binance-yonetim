@@ -542,7 +542,7 @@ async def _ha_engine_loop() -> None:
 
     tz_ist = timezone(timedelta(hours=3))
 
-    # Baslangicta ha_enabled sembolleri yukle
+    # Baslangicta ha_enabled sembolleri yukle (rate limit dostu: 3sn arayla)
     try:
         all_settings = await get_all_settings()
         for s in all_settings:
@@ -553,6 +553,7 @@ async def _ha_engine_loop() -> None:
                 if engine.warmed_up:
                     _ha_engines[sym] = engine
                     await log.ainfo("ha_engine_started", symbol=sym)
+                await asyncio.sleep(3)  # Rate limit — semboller arasi bekleme
     except Exception as e:
         await log.aerror("ha_engine_init_error", error=str(e))
 
@@ -570,8 +571,9 @@ async def _ha_engine_loop() -> None:
             await asyncio.sleep(1)  # 1sn tick (rate limit dostu)
             now = time.time()
 
-            # Pozisyon sync (60sn) — Binance'tan gercek durumu al
-            if now - last_pos_sync > 60:
+            # Pozisyon sync (300sn = 5dk) — Binance'tan gercek durumu al
+            # 8 sembol × 2 hesap = 16 API call per sync — rate limit dostu
+            if now - last_pos_sync > 300:
                 last_pos_sync = now
                 for sym, engine in _ha_engines.items():
                     try:
