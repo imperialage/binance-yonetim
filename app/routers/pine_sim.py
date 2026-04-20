@@ -482,6 +482,19 @@ async def get_pine_params_for_symbol(symbol: str, interval: str = "5m") -> dict:
     return {"params": row}
 
 
+@router.get("/api/account-b-test")
+async def test_account_b() -> dict:
+    """2. Binance hesabi baglanti testi."""
+    from app.modules.binance_client import is_account_b_configured, get_total_wallet_balance_b
+    if not is_account_b_configured():
+        return {"status": "NOT_CONFIGURED", "msg": "BINANCE_API_KEY_B / BINANCE_API_SECRET_B ayarlanmamis"}
+    try:
+        balance = await get_total_wallet_balance_b()
+        return {"status": "OK", "balance_b": balance}
+    except Exception as e:
+        return {"status": "ERROR", "error": str(e)}
+
+
 @router.get("/api/pine-live-engine-status")
 async def get_pine_live_engine_status() -> dict:
     """Backend live engine'in mevcut durumu — debug icin."""
