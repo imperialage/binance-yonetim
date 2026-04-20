@@ -482,6 +482,35 @@ async def get_pine_params_for_symbol(symbol: str, interval: str = "5m") -> dict:
     return {"params": row}
 
 
+@router.get("/api/engine-debug")
+async def engine_debug() -> dict:
+    """Motor crash debug — import ve task durumu."""
+    result = {}
+    try:
+        from app.modules.ha_signal_engine import _ha_engine_task, _ha_engines
+        result["ha_task_exists"] = _ha_engine_task is not None
+        result["ha_task_done"] = _ha_engine_task.done() if _ha_engine_task else None
+        if _ha_engine_task and _ha_engine_task.done():
+            exc = _ha_engine_task.exception()
+            result["ha_exception"] = str(exc) if exc else None
+        result["ha_engines_count"] = len(_ha_engines)
+    except Exception as e:
+        result["ha_import_error"] = str(e)
+
+    try:
+        from app.modules.signal_engine import _engine_task, _engines
+        result["engine_task_exists"] = _engine_task is not None
+        result["engine_task_done"] = _engine_task.done() if _engine_task else None
+        if _engine_task and _engine_task.done():
+            exc = _engine_task.exception()
+            result["engine_exception"] = str(exc) if exc else None
+        result["engines_count"] = len(_engines)
+    except Exception as e:
+        result["engine_import_error"] = str(e)
+
+    return result
+
+
 @router.get("/api/account-b-test")
 async def test_account_b() -> dict:
     """2. Binance hesabi baglanti testi."""
