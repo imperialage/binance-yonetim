@@ -186,6 +186,9 @@ class Settings(BaseSettings):
     # ── Binance Futures Trading ─────────────────────
     binance_api_key: str = ""
     binance_api_secret: str = ""
+    # 2. Binance hesabi (HA Reversal ping-pong icin)
+    binance_api_key_b: str = ""
+    binance_api_secret_b: str = ""
     binance_testnet: bool = True       # Safety: default to testnet
     trading_enabled: bool = True       # Auto-trade active
     stop_loss_pct: float = 0.015      # 1.5% stop-loss (grid search optimal)

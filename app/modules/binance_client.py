@@ -16,6 +16,7 @@ from app.utils.logging import get_logger
 log = get_logger(__name__)
 
 _client: httpx.AsyncClient | None = None
+_client_b: httpx.AsyncClient | None = None  # 2. Binance hesabi
 
 _BASE_URL = "https://fapi.binance.com"
 _TESTNET_URL = "https://testnet.binancefuture.com"
@@ -64,15 +65,18 @@ async def get_client() -> httpx.AsyncClient:
 
 
 async def close_client() -> None:
-    global _client
+    global _client, _client_b
     if _client is not None:
         await _client.aclose()
         _client = None
-        await log.ainfo("binance_client_closed")
+    if _client_b is not None:
+        await _client_b.aclose()
+        _client_b = None
+    await log.ainfo("binance_clients_closed")
 
 
 def _sign(params: dict) -> dict:
-    """Add timestamp and HMAC SHA256 signature to params."""
+    """Add timestamp and HMAC SHA256 signature to params (Hesap A)."""
     params["timestamp"] = int(time.time() * 1000)
     query = urlencode(params)
     sig = hmac.new(
@@ -82,6 +86,94 @@ def _sign(params: dict) -> dict:
     ).hexdigest()
     params["signature"] = sig
     return params
+
+
+def _sign_b(params: dict) -> dict:
+    """Add timestamp and HMAC SHA256 signature to params (Hesap B)."""
+    params["timestamp"] = int(time.time() * 1000)
+    query = urlencode(params)
+    sig = hmac.new(
+        settings.binance_api_secret_b.encode(),
+        query.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    params["signature"] = sig
+    return params
+
+
+# ── 2. Binance Hesabi (B) ──────────────────────────────
+
+
+async def get_client_b() -> httpx.AsyncClient:
+    """2. Binance hesabi client'i."""
+    global _client_b
+    if _client_b is None:
+        if not settings.binance_api_key_b:
+            raise BinanceAPIError(0, -1, "2. Binance hesabi API key ayarlanmamis (BINANCE_API_KEY_B)", "")
+        proxy_url = settings.binance_proxy_url or None
+        _client_b = httpx.AsyncClient(
+            base_url=_base_url(),
+            timeout=httpx.Timeout(10.0, connect=5.0),
+            headers={"X-MBX-APIKEY": settings.binance_api_key_b},
+            proxy=proxy_url,
+        )
+    return _client_b
+
+
+async def get_position_risk_b(symbol: str) -> list[dict]:
+    """Get position info — Hesap B."""
+    client = await get_client_b()
+    params = _sign_b({"symbol": symbol})
+    resp = await client.get("/fapi/v2/positionRisk", params=params)
+    _raise_for_binance(resp)
+    return resp.json()
+
+
+async def get_total_wallet_balance_b() -> float:
+    """Get total wallet balance — Hesap B."""
+    client = await get_client_b()
+    params = _sign_b({})
+    resp = await client.get("/fapi/v2/balance", params=params)
+    _raise_for_binance(resp)
+    for asset in resp.json():
+        if asset.get("asset") == "USDT":
+            return float(asset.get("balance", 0))
+    return 0.0
+
+
+async def place_market_order_b(symbol: str, side: str, quantity: float, reduce_only: bool = False) -> dict:
+    """Place market order — Hesap B."""
+    client = await get_client_b()
+    params: dict = {"symbol": symbol, "side": side, "type": "MARKET", "quantity": quantity}
+    if reduce_only:
+        params["reduceOnly"] = "true"
+    params = _sign_b(params)
+    resp = await client.post("/fapi/v1/order", params=params)
+    _raise_for_binance(resp)
+    return resp.json()
+
+
+async def cancel_all_open_orders_b(symbol: str) -> dict:
+    """Cancel all open orders — Hesap B."""
+    client = await get_client_b()
+    params = _sign_b({"symbol": symbol})
+    resp = await client.delete("/fapi/v1/allOpenOrders", params=params)
+    _raise_for_binance(resp)
+    return resp.json()
+
+
+async def set_leverage_b(symbol: str, leverage: int = 1) -> dict:
+    """Set leverage — Hesap B."""
+    client = await get_client_b()
+    params = _sign_b({"symbol": symbol, "leverage": leverage})
+    resp = await client.post("/fapi/v1/leverage", params=params)
+    _raise_for_binance(resp)
+    return resp.json()
+
+
+def is_account_b_configured() -> bool:
+    """2. Binance hesabi yapilandirilmis mi?"""
+    return bool(settings.binance_api_key_b and settings.binance_api_secret_b)
 
 
 async def get_exchange_info(symbol: str) -> dict:
