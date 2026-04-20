@@ -141,9 +141,9 @@ tr.ob-row td:nth-child(8){color:var(--color-short);font-weight:600}
   <th>Yon</th><th>Giris</th><th>Giris $</th><th>Cikis</th><th>Cikis $</th><th>Tip</th><th>PnL $</th><th>PnL %</th>
 </tr></thead><tbody id="bnTradeBody"></tbody></table></div>
 
-<div class="section-title">HA Sinyaller <span class="cnt" id="sigCnt">0</span></div>
+<div class="section-title">HA Reversal Sinyaller <span class="cnt" id="sigCnt">0</span></div>
 <div class="tbl-wrap"><table><thead><tr>
-  <th>Tarih</th><th>Yon</th><th>Giris</th><th>TP</th><th>SL</th><th>RSI A→B</th><th>Gap</th><th>Durum</th>
+  <th>Tarih</th><th>Yon</th><th>Giris</th><th colspan="2">Cikis Yontemi</th><th colspan="2">Strateji</th><th>Durum</th>
 </tr></thead><tbody id="sigBody"></tbody></table></div>
 
 </div>
@@ -318,9 +318,11 @@ function renderAll(binanceTrades){
       html+='<tr class="'+rc+'"><td colspan="9" class="sig-detail"><span style="color:#A371F7;font-weight:700">CIKIS</span> <span class="'+(bx.side==='LONG'?'green':'red')+'">'+bx.side+'</span> '+bx.exit_str+' <span class="yellow">'+fmt(bx.exit_price,dec(bx.exit_price))+'</span> PnL: <span class="'+pc+'">$'+fmt(bx.pnl,2)+'</span></td></tr>';
     }
 
-    // DB sinyaller
+    // DB sinyaller — sadece HA Reversal (rsi_a=null) goster, eski RSI Div gizle
     for(var si=0;si<dbSigs.length;si++){
       var ds=dbSigs[si];
+      if(ds.rsi_a!=null && ds.source==='ha_server') continue; // eski RSI Div atla
+      if(ds.source==='server' && ds.skip_reason==='motor_bypass') continue; // normal motor bypass atla
       var isE=ds.entered===1||ds.entered===true;
       var dir=ds.direction||'';
       var srcCls=isE?'sig-row':'sig-row-skip';
@@ -341,21 +343,21 @@ function renderAll(binanceTrades){
       html+='<tr class="bn-entry"><td colspan="9" class="sig-detail"><span style="color:#3B82F6;font-weight:700">GIRIS</span> <span class="'+(bn.side==='LONG'?'green':'red')+'">'+bn.side+'</span> '+bn.entry_str+' <span class="yellow">'+fmt(bn.entry_price,dec(bn.entry_price))+'</span> x'+fmt(bn.qty,4)+'</td></tr>';
     }
 
-    // Mum satiri
+    // Mum satiri — sadece HA Reversal sim sinyalleri (eski RSI Div gizli)
     var rClr=c.rsi!=null?(c.rsi<=longTh?'green':c.rsi>=shortTh?'red':''):'';
     var sigCell='';
-    if(dbSigs.length>0){var d0=dbSigs[0];var e0=d0.entered===1;sigCell=e0?(d0.direction==='BUY'?'<span class="badge b-buy">▲</span>':'<span class="badge b-sell">▼</span>'):'<span class="badge b-skip">'+(d0.direction==='BUY'?'▲':'▼')+'</span>'}
-    // Reversal sim sinyalleri
+    // Reversal sim sinyalleri (giris)
     if(window._revSignals&&window._revSignals[origIdx]){
       var rs=window._revSignals[origIdx];
-      sigCell+=' <span style="background:#F0B90B20;color:#F0B90B;font-size:9px;padding:1px 4px;border-radius:3px;font-weight:700">'+(rs.dir==='BUY'?'▲REV':'▼REV')+' '+fmt(rs.price,dec(rs.price))+'</span>';
+      sigCell='<span style="background:'+(rs.dir==='BUY'?'#0ECB8130':'#F6465D30')+';color:'+(rs.dir==='BUY'?'#0ECB81':'#F6465D')+';font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700">'+(rs.dir==='BUY'?'▲ LONG':'▼ SHORT')+' '+fmt(rs.price,dec(rs.price))+'</span>';
     }
+    // Reversal sim cikislar
     if(window._revTrades&&window._revTrades[origIdx]){
       window._revTrades[origIdx].forEach(function(rt){
         var rtCls=rt.pnl>=0?'green':'red';
         var rtIcon=rt.pnl>=0?'✓':'✗';
         var rtType=rt.type==='RSI_EXIT'?'RSI':'REV';
-        sigCell+=' <span style="font-size:9px;color:var(--'+rtCls+')">'+rtIcon+rtType+' '+fmt(rt.pnl,2)+'%</span>';
+        sigCell+=' <span style="font-size:10px;font-weight:600;color:var(--color-'+(rt.pnl>=0?'long':'short')+')">'+rtIcon+' '+rtType+' '+fmt(rt.pnl,2)+'%</span>';
       });
     }
     html+='<tr class="'+rowCls+'">'
@@ -385,26 +387,27 @@ function renderAll(binanceTrades){
   $('bnTradeBody').innerHTML=bh||'<tr><td colspan="8" style="text-align:center;color:#484f58;padding:14px">Islem yok</td></tr>';
   $('bnTradeCnt').textContent=bnTrades.length;
 
-  // Sinyal tablosu
+  // Sinyal tablosu — sadece HA Reversal sinyalleri (rsi_a=null = yeni motor)
   var sh='';var sc=0;
   dbSignals.forEach(function(s){
+    // Sadece ha_server + rsi_a=null (HA Reversal) VEYA ha_server + entered=1 goster
+    if(s.source!=='ha_server') return;
+    // Eski RSI Div sinyallerini atla (rsi_a != null = eski motor)
+    if(s.rsi_a!=null) return;
+
     var dir=s.direction||'';var isE=s.entered===1;
-    var tp2=dir==='BUY'?s.price*(1+tpPct/100):s.price*(1-tpPct/100);
-    var sl2=dir==='BUY'?s.price*(1-slPct/100):s.price*(1+slPct/100);
     var st=isE?'<span class="badge b-buy" style="font-size:9px">OK</span>':'<span class="badge b-skip" style="font-size:9px">SKIP</span>';
     var dt=s.datetime||'';if(dt.length>16)dt=dt.substring(5,16);
-    var src=s.source==='ha_server'?' <span class="ha-tag">HA</span>':'';
+    var exitInfo='RSI Exit';  // HA Reversal'da TP/SL yok, cikis RSI ile
     sh+='<tr><td style="color:var(--text-dim)">'+dt+'</td>'
-      +'<td>'+(isE?(dir==='BUY'?'<span class="badge b-buy">▲L</span>':'<span class="badge b-sell">▼S</span>'):'<span class="badge b-skip">'+dir+'</span>')+'</td>'
+      +'<td>'+(isE?(dir==='BUY'?'<span class="badge b-buy">▲ LONG</span>':'<span class="badge b-sell">▼ SHORT</span>'):'<span class="badge b-skip">'+dir+'</span>')+'</td>'
       +'<td class="yellow">'+fmt(s.price,dec(s.price))+'</td>'
-      +'<td class="green">'+fmt(tp2,dec(tp2))+'</td>'
-      +'<td class="red">'+fmt(sl2,dec(sl2))+'</td>'
-      +'<td style="color:#A371F7">'+(s.rsi_a!=null?fmt(s.rsi_a,2)+'→'+fmt(s.rsi_b,2):'--')+'</td>'
-      +'<td>'+(s.gap||'--')+'</td>'
-      +'<td>'+st+src+'</td></tr>';
+      +'<td colspan="2" style="color:#F0B90B;font-size:10px">Cikis: RSI Exit (motor kontrol)</td>'
+      +'<td colspan="2" style="color:#A371F7;font-size:10px">HA Reversal</td>'
+      +'<td>'+st+'</td></tr>';
     sc++;
   });
-  $('sigBody').innerHTML=sh;
+  $('sigBody').innerHTML=sh||'<tr><td colspan="8" style="text-align:center;color:#484f58;padding:14px">HA Reversal sinyali yok</td></tr>';
   $('sigCnt').textContent=sc;
 
   // Pozisyon
