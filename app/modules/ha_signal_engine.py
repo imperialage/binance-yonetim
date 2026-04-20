@@ -286,19 +286,29 @@ class HeikinAshiEngine(SignalEngine):
             self._update_ha_candle()
             self.signal_fired_this_bar = False
 
-        # 4. CANLI RSI EXIT — her tick'te kontrol (mum kapanmasi beklenmez)
+        # 4. CANLI RSI EXIT — her tick'te kontrol
+        # KURAL: Giris yapilan mumda RSI exit CALISMAZ (momentum icin bekle)
+        #         Sadece ONCEKI mumlarda acilmis pozisyonlarda aninda cikis
+        #         Giris mumunda acilmis → mum kapanisinda kapatilir (on_price_tick mum kapanisi)
         live_rsi = self._calc_live_rsi(self.ha_candle_close)
         if live_rsi is not None:
             st = _get_acc_state(self.symbol)
+            now_ts = int(time.time())
             for acc in ["a", "b"]:
                 acc_side = st[acc]["side"]
                 if acc_side is None:
                     continue
+                # Bu mumda mi acildi? (giris zamani >= mum baslangici → bu mumda)
+                entry_time = st[acc].get("time", 0)
+                opened_this_bar = entry_time >= self.candle_start
+                if opened_this_bar:
+                    continue  # Bu mumda acildi → mum kapanisina kadar BEKLE
+
                 if acc_side == "LONG" and live_rsi >= self.rsi_exit_long:
                     await log.ainfo("ha_live_rsi_exit", symbol=self.symbol, account=acc.upper(),
                                     side="LONG", rsi=round(live_rsi, 2))
                     await _close_account_position(self.symbol, acc, "RSI_EXIT")
-                    self.signal_fired_this_bar = True  # kapanış mumunda yeniden girilmesin
+                    self.signal_fired_this_bar = True
                 elif acc_side == "SHORT" and live_rsi <= self.rsi_exit_short:
                     await log.ainfo("ha_live_rsi_exit", symbol=self.symbol, account=acc.upper(),
                                     side="SHORT", rsi=round(live_rsi, 2))
