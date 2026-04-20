@@ -296,6 +296,9 @@ function renderAll(binanceTrades){
     return true;
   });
 
+  // ── HA Reversal simülasyonu ONCE calistir (mum tablosundan once)
+  runReversalSim(candles);
+
   // Orijinal index map (reversal sim eşleştirme için)
   var candleIdxMap={};
   candles.forEach(function(c,idx){candleIdxMap[c.time]=idx});
@@ -314,11 +317,8 @@ function renderAll(binanceTrades){
       else if(c.rsi>=shortTh){rsiZone='OB';rowCls='ob-row'}
     }
 
-    // Binance cikis
-    for(var ei=bnExits.length-1;ei>=0;ei--){
-      var bx=bnExits[ei];var pc=bx.pnl>=0?'green':'red';var rc=bx.pnl>=0?'bn-exit-tp':'bn-exit-sl';
-      html+='<tr class="'+rc+'"><td colspan="9" class="sig-detail"><span style="color:#A371F7;font-weight:700">CIKIS</span> <span class="'+(bx.side==='LONG'?'green':'red')+'">'+bx.side+'</span> '+bx.exit_str+' <span class="yellow">'+fmt(bx.exit_price,dec(bx.exit_price))+'</span> PnL: <span class="'+pc+'">$'+fmt(bx.pnl,2)+'</span></td></tr>';
-    }
+    // Binance cikis — HA Reversal modunda gizli (simülasyon gösteriyor)
+    // for(var ei=bnExits.length-1;ei>=0;ei--){...}
 
     // DB sinyaller — TAMAMEN GIZLE (HA Reversal sinyalleri simülasyondan gösteriliyor)
     // Sadece gerçek motor trade'leri göster (entered=1 + source=ha_server + rsi_a=null = yeni motor)
@@ -340,11 +340,8 @@ function renderAll(binanceTrades){
       if(isE) rowCls='sig-row';
     }
 
-    // Binance giris
-    for(var ni=bnEntries.length-1;ni>=0;ni--){
-      var bn=bnEntries[ni];
-      html+='<tr class="bn-entry"><td colspan="9" class="sig-detail"><span style="color:#3B82F6;font-weight:700">GIRIS</span> <span class="'+(bn.side==='LONG'?'green':'red')+'">'+bn.side+'</span> '+bn.entry_str+' <span class="yellow">'+fmt(bn.entry_price,dec(bn.entry_price))+'</span> x'+fmt(bn.qty,4)+'</td></tr>';
-    }
+    // Binance giris — HA Reversal modunda gizli (simülasyon gösteriyor)
+    // for(var ni=bnEntries.length-1;ni>=0;ni--){...}
 
     // Mum satiri — sadece HA Reversal sim sinyalleri (eski RSI Div gizli)
     var rClr=c.rsi!=null?(c.rsi<=longTh?'green':c.rsi>=shortTh?'red':''):'';
@@ -420,9 +417,6 @@ function renderAll(binanceTrades){
 
   // Canli mum
   if(candles.length>0) updateLive(candles[candles.length-1]);
-
-  // ── HA Reversal + RSI Exit Simülasyon ──
-  runReversalSim(candles);
 }
 
 function runReversalSim(candles){
