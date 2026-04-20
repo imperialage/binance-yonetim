@@ -320,11 +320,12 @@ function renderAll(binanceTrades){
       html+='<tr class="'+rc+'"><td colspan="9" class="sig-detail"><span style="color:#A371F7;font-weight:700">CIKIS</span> <span class="'+(bx.side==='LONG'?'green':'red')+'">'+bx.side+'</span> '+bx.exit_str+' <span class="yellow">'+fmt(bx.exit_price,dec(bx.exit_price))+'</span> PnL: <span class="'+pc+'">$'+fmt(bx.pnl,2)+'</span></td></tr>';
     }
 
-    // DB sinyaller — sadece HA Reversal (rsi_a=null) goster, eski RSI Div gizle
+    // DB sinyaller — TAMAMEN GIZLE (HA Reversal sinyalleri simülasyondan gösteriliyor)
+    // Sadece gerçek motor trade'leri göster (entered=1 + source=ha_server + rsi_a=null = yeni motor)
     for(var si=0;si<dbSigs.length;si++){
       var ds=dbSigs[si];
-      if(ds.rsi_a!=null && ds.source==='ha_server') continue; // eski RSI Div atla
-      if(ds.source==='server' && ds.skip_reason==='motor_bypass') continue; // normal motor bypass atla
+      // Tüm eski sinyalleri gizle — simülasyon zaten gösteriyor
+      continue;
       var isE=ds.entered===1||ds.entered===true;
       var dir=ds.direction||'';
       var srcCls=isE?'sig-row':'sig-row-skip';
@@ -438,8 +439,11 @@ function runReversalSim(candles){
     var rsi=c.rsi;
 
     // Önceki mumun sinyali (bullSignal[1], bearSignal[1])
-    var prevBull=(prev.open!=null && prev.low!=null && Math.abs(prev.open-prev.low)<0.000001);
-    var prevBear=(prev.open!=null && prev.high!=null && Math.abs(prev.open-prev.high)<0.000001);
+    // bullSignal: haOpen == haLow (tolerans: fiyatin %0.01'i)
+    // bearSignal: haOpen == haHigh
+    var tol=prev.low*0.0001||0.0001;
+    var prevBull=(prev.open!=null && prev.low!=null && Math.abs(prev.open-prev.low)<=tol);
+    var prevBear=(prev.open!=null && prev.high!=null && Math.abs(prev.open-prev.high)<=tol);
 
     // 1. RSI Exit (önce)
     if(state==1 && rsi!=null && rsi>=rsiExitLong){
