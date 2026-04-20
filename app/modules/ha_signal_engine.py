@@ -86,6 +86,12 @@ class HeikinAshiEngine(SignalEngine):
         self.ha_candle_high: float = 0.0
         self.ha_candle_low: float = 0.0
         self.ha_candle_close: float = 0.0
+        # HA Reversal state
+        self.prev_bull_signal: bool = False  # onceki mumda bullSignal (haOpen==haLow)
+        self.prev_bear_signal: bool = False  # onceki mumda bearSignal (haOpen==haHigh)
+        # RSI exit esikleri (settings'ten)
+        self.rsi_exit_long: float = float(settings.get("short_thresh", 70))   # LONG kapat RSI>=
+        self.rsi_exit_short: float = float(settings.get("long_thresh", 35))   # SHORT kapat RSI<=
 
     # ── Override: Warmup ────────────────────────────────
     async def warmup(self) -> None:
@@ -173,8 +179,13 @@ class HeikinAshiEngine(SignalEngine):
         self.ha_candle_low = ha_l
         self.ha_candle_close = ha_c
 
-    # ── Override: on_price_tick ──────────────────────────
+    # ── Override: on_price_tick — HA Reversal + RSI Exit ──
     async def on_price_tick(self, price: float) -> dict | None:
+        """HA Reversal + RSI Exit mantigi:
+        - Giris: onceki mumda haOpen==haLow (LONG) veya haOpen==haHigh (SHORT)
+        - Cikis: RSI exit (LONG: RSI>=exit_long, SHORT: RSI<=exit_short)
+        - Ters sinyal: ters HA reversal gelirse kapat + yeni ac
+        """
         if not self.warmed_up:
             return None
 
@@ -191,7 +202,7 @@ class HeikinAshiEngine(SignalEngine):
         # 3. Mum kapandi mi?
         new_candle_start = (now // self.iv_sec) * self.iv_sec
         if new_candle_start > self.candle_start and now - new_candle_start > 2:
-            # Binance'tan gercek OHLC cek (RSI drift fix)
+            # Binance'tan gercek OHLC cek
             real_o, real_h, real_l, real_c = self.candle_open, self.candle_high, self.candle_low, self.candle_close
             try:
                 import httpx
@@ -239,31 +250,27 @@ class HeikinAshiEngine(SignalEngine):
             if len(self.closed_candles) > max_keep:
                 self.closed_candles = self.closed_candles[-max_keep:]
 
+            # ── HA Reversal sinyal tespiti (kapanan mum icin) ──
+            # bullSignal = haOpen == haLow (alt golge yok)
+            # bearSignal = haOpen == haHigh (ust golge yok)
+            self.prev_bull_signal = abs(ha_o - ha_l) < 1e-10
+            self.prev_bear_signal = abs(ha_o - ha_h) < 1e-10
+
             await log.ainfo("ha_candle_closed", symbol=self.symbol,
                             ha_close=round(ha_c, 4), real_close=round(real_c, 4),
-                            rsi=round(closed_rsi, 2) if closed_rsi else None)
+                            rsi=round(closed_rsi, 2) if closed_rsi else None,
+                            bull=self.prev_bull_signal, bear=self.prev_bear_signal)
 
-            # Pine Script uyumlu: kapanan mum B olarak tekrar test edilmiyor
-
-            # ── Bar close validation — HER mum kapanisinda sinyal dogrula ──
-            # HA motor direkt trade actigi icin, sadece giris mumunda degil
-            # HER mum kapanisinda sinyal hala gecerli mi kontrol et.
-            # Sinyal sonduyse → pozisyonu kapat, yeni sinyal bekle.
-            if self.has_position and self.position_side:
-                sig = self._check_divergence_for_validation(real_c, closed_rsi) if closed_rsi is not None else None
-                signal_still_valid = (sig is not None and sig["direction"] == ("BUY" if self.position_side == "LONG" else "SELL"))
-                if not signal_still_valid:
-                    await log.ainfo("bar_close_validation_failed", symbol=self.symbol,
-                                    direction=self.position_side,
-                                    closed_rsi=round(closed_rsi, 2) if closed_rsi else None,
-                                    bar_time=self.candle_start)
+            # ── RSI Exit — pozisyon acikken RSI esigi kontrol ──
+            if self.has_position and closed_rsi is not None:
+                if self.position_side == "LONG" and closed_rsi >= self.rsi_exit_long:
+                    await log.ainfo("ha_rsi_exit", symbol=self.symbol, side="LONG",
+                                    rsi=round(closed_rsi, 2), thresh=self.rsi_exit_long)
                     await self._bar_close_invalidate()
-                else:
-                    await log.ainfo("bar_close_validation_passed", symbol=self.symbol,
-                                    direction=self.position_side)
-                # Giris mumu tracking sifirla (artik her mumda kontrol ediliyor)
-                self.webhook_entry_bar_time = 0
-                self.webhook_entry_direction = ""
+                elif self.position_side == "SHORT" and closed_rsi <= self.rsi_exit_short:
+                    await log.ainfo("ha_rsi_exit", symbol=self.symbol, side="SHORT",
+                                    rsi=round(closed_rsi, 2), thresh=self.rsi_exit_short)
+                    await self._bar_close_invalidate()
 
             # Yeni mum
             self.candle_start = new_candle_start
@@ -278,67 +285,43 @@ class HeikinAshiEngine(SignalEngine):
         if self.signal_fired_this_bar:
             return None
 
-        # 5. Pozisyon kontrolu — Pine Script uyumlu: pozisyon varsa ARAMA
-        if self.has_position or self.trade_pending:
+        # 5. HA Reversal giris kontrolu:
+        # Onceki mum bullSignal ise → LONG sinyali (state != 1 ise)
+        # Onceki mum bearSignal ise → SHORT sinyali (state != -1 ise)
+        if not self.prev_bull_signal and not self.prev_bear_signal:
             return None
 
-        # 6. HA RSI
-        live_rsi = self._calc_live_rsi(self.ha_candle_close)
-        if live_rsi is None:
-            return None
-
-        if len(self.closed_candles) < 1:
-            return None
-
-        # 7. Diverjans (HA)
-        signal = self._check_divergence(price, live_rsi)
-        if signal:
+        # Pozisyon varsa ters sinyal kontrolu (AYNI yonde → skip, TERS yonde → sinyal ver)
+        if self.prev_bull_signal:
+            if self.has_position and self.position_side == "LONG":
+                return None  # Zaten LONG — 2. hesap icin daha sonra
+            # LONG sinyal
+            entry_price = price  # market order, anlik fiyat
             self.signal_fired_this_bar = True
             self.last_signal_time = time.time()
+            signal = {
+                "symbol": self.symbol, "direction": "BUY", "entry_price": entry_price,
+                "rsi_a": None, "rsi_b": None, "gap": None,
+                "candle_a_time": self.candle_start, "source": "ha_server",
+            }
             self.last_signal = signal
-            self.last_signal_bar = self.candle_start
             return signal
 
-        return None
+        if self.prev_bear_signal:
+            if self.has_position and self.position_side == "SHORT":
+                return None  # Zaten SHORT — 2. hesap icin daha sonra
+            # SHORT sinyal
+            entry_price = price
+            self.signal_fired_this_bar = True
+            self.last_signal_time = time.time()
+            signal = {
+                "symbol": self.symbol, "direction": "SELL", "entry_price": entry_price,
+                "rsi_a": None, "rsi_b": None, "gap": None,
+                "candle_a_time": self.candle_start, "source": "ha_server",
+            }
+            self.last_signal = signal
+            return signal
 
-    # ── Override: _check_divergence (HA) ────────────────
-    def _check_divergence(self, current_price: float, live_ha_rsi: float) -> dict | None:
-        """Hidden RSI Divergence — HA mumlari uzerinden, gercek fiyatla entry."""
-        n = len(self.closed_candles)
-        search_range = min(self.max_gap, n)
-        allowed = self.settings.get("allowed_directions", "BOTH")
-
-        # SHORT
-        if allowed in ("BOTH", "SELL"):
-            for gap in range(1, search_range + 1):
-                a = self.closed_candles[n - gap]
-                if a["rsi"] is None or a["time"] in self.used_a:
-                    continue
-                if (a["rsi"] >= self.short_thresh
-                        and self.ha_candle_high > a["high"]
-                        and live_ha_rsi < a["rsi"]):
-                    entry_price = round(self.candle_high * (1 - self.entry_buffer), 6)
-                    return {
-                        "symbol": self.symbol, "direction": "SELL", "entry_price": entry_price,
-                        "rsi_a": a["rsi"], "rsi_b": live_ha_rsi, "gap": gap,
-                        "candle_a_time": a["time"], "source": "ha_server",
-                    }
-
-        # LONG
-        if allowed in ("BOTH", "BUY"):
-            for gap in range(1, search_range + 1):
-                a = self.closed_candles[n - gap]
-                if a["rsi"] is None or a["time"] in self.used_a:
-                    continue
-                if (a["rsi"] <= self.long_thresh
-                        and self.ha_candle_low < a["low"]
-                        and live_ha_rsi > a["rsi"]):
-                    entry_price = round(self.candle_low * (1 + self.entry_buffer), 6)
-                    return {
-                        "symbol": self.symbol, "direction": "BUY", "entry_price": entry_price,
-                        "rsi_a": a["rsi"], "rsi_b": live_ha_rsi, "gap": gap,
-                        "candle_a_time": a["time"], "source": "ha_server",
-                    }
         return None
 
     # ── Override: used_a path (HA ayri dosya) ───────────
@@ -491,24 +474,24 @@ async def _ha_engine_loop() -> None:
                     )
 
                     # HA MOTOR DIREKT TRADE ACAR (webhook gerekmez)
+                    # HA Reversal: TP/SL YOK — cikis RSI exit ile (motor kontrol)
                     if should_trade:
                         from app.config import settings as app_settings
                         if app_settings.trading_enabled:
-                            # TP/SL fiyatlarini indicator_settings'ten hesapla
-                            tp_pct = engine.settings.get("tp_pct", 1.0) / 100.0
-                            sl_pct = engine.settings.get("sl_pct", 0.3) / 100.0
-                            entry_p = signal["entry_price"]
-                            if signal["direction"] == "BUY":
-                                ha_tp = entry_p * (1 + tp_pct)
-                                ha_sl = entry_p * (1 - sl_pct)
-                            else:
-                                ha_tp = entry_p * (1 - tp_pct)
-                                ha_sl = entry_p * (1 + sl_pct)
+                            # Ters pozisyon aciksa once kapat
+                            if engine.has_position:
+                                # Ters sinyal → mevcut pozisyonu kapat
+                                await log.ainfo("ha_reverse_close", symbol=sym,
+                                                old_side=engine.position_side,
+                                                new_dir=signal["direction"])
+                                await engine._bar_close_invalidate()
 
                             from app.modules.binance_client import get_position_risk as _gpr, get_total_wallet_balance as _gwb
                             _pf = asyncio.ensure_future(asyncio.gather(_gpr(sym), _gwb()))
                             engine.on_trade_pending()
                             event_id = f"ha-{row_id}-{int(time.time())}"
+                            # TP/SL None → Binance'a TP/SL emri verilmez
+                            # Cikis tamamen motor tarafindan kontrol edilir (RSI exit)
                             asyncio.create_task(execute_trade(
                                 symbol=sym,
                                 signal=signal["direction"],
@@ -516,12 +499,13 @@ async def _ha_engine_loop() -> None:
                                 event_id=event_id,
                                 tf=engine.interval,
                                 prefetch=_pf,
-                                webhook_tp=ha_tp,
-                                webhook_sl=ha_sl,
+                                webhook_tp=None,
+                                webhook_sl=None,
                             ))
                             await log.ainfo("ha_trade_dispatched", symbol=sym,
-                                            direction=signal["direction"], entry=entry_p,
-                                            tp=round(ha_tp, 6), sl=round(ha_sl, 6))
+                                            direction=signal["direction"],
+                                            entry=round(signal["entry_price"], 6),
+                                            exit_method="RSI_EXIT")
 
     except asyncio.CancelledError:
         await log.ainfo("ha_engine_loop_stopped")
