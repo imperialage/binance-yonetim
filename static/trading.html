@@ -665,6 +665,11 @@ tr.clickable:hover{background:#1c212888}
     var newVal=!(cfg.reverse_signal===true);
     updateSymConfig(sym,'reverse_signal',newVal);
   };
+  window.toggleHA=function(sym){
+    var cfg=symConfigs[sym]||{};
+    var newVal=!(cfg.ha_enabled!==false&&cfg.ha_enabled!==0);
+    updateSymConfig(sym,'ha_enabled',newVal);
+  };
 
   // ── Inline edit ──
   window.editField=function(sym,field,currentVal,label){
@@ -861,8 +866,13 @@ tr.clickable:hover{background:#1c212888}
       var slOn=cfg.sl_enabled!==false;
       var revOn=cfg.reverse_signal===true;
 
-      // Toggle'lar GIZLI — webhook modunda gerek yok
-      // (islem aktif, sinyal dinliyor, SL aktif, ters sinyal — hepsi gizli)
+      // HA Motor ON/OFF toggle
+      var haOn=cfg.ha_enabled!==false&&cfg.ha_enabled!==0;
+      html+='<div class="toggle-row">';
+      html+='<div class="toggle-wrap" onclick="toggleHA(\''+sym+'\')" title="HA Motor Acma/Kapatma">';
+      html+='<div class="mini-toggle '+(haOn?'on':'off')+'"><div class="mini-toggle-dot"></div></div>';
+      html+='<span class="toggle-label">'+(haOn?'Motor Aktif':'Motor Kapali')+'</span></div>';
+      html+='</div>';
 
       // Config tags — weight + TF gorunur
       var tfVal=cfg.interval||'15m';

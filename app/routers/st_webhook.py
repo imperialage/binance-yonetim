@@ -252,12 +252,11 @@ async def st_webhook(request: Request) -> JSONResponse:
         webhook_sl=webhook_sl,
     )
 
-    # ── 7. Trade execution — webhook sinyali → trade_executor ──
-    # Motor (signal_engine / ha_signal_engine) artik islem ACMIYOR.
-    # Tum trade'ler sadece TradingView webhook'tan acilir.
-    # SL emri trade_executor icinde entry ile birlikte instant olarak Binance'a yerlestirilir.
+    # ── 7. Webhook trade DEVRE DISI — tum islemler HA motordan acilir ──
+    # TradingView webhook artik sadece LOGLAMA yapar, trade ACMAZ.
+    # Islem acma: ha_signal_engine.py (HA Reversal + RSI Exit, 2 hesap ping-pong)
     trade_dispatched = False
-    if settings.trading_enabled:
+    if False and settings.trading_enabled:  # DEVRE DISI
         import asyncio as _asyncio
         from app.modules.trade_executor import execute_trade
         from app.modules.binance_client import get_position_risk as _gpr, get_usdt_balance as _gub
