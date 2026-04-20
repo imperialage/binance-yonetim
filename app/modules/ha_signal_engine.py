@@ -506,18 +506,18 @@ async def _open_account_position(sym: str, account: str, direction: str,
                 sl_side = "BUY"
 
             try:
+                from app.modules.binance_client import place_stop_market_instant
                 if account == "a":
-                    from app.modules.binance_client import place_stop_market_instant
                     await place_stop_market_instant(sym, sl_side, quantity, sl_price)
                 else:
-                    # Hesap B icin SL — algoOrder API (ayni endpoint, farkli sign)
-                    client_b = await __import__('app.modules.binance_client', fromlist=['get_client_b']).get_client_b()
-                    from app.modules.binance_client import _sign_b
-                    params = _sign_b({
+                    # Hesap B icin SL — algoOrder API
+                    from app.modules.binance_client import get_client_b, _sign_b
+                    client_b = await get_client_b()
+                    sl_params = _sign_b({
                         "symbol": sym, "side": sl_side, "type": "STOP_MARKET",
                         "algoType": "CONDITIONAL", "quantity": quantity, "triggerPrice": sl_price,
                     })
-                    resp = await client_b.post("/fapi/v1/algoOrder", params=params)
+                    resp = await client_b.post("/fapi/v1/algoOrder", params=sl_params)
                 await log.ainfo("ha_safety_sl_placed", symbol=sym, account=account.upper(),
                                 sl_price=sl_price, sl_side=sl_side)
             except Exception as e:
