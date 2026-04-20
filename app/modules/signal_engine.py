@@ -1447,10 +1447,22 @@ async def _engine_loop() -> None:
             await asyncio.sleep(2)
 
 
+async def _engine_loop_safe() -> None:
+    """Wrapper — crash loglar."""
+    try:
+        await _engine_loop()
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        log.error("SIGNAL_ENGINE_LOOP_CRASHED", error=str(e))
+        import traceback
+        log.error("SIGNAL_ENGINE_TRACEBACK", tb=traceback.format_exc())
+
+
 def start_signal_engines() -> None:
     """Signal engine'leri baslat (main.py lifespan'dan cagirilir)."""
     global _engine_task
-    _engine_task = asyncio.create_task(_engine_loop())
+    _engine_task = asyncio.create_task(_engine_loop_safe())
 
 
 async def stop_signal_engines() -> None:

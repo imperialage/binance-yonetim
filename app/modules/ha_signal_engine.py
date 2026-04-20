@@ -712,9 +712,21 @@ async def _ha_engine_loop() -> None:
         await log.ainfo("ha_engine_loop_stopped")
 
 
+async def _ha_engine_loop_safe() -> None:
+    """Wrapper — exception'i loglar, task crash ettiginde gorunur."""
+    try:
+        await _ha_engine_loop()
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        await log.aerror("HA_ENGINE_LOOP_CRASHED", error=str(e), error_type=type(e).__name__)
+        import traceback
+        await log.aerror("HA_ENGINE_TRACEBACK", tb=traceback.format_exc())
+
+
 def start_ha_engine_loop() -> None:
     global _ha_engine_task
-    _ha_engine_task = asyncio.create_task(_ha_engine_loop())
+    _ha_engine_task = asyncio.create_task(_ha_engine_loop_safe())
 
 
 async def stop_ha_engine_loop() -> None:
