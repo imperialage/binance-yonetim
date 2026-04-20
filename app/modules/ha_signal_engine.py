@@ -261,16 +261,21 @@ class HeikinAshiEngine(SignalEngine):
                             rsi=round(closed_rsi, 2) if closed_rsi else None,
                             bull=self.prev_bull_signal, bear=self.prev_bear_signal)
 
-            # ── RSI Exit — pozisyon acikken RSI esigi kontrol ──
-            if self.has_position and closed_rsi is not None:
-                if self.position_side == "LONG" and closed_rsi >= self.rsi_exit_long:
-                    await log.ainfo("ha_rsi_exit", symbol=self.symbol, side="LONG",
-                                    rsi=round(closed_rsi, 2), thresh=self.rsi_exit_long)
-                    await self._bar_close_invalidate()
-                elif self.position_side == "SHORT" and closed_rsi <= self.rsi_exit_short:
-                    await log.ainfo("ha_rsi_exit", symbol=self.symbol, side="SHORT",
-                                    rsi=round(closed_rsi, 2), thresh=self.rsi_exit_short)
-                    await self._bar_close_invalidate()
+            # ── RSI Exit — ping-pong: HER IKI hesabi kontrol et ──
+            if closed_rsi is not None:
+                st = _get_acc_state(self.symbol)
+                for acc in ["a", "b"]:
+                    acc_side = st[acc]["side"]
+                    if acc_side is None:
+                        continue
+                    if acc_side == "LONG" and closed_rsi >= self.rsi_exit_long:
+                        await log.ainfo("ha_rsi_exit", symbol=self.symbol, account=acc.upper(),
+                                        side="LONG", rsi=round(closed_rsi, 2))
+                        await _close_account_position(self.symbol, acc, "RSI_EXIT")
+                    elif acc_side == "SHORT" and closed_rsi <= self.rsi_exit_short:
+                        await log.ainfo("ha_rsi_exit", symbol=self.symbol, account=acc.upper(),
+                                        side="SHORT", rsi=round(closed_rsi, 2))
+                        await _close_account_position(self.symbol, acc, "RSI_EXIT")
 
             # Yeni mum
             self.candle_start = new_candle_start
@@ -342,18 +347,198 @@ def get_all_ha_engines() -> dict[str, HeikinAshiEngine]:
     return _ha_engines
 
 
-async def _ha_engine_loop() -> None:
-    """HA engine ana dongusu — HA motor DIREKT trade acar (webhook gerekmez).
+## Ping-Pong hesap state — sembol bazli A/B pozisyon takibi
+# {symbol: {"a": {"side":str|None, "entry":float, "qty":float, "time":int},
+#            "b": {"side":str|None, "entry":float, "qty":float, "time":int}}}
+_account_state: dict[str, dict] = {}
 
-    TradingView HA chart'tan webhook gelmez, bu yuzden HA motor kendisi:
-    1. Sinyal uretir (HA mum + RSI divergence)
-    2. TP/SL hesaplar (indicator_settings'ten)
-    3. execute_trade cagirir (webhook_tp/sl ile)
-    4. Bar close validation: mum kapanisinda sinyal sonduyse pozisyonu kapatir
+
+def _get_acc_state(sym: str) -> dict:
+    if sym not in _account_state:
+        _account_state[sym] = {
+            "a": {"side": None, "entry": 0.0, "qty": 0.0, "time": 0},
+            "b": {"side": None, "entry": 0.0, "qty": 0.0, "time": 0},
+        }
+    return _account_state[sym]
+
+
+def _find_free_account(sym: str) -> str | None:
+    """Bos hesap bul (A oncelikli)."""
+    st = _get_acc_state(sym)
+    if st["a"]["side"] is None:
+        return "a"
+    if st["b"]["side"] is None:
+        return "b"
+    return None
+
+
+def _find_oldest_account(sym: str) -> str:
+    """Ikisi de doluysa en eski pozisyonlu hesabi dondur."""
+    st = _get_acc_state(sym)
+    return "a" if st["a"]["time"] <= st["b"]["time"] else "b"
+
+
+async def _close_account_position(sym: str, account: str, reason: str) -> None:
+    """Belirtilen hesaptaki pozisyonu market close ile kapat."""
+    from app.modules.binance_client import (
+        place_market_order, cancel_all_open_orders, get_position_risk,
+        place_market_order_b, cancel_all_open_orders_b, get_position_risk_b,
+    )
+    st = _get_acc_state(sym)
+    acc = st[account]
+    if acc["side"] is None:
+        return
+
+    try:
+        if account == "a":
+            positions = await get_position_risk(sym)
+        else:
+            positions = await get_position_risk_b(sym)
+
+        pos_amt = 0.0
+        for p in positions:
+            if p.get("symbol") == sym:
+                pos_amt = float(p.get("positionAmt", 0))
+                break
+
+        if pos_amt == 0:
+            # Binance'ta zaten kapanmis
+            acc["side"] = None
+            acc["entry"] = 0.0
+            acc["qty"] = 0.0
+            return
+
+        # Acik emirleri iptal (guvenlik SL varsa)
+        try:
+            if account == "a":
+                await cancel_all_open_orders(sym)
+            else:
+                await cancel_all_open_orders_b(sym)
+        except Exception:
+            pass
+
+        close_side = "SELL" if pos_amt > 0 else "BUY"
+        qty = abs(pos_amt)
+
+        if account == "a":
+            await place_market_order(sym, close_side, qty, reduce_only=True)
+        else:
+            await place_market_order_b(sym, close_side, qty, reduce_only=True)
+
+        await log.ainfo("ha_pingpong_closed", symbol=sym, account=account.upper(),
+                        side=acc["side"], entry=acc["entry"], reason=reason)
+
+    except Exception as e:
+        await log.aerror("ha_pingpong_close_error", symbol=sym, account=account, error=str(e))
+
+    # State temizle
+    acc["side"] = None
+    acc["entry"] = 0.0
+    acc["qty"] = 0.0
+    acc["time"] = 0
+
+
+async def _open_account_position(sym: str, account: str, direction: str,
+                                  engine: "HeikinAshiEngine", row_id: int) -> None:
+    """Belirtilen hesaptan market order ile pozisyon ac. Guvenlik SL opsiyonel."""
+    from app.modules.binance_client import (
+        get_total_wallet_balance, get_total_wallet_balance_b,
+        place_market_order, place_market_order_b,
+        place_stop_market_instant, is_account_b_configured,
+        round_price, round_step_size,
+    )
+    from app.modules.trade_executor import get_exchange_info_cached
+
+    try:
+        # Bakiye
+        if account == "a":
+            balance = await get_total_wallet_balance()
+        else:
+            balance = await get_total_wallet_balance_b()
+
+        price = get_live_price(sym)
+        if not price or price <= 0:
+            return
+
+        # Quantity hesapla
+        info = await get_exchange_info_cached(sym)
+        step_size = info["lotSize"]["stepSize"]
+        min_qty = info["lotSize"]["minQty"]
+        tick_size = info["priceFilter"]["tickSize"]
+
+        sym_weight = engine.settings.get("weight", 0.10)
+        usable = balance * sym_weight * 0.98
+        raw_qty = usable / price
+        quantity = round_step_size(raw_qty, step_size)
+
+        if quantity < min_qty:
+            await log.awarning("ha_pingpong_qty_low", symbol=sym, account=account, qty=quantity, min=min_qty)
+            return
+
+        # Market order
+        side = "BUY" if direction == "BUY" else "SELL"
+        if account == "a":
+            result = await place_market_order(sym, side, quantity)
+        else:
+            result = await place_market_order_b(sym, side, quantity)
+
+        fill_price = float(result.get("avgPrice", 0)) or price
+
+        # State guncelle
+        st = _get_acc_state(sym)
+        st[account]["side"] = "LONG" if direction == "BUY" else "SHORT"
+        st[account]["entry"] = fill_price
+        st[account]["qty"] = quantity
+        st[account]["time"] = int(time.time())
+
+        await log.ainfo("ha_pingpong_opened", symbol=sym, account=account.upper(),
+                        direction=direction, entry=round(fill_price, 6), qty=quantity)
+
+        # ── Guvenlik SL (opsiyonel) ──
+        sl_enabled = engine.settings.get("sl_enabled", True)
+        if sl_enabled:
+            sl_pct = engine.settings.get("sl_pct", 3.0) / 100.0
+            if direction == "BUY":
+                sl_price = round_price(fill_price * (1 - sl_pct), tick_size)
+                sl_side = "SELL"
+            else:
+                sl_price = round_price(fill_price * (1 + sl_pct), tick_size)
+                sl_side = "BUY"
+
+            try:
+                if account == "a":
+                    from app.modules.binance_client import place_stop_market_instant
+                    await place_stop_market_instant(sym, sl_side, quantity, sl_price)
+                else:
+                    # Hesap B icin SL — algoOrder API (ayni endpoint, farkli sign)
+                    client_b = await __import__('app.modules.binance_client', fromlist=['get_client_b']).get_client_b()
+                    from app.modules.binance_client import _sign_b
+                    params = _sign_b({
+                        "symbol": sym, "side": sl_side, "type": "STOP_MARKET",
+                        "algoType": "CONDITIONAL", "quantity": quantity, "triggerPrice": sl_price,
+                    })
+                    resp = await client_b.post("/fapi/v1/algoOrder", params=params)
+                await log.ainfo("ha_safety_sl_placed", symbol=sym, account=account.upper(),
+                                sl_price=sl_price, sl_side=sl_side)
+            except Exception as e:
+                await log.awarning("ha_safety_sl_failed", symbol=sym, account=account, error=str(e))
+
+    except Exception as e:
+        await log.aerror("ha_pingpong_open_error", symbol=sym, account=account, error=str(e))
+
+
+async def _ha_engine_loop() -> None:
+    """HA Reversal + RSI Exit — 2 hesap ping-pong motoru.
+
+    Her sembol icin:
+    1. HA mum kapanisinda bullSignal/bearSignal tespit
+    2. RSI exit: her iki hesabin pozisyonunu mum kapanisinda kontrol
+    3. Sinyal geldiginde bos hesaptan ac, ters varsa kapat
+    4. Guvenlik SL (opsiyonel, sl_enabled)
     """
     from datetime import datetime, timezone, timedelta
     from app.modules.st_signal_logger import log_st_signal
-    from app.modules.trade_executor import execute_trade
+    from app.modules.binance_client import is_account_b_configured
 
     tz_ist = timezone(timedelta(hours=3))
 
@@ -374,29 +559,64 @@ async def _ha_engine_loop() -> None:
     if not _ha_engines:
         await log.ainfo("ha_engine_no_symbols_yet")
 
-    last_fill_check = time.time()
+    has_account_b = is_account_b_configured()
+    await log.ainfo("ha_engine_accounts", account_a=True, account_b=has_account_b)
+
     last_pos_sync = time.time()
     last_settings_reload = time.time()
 
     try:
         while True:
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(1)  # 1sn tick (rate limit dostu)
             now = time.time()
 
-            # Fill takip + pozisyon kapanma (2sn)
-            if now - last_fill_check > 5:  # 2 → 5sn (rate limit onlemi)
-                last_fill_check = now
-                for engine in _ha_engines.values():
-                    if engine.trade_pending:
-                        await engine.check_pending_fill()
-                    elif engine.has_position:
-                        await engine.check_position_closed()
-
-            # Pozisyon sync (30sn)
-            if now - last_pos_sync > 60:  # 30 → 60sn (rate limit onlemi)
+            # Pozisyon sync (60sn) — Binance'tan gercek durumu al
+            if now - last_pos_sync > 60:
                 last_pos_sync = now
-                for engine in _ha_engines.values():
-                    await engine._sync_position()
+                for sym, engine in _ha_engines.items():
+                    try:
+                        from app.modules.binance_client import get_position_risk, get_position_risk_b
+                        # Hesap A sync
+                        pos_a = await get_position_risk(sym)
+                        for p in pos_a:
+                            if p.get("symbol") == sym:
+                                amt = float(p.get("positionAmt", 0))
+                                st = _get_acc_state(sym)
+                                if amt > 0:
+                                    st["a"]["side"] = "LONG"
+                                    if st["a"]["entry"] <= 0:
+                                        st["a"]["entry"] = float(p.get("entryPrice", 0))
+                                        st["a"]["qty"] = abs(amt)
+                                elif amt < 0:
+                                    st["a"]["side"] = "SHORT"
+                                    if st["a"]["entry"] <= 0:
+                                        st["a"]["entry"] = float(p.get("entryPrice", 0))
+                                        st["a"]["qty"] = abs(amt)
+                                else:
+                                    st["a"]["side"] = None
+                                break
+                        # Hesap B sync
+                        if has_account_b:
+                            pos_b = await get_position_risk_b(sym)
+                            for p in pos_b:
+                                if p.get("symbol") == sym:
+                                    amt = float(p.get("positionAmt", 0))
+                                    st = _get_acc_state(sym)
+                                    if amt > 0:
+                                        st["b"]["side"] = "LONG"
+                                        if st["b"]["entry"] <= 0:
+                                            st["b"]["entry"] = float(p.get("entryPrice", 0))
+                                            st["b"]["qty"] = abs(amt)
+                                    elif amt < 0:
+                                        st["b"]["side"] = "SHORT"
+                                        if st["b"]["entry"] <= 0:
+                                            st["b"]["entry"] = float(p.get("entryPrice", 0))
+                                            st["b"]["qty"] = abs(amt)
+                                    else:
+                                        st["b"]["side"] = None
+                                    break
+                    except Exception as e:
+                        await log.awarning("ha_pos_sync_error", symbol=sym, error=str(e))
 
             # Settings reload (60sn)
             if now - last_settings_reload > 60:
@@ -413,99 +633,80 @@ async def _ha_engine_loop() -> None:
                             eng.short_thresh = s.get("short_thresh", 70.0)
                             eng.max_gap = s.get("max_gap", 21)
                             eng.entry_buffer = s.get("entry_buffer", 0.1) / 100.0
+                            eng.rsi_exit_long = float(s.get("short_thresh", 70))
+                            eng.rsi_exit_short = float(s.get("long_thresh", 35))
                         elif s.get("active") and s.get("ha_enabled") and sym not in _ha_engines:
                             new_eng = HeikinAshiEngine(sym, s)
                             await new_eng.warmup()
                             if new_eng.warmed_up:
                                 _ha_engines[sym] = new_eng
                                 await log.ainfo("ha_engine_new_symbol", symbol=sym)
-                    # ha_enabled kapanan sembolleri kaldir
                     ha_syms = {s["symbol"] for s in fresh if s.get("active") and s.get("ha_enabled")}
                     for sym in list(_ha_engines.keys()):
                         if sym not in ha_syms:
                             del _ha_engines[sym]
                             await log.ainfo("ha_engine_removed", symbol=sym)
-                    for eng in _ha_engines.values():
-                        eng._cleanup_used_a()
                 except Exception as e:
                     await log.awarning("ha_settings_reload_error", error=str(e))
 
-            # Her engine icin fiyat tick
-            for sym, engine in _ha_engines.items():
+            # ── Her engine icin fiyat tick ──
+            for sym, engine in list(_ha_engines.items()):
                 price = get_live_price(sym)
                 if price is None:
                     continue
 
                 signal = await engine.on_price_tick(price)
+
+                # ── RSI Exit mum kapanisinda kontrol (on_price_tick icinde yapiliyor)
+                # engine.on_price_tick mum kapanisinda RSI exit'i _bar_close_invalidate ile yapiyor
+                # AMA bu sadece engine.has_position kontrol ediyor — ping-pong icin
+                # her iki hesabi da kontrol etmemiz lazim. Bu on_price_tick SONRASI:
+
+                # ── Sinyal varsa: ping-pong trade ──
                 if signal:
                     dt_str = datetime.now(tz_ist).strftime("%Y-%m-%d %H:%M:%S")
-
-                    # A mumunu her sinyal uretiminde used_a'ya ekle (tekrar kullanilmasin)
-                    a_time = signal.get("candle_a_time")
-                    if a_time:
-                        async with engine._state_lock:
-                            engine.used_a.add(a_time)
-                            engine._save_used_a()
-
-                    # Isleme girilecek mi kontrol et
-                    async with engine._state_lock:
-                        should_trade = await engine.try_execute_signal(signal)
+                    from app.config import settings as app_settings
 
                     await log.ainfo("ha_signal", symbol=sym,
-                                    direction=signal["direction"], entry_price=signal["entry_price"],
-                                    rsi_a=signal["rsi_a"], rsi_b=signal["rsi_b"],
-                                    gap=signal["gap"], traded=should_trade)
-
-                    # Signal log
-                    skip_reason = None
-                    if not should_trade:
-                        if engine.has_position:
-                            skip_reason = "pozisyon_acik"
-                        elif engine.trade_pending:
-                            skip_reason = "emir_bekliyor"
+                                    direction=signal["direction"],
+                                    entry_price=signal["entry_price"])
 
                     row_id = await log_st_signal(
                         dt=dt_str, symbol=sym, direction=signal["direction"],
                         band=engine.interval, price=signal["entry_price"],
-                        entered=should_trade, source="ha_server",
-                        rsi_a=signal["rsi_a"], rsi_b=signal["rsi_b"],
-                        gap=signal["gap"], candle_a_time=signal.get("candle_a_time"),
-                        skip_reason=skip_reason,
+                        entered=True, source="ha_server",
+                        rsi_a=None, rsi_b=None, gap=None,
+                        candle_a_time=signal.get("candle_a_time"),
                     )
 
-                    # HA MOTOR DIREKT TRADE ACAR (webhook gerekmez)
-                    # HA Reversal: TP/SL YOK — cikis RSI exit ile (motor kontrol)
-                    if should_trade:
-                        from app.config import settings as app_settings
-                        if app_settings.trading_enabled:
-                            # Ters pozisyon aciksa once kapat
-                            if engine.has_position:
-                                # Ters sinyal → mevcut pozisyonu kapat
-                                await log.ainfo("ha_reverse_close", symbol=sym,
-                                                old_side=engine.position_side,
-                                                new_dir=signal["direction"])
-                                await engine._bar_close_invalidate()
+                    if app_settings.trading_enabled:
+                        st = _get_acc_state(sym)
+                        direction = signal["direction"]
+                        new_side = "LONG" if direction == "BUY" else "SHORT"
 
-                            from app.modules.binance_client import get_position_risk as _gpr, get_total_wallet_balance as _gwb
-                            _pf = asyncio.ensure_future(asyncio.gather(_gpr(sym), _gwb()))
-                            engine.on_trade_pending()
-                            event_id = f"ha-{row_id}-{int(time.time())}"
-                            # TP/SL None → Binance'a TP/SL emri verilmez
-                            # Cikis tamamen motor tarafindan kontrol edilir (RSI exit)
-                            asyncio.create_task(execute_trade(
-                                symbol=sym,
-                                signal=signal["direction"],
-                                price=signal["entry_price"],
-                                event_id=event_id,
-                                tf=engine.interval,
-                                prefetch=_pf,
-                                webhook_tp=None,
-                                webhook_sl=None,
-                            ))
-                            await log.ainfo("ha_trade_dispatched", symbol=sym,
-                                            direction=signal["direction"],
-                                            entry=round(signal["entry_price"], 6),
-                                            exit_method="RSI_EXIT")
+                        # 1. Ters pozisyonlu hesaplari kapat
+                        opposite = "SHORT" if new_side == "LONG" else "LONG"
+                        for acc in ["a", "b"]:
+                            if st[acc]["side"] == opposite:
+                                await _close_account_position(sym, acc, "REVERSE")
+
+                        # 2. Bos hesap bul → yeni pozisyon ac
+                        free = _find_free_account(sym)
+                        if free is None and has_account_b:
+                            # Ikisi de dolu (ayni yonde) → en eski kapat
+                            oldest = _find_oldest_account(sym)
+                            await _close_account_position(sym, oldest, "ROTATION")
+                            free = oldest
+                        elif free is None:
+                            # Tek hesap ve dolu → kapat + yeniden ac
+                            await _close_account_position(sym, "a", "SINGLE_REOPEN")
+                            free = "a"
+
+                        if free == "b" and not has_account_b:
+                            free = None  # 2. hesap yoksa skip
+
+                        if free:
+                            await _open_account_position(sym, free, direction, engine, row_id)
 
     except asyncio.CancelledError:
         await log.ainfo("ha_engine_loop_stopped")
