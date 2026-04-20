@@ -251,6 +251,8 @@ async function loadEngineStatus(){
 }
 
 function renderAll(binanceTrades){
+  // Onceki sembol verilerini temizle
+  window._revSignals={};window._revTrades={};
   var d=chartData;if(!d)return;
   var candles=d.candles||[];
   var pos=d.position;
