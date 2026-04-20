@@ -553,7 +553,7 @@ async def _ha_engine_loop() -> None:
                 if engine.warmed_up:
                     _ha_engines[sym] = engine
                     await log.ainfo("ha_engine_started", symbol=sym)
-                await asyncio.sleep(3)  # Rate limit — semboller arasi bekleme
+                await asyncio.sleep(10)  # Rate limit — semboller arasi bekleme (ban onleme)
     except Exception as e:
         await log.aerror("ha_engine_init_error", error=str(e))
 

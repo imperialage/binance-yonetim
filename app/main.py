@@ -75,10 +75,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         start_trailing_tp()
     except Exception as _e:
         log.error("startup_trailing_tp_failed", error=str(_e))
-    try:
-        start_pine_live_engine()
-    except Exception as _e:
-        log.error("startup_pine_live_failed", error=str(_e))
+    # pine_live_engine DEVRE DISI — HA motor tum islemleri yapiyor
+    # try:
+    #     start_pine_live_engine()
+    # except Exception as _e:
+    #     log.error("startup_pine_live_failed", error=str(_e))
     yield
     await stop_pine_live_engine()
     await stop_trailing_tp()
