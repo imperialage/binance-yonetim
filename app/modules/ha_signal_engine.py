@@ -290,18 +290,25 @@ class HeikinAshiEngine(SignalEngine):
         if self.signal_fired_this_bar:
             return None
 
-        # 5. HA Reversal giris kontrolu:
-        # Onceki mum bullSignal ise → LONG sinyali (state != 1 ise)
-        # Onceki mum bearSignal ise → SHORT sinyali (state != -1 ise)
-        if not self.prev_bull_signal and not self.prev_bear_signal:
+        # 5. HA Reversal — CANLI MUM'da sinyal kontrol (mum kapanmadan gir)
+        # bullSignal = haOpen == haLow (tolerans: fiyatin %0.01'i)
+        # bearSignal = haOpen == haHigh
+        # Canli mumda: haOpen sabit, haHigh/haLow her tick degisir
+        tol = self.ha_candle_low * 0.0001 if self.ha_candle_low > 0 else 0.0001
+        live_bull = abs(self.ha_candle_open - self.ha_candle_low) <= tol
+        live_bear = abs(self.ha_candle_open - self.ha_candle_high) <= tol
+
+        if not live_bull and not live_bear:
             return None
 
-        # Pozisyon varsa ters sinyal kontrolu (AYNI yonde → skip, TERS yonde → sinyal ver)
-        if self.prev_bull_signal:
-            if self.has_position and self.position_side == "LONG":
-                return None  # Zaten LONG — 2. hesap icin daha sonra
+        # Pozisyon kontrolu (AYNI yonde → 2. hesap icin skip, TERS yonde → sinyal ver)
+        if live_bull:
+            st = _get_acc_state(self.symbol)
+            # Her iki hesap da LONG ise skip
+            if st["a"]["side"] == "LONG" and st["b"]["side"] == "LONG":
+                return None
             # LONG sinyal
-            entry_price = price  # market order, anlik fiyat
+            entry_price = price
             self.signal_fired_this_bar = True
             self.last_signal_time = time.time()
             signal = {
@@ -312,9 +319,10 @@ class HeikinAshiEngine(SignalEngine):
             self.last_signal = signal
             return signal
 
-        if self.prev_bear_signal:
-            if self.has_position and self.position_side == "SHORT":
-                return None  # Zaten SHORT — 2. hesap icin daha sonra
+        if live_bear:
+            st = _get_acc_state(self.symbol)
+            if st["a"]["side"] == "SHORT" and st["b"]["side"] == "SHORT":
+                return None
             # SHORT sinyal
             entry_price = price
             self.signal_fired_this_bar = True
