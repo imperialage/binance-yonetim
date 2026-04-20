@@ -55,12 +55,30 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     start_st_stats_updater()
     start_price_stream()
     start_order_stream()
-    start_signal_engines()
-    start_ha_engine_loop()
-    start_default_collections()
-    start_daily_metrics_updater()
-    start_trailing_tp()
-    start_pine_live_engine()
+    try:
+        start_signal_engines()
+    except Exception as _e:
+        log.error("startup_signal_engines_failed", error=str(_e))
+    try:
+        start_ha_engine_loop()
+    except Exception as _e:
+        log.error("startup_ha_engine_failed", error=str(_e))
+    try:
+        start_default_collections()
+    except Exception as _e:
+        log.error("startup_collections_failed", error=str(_e))
+    try:
+        start_daily_metrics_updater()
+    except Exception as _e:
+        log.error("startup_metrics_failed", error=str(_e))
+    try:
+        start_trailing_tp()
+    except Exception as _e:
+        log.error("startup_trailing_tp_failed", error=str(_e))
+    try:
+        start_pine_live_engine()
+    except Exception as _e:
+        log.error("startup_pine_live_failed", error=str(_e))
     yield
     await stop_pine_live_engine()
     await stop_trailing_tp()
