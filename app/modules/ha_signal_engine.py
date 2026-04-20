@@ -487,6 +487,16 @@ async def _open_account_position(sym: str, account: str, direction: str,
     from app.modules.trade_executor import get_exchange_info_cached
 
     try:
+        # Önce eski emirleri temizle (kalan SL varsa silinsin)
+        try:
+            from app.modules.binance_client import cancel_all_open_orders, cancel_all_open_orders_b
+            if account == "a":
+                await cancel_all_open_orders(sym)
+            else:
+                await cancel_all_open_orders_b(sym)
+        except Exception:
+            pass
+
         # Bakiye
         if account == "a":
             balance = await get_total_wallet_balance()
@@ -719,6 +729,30 @@ async def _ha_engine_loop() -> None:
                     )
 
                     if app_settings.trading_enabled:
+                        # ── ÖNCE: Binance'tan gerçek pozisyon sync (state kayıp olabilir) ──
+                        try:
+                            from app.modules.binance_client import get_position_risk, get_position_risk_b
+                            st = _get_acc_state(sym)
+                            pos_a = await get_position_risk(sym)
+                            for p in pos_a:
+                                if p.get("symbol") == sym:
+                                    a_amt = float(p.get("positionAmt", 0))
+                                    if a_amt > 0: st["a"]["side"] = "LONG"; st["a"]["qty"] = abs(a_amt)
+                                    elif a_amt < 0: st["a"]["side"] = "SHORT"; st["a"]["qty"] = abs(a_amt)
+                                    else: st["a"]["side"] = None
+                                    break
+                            if has_account_b:
+                                pos_b = await get_position_risk_b(sym)
+                                for p in pos_b:
+                                    if p.get("symbol") == sym:
+                                        b_amt = float(p.get("positionAmt", 0))
+                                        if b_amt > 0: st["b"]["side"] = "LONG"; st["b"]["qty"] = abs(b_amt)
+                                        elif b_amt < 0: st["b"]["side"] = "SHORT"; st["b"]["qty"] = abs(b_amt)
+                                        else: st["b"]["side"] = None
+                                        break
+                        except Exception as _sync_err:
+                            await log.awarning("ha_pre_trade_sync_error", symbol=sym, error=str(_sync_err))
+
                         st = _get_acc_state(sym)
                         direction = signal["direction"]
                         new_side = "LONG" if direction == "BUY" else "SHORT"
