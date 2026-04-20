@@ -94,6 +94,23 @@ tr.ob-row td:nth-child(8){color:var(--color-short);font-weight:600}
   </div>
 </div>
 
+<!-- HA Reversal + RSI Exit Simülasyonu -->
+<div class="cards">
+  <div class="card" style="border-color:#F0B90B30">
+    <div class="card-title">HA Reversal + RSI Exit <span style="color:#F0B90B;font-size:9px;background:#F0B90B20;padding:2px 6px;border-radius:4px">SİMÜLASYON</span></div>
+    <div id="revStats" style="font-size:11px;color:#484f58">--</div>
+  </div>
+  <div class="card" style="border-color:#F0B90B30">
+    <div class="card-title">Reversal Ayarlar</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+      <div class="cr"><span class="k">RSI Len</span><span class="v" id="revRsiLen">10</span></div>
+      <div class="cr"><span class="k">LONG Kapat RSI≥</span><span class="v red" id="revExitLong">70</span></div>
+      <div class="cr"><span class="k">SHORT Kapat RSI≤</span><span class="v green" id="revExitShort">35</span></div>
+      <div class="cr"><span class="k">Komisyon</span><span class="v">%0.08</span></div>
+    </div>
+  </div>
+</div>
+
 <div class="card" style="margin-bottom:12px">
   <div class="card-title">Indikatör Ayarlari</div>
   <div id="activeSettings" style="color:#484f58;font-size:11px">Yukleniyor...</div>
@@ -277,10 +294,15 @@ function renderAll(binanceTrades){
     return true;
   });
 
+  // Orijinal index map (reversal sim eşleştirme için)
+  var candleIdxMap={};
+  candles.forEach(function(c,idx){candleIdxMap[c.time]=idx});
+
   // Mum tablosu
   var html='';
   for(var i=filtered.length-1;i>=0;i--){
     var c=filtered[i];
+    var origIdx=candleIdxMap[c.time];
     var dbSigs=sigMap[c.time]||[];
     var bnEntries=bnEntryMap[c.time]||[];
     var bnExits=bnExitMap[c.time]||[];
@@ -323,6 +345,19 @@ function renderAll(binanceTrades){
     var rClr=c.rsi!=null?(c.rsi<=longTh?'green':c.rsi>=shortTh?'red':''):'';
     var sigCell='';
     if(dbSigs.length>0){var d0=dbSigs[0];var e0=d0.entered===1;sigCell=e0?(d0.direction==='BUY'?'<span class="badge b-buy">▲</span>':'<span class="badge b-sell">▼</span>'):'<span class="badge b-skip">'+(d0.direction==='BUY'?'▲':'▼')+'</span>'}
+    // Reversal sim sinyalleri
+    if(window._revSignals&&window._revSignals[origIdx]){
+      var rs=window._revSignals[origIdx];
+      sigCell+=' <span style="background:#F0B90B20;color:#F0B90B;font-size:9px;padding:1px 4px;border-radius:3px;font-weight:700">'+(rs.dir==='BUY'?'▲REV':'▼REV')+' '+fmt(rs.price,dec(rs.price))+'</span>';
+    }
+    if(window._revTrades&&window._revTrades[origIdx]){
+      window._revTrades[origIdx].forEach(function(rt){
+        var rtCls=rt.pnl>=0?'green':'red';
+        var rtIcon=rt.pnl>=0?'✓':'✗';
+        var rtType=rt.type==='RSI_EXIT'?'RSI':'REV';
+        sigCell+=' <span style="font-size:9px;color:var(--'+rtCls+')">'+rtIcon+rtType+' '+fmt(rt.pnl,2)+'%</span>';
+      });
+    }
     html+='<tr class="'+rowCls+'">'
       +'<td style="color:var(--text-dim)">'+timeStr(c.time)+'</td>'
       +'<td>'+fmt(c.open,dec(c.open))+'</td>'
@@ -379,6 +414,90 @@ function renderAll(binanceTrades){
 
   // Canli mum
   if(candles.length>0) updateLive(candles[candles.length-1]);
+
+  // ── HA Reversal + RSI Exit Simülasyon ──
+  runReversalSim(candles);
+}
+
+function runReversalSim(candles){
+  if(!candles||candles.length<3){$('revStats').innerHTML='Yetersiz veri';return}
+  var rsiExitLong=70, rsiExitShort=35, commPct=0.0008;
+  var state=0, entry=0, entryIdx=0;
+  var trades=[], signals=[];
+  var nWin=0, nLoss=0, sumPnl=0, sumWin=0, sumLoss=0, peak=0, maxDD=0;
+
+  // HA mumlardan bullSignal/bearSignal hesapla
+  for(var i=1;i<candles.length;i++){
+    var c=candles[i]; var prev=candles[i-1];
+    if(!c||!prev)continue;
+    var rsi=c.rsi;
+
+    // Önceki mumun sinyali (bullSignal[1], bearSignal[1])
+    var prevBull=(prev.open!=null && prev.low!=null && Math.abs(prev.open-prev.low)<0.000001);
+    var prevBear=(prev.open!=null && prev.high!=null && Math.abs(prev.open-prev.high)<0.000001);
+
+    // 1. RSI Exit (önce)
+    if(state==1 && rsi!=null && rsi>=rsiExitLong){
+      var pct=(c.close-entry)/entry*100 - commPct*100;
+      trades.push({idx:i,type:'RSI_EXIT',dir:'LONG',entry:entry,exit:c.close,pnl:pct,entryIdx:entryIdx});
+      sumPnl+=pct; if(pct>=0){nWin++;sumWin+=pct}else{nLoss++;sumLoss+=pct}
+      state=0;
+    }
+    if(state==-1 && rsi!=null && rsi<=rsiExitShort){
+      var pct2=(entry-c.close)/entry*100 - commPct*100;
+      trades.push({idx:i,type:'RSI_EXIT',dir:'SHORT',entry:entry,exit:c.close,pnl:pct2,entryIdx:entryIdx});
+      sumPnl+=pct2; if(pct2>=0){nWin++;sumWin+=pct2}else{nLoss++;sumLoss+=pct2}
+      state=0;
+    }
+
+    // 2. HA Reversal giriş (bullSignal[1] veya bearSignal[1])
+    if(prevBull && state!=1){
+      // Ters pozisyon varsa kapat
+      if(state==-1){
+        var pct3=(entry-c.open)/entry*100 - commPct*100;
+        trades.push({idx:i,type:'REVERSE',dir:'SHORT',entry:entry,exit:c.open,pnl:pct3,entryIdx:entryIdx});
+        sumPnl+=pct3; if(pct3>=0){nWin++;sumWin+=pct3}else{nLoss++;sumLoss+=pct3}
+      }
+      state=1; entry=c.open; entryIdx=i;
+      signals.push({idx:i,dir:'BUY',price:c.open,rsi:rsi});
+    }
+    else if(prevBear && state!=-1){
+      if(state==1){
+        var pct4=(c.open-entry)/entry*100 - commPct*100;
+        trades.push({idx:i,type:'REVERSE',dir:'LONG',entry:entry,exit:c.open,pnl:pct4,entryIdx:entryIdx});
+        sumPnl+=pct4; if(pct4>=0){nWin++;sumWin+=pct4}else{nLoss++;sumLoss+=pct4}
+      }
+      state=-1; entry=c.open; entryIdx=i;
+      signals.push({idx:i,dir:'SELL',price:c.open,rsi:rsi});
+    }
+
+    // Equity/DD
+    if(sumPnl>peak)peak=sumPnl;
+    if(peak-sumPnl>maxDD)maxDD=peak-sumPnl;
+  }
+
+  // İstatistik kartı
+  var nTotal=trades.length;
+  var wr=nTotal>0?(nWin/nTotal*100):0;
+  var pf=sumLoss<0?(sumWin/Math.abs(sumLoss)):0;
+  var wrCls=wr>=50?'green':'red';
+  var pnlCls=sumPnl>=0?'green':'red';
+  $('revStats').innerHTML=
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">'
+    +'<div class="cr"><span class="k">Sinyal</span><span class="v">'+signals.length+'</span></div>'
+    +'<div class="cr"><span class="k">İşlem</span><span class="v">'+nTotal+'</span></div>'
+    +'<div class="cr"><span class="k">K/Z</span><span class="v">'+nWin+' / '+nLoss+'</span></div>'
+    +'<div class="cr"><span class="k">Win Rate</span><span class="v '+wrCls+'">'+wr.toFixed(1)+'%</span></div>'
+    +'<div class="cr"><span class="k">Net PnL</span><span class="v '+pnlCls+'">'+sumPnl.toFixed(2)+'%</span></div>'
+    +'<div class="cr"><span class="k">PF</span><span class="v">'+pf.toFixed(2)+'</span></div>'
+    +'<div class="cr"><span class="k">Max DD</span><span class="v red">'+maxDD.toFixed(2)+'%</span></div>'
+    +'<div class="cr"><span class="k">Pozisyon</span><span class="v">'+(state==1?'LONG':state==-1?'SHORT':'FLAT')+'</span></div>'
+    +'</div>';
+
+  // Mum tablosuna reversal sinyallerini ekle (revSignalMap)
+  window._revSignals={};window._revTrades={};
+  signals.forEach(function(s){window._revSignals[s.idx]=s});
+  trades.forEach(function(t){if(!window._revTrades[t.idx])window._revTrades[t.idx]=[];window._revTrades[t.idx].push(t)});
 }
 
 function renderPos(pos){
