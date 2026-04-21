@@ -670,6 +670,10 @@ async def _check_divergence_signal(symbol: str, interval: str, cfg: dict) -> Non
         if not cfg.get("listening", True):
             await log.ainfo("divergence_trade_skipped", symbol=symbol, reason="not_listening")
             return
+        # HA motor aktif → divergence trade AÇMA (HA motor kendi islemlerini yapar)
+        if cfg.get("ha_enabled"):
+            await log.ainfo("divergence_trade_skipped", symbol=symbol, reason="ha_enabled")
+            return
 
         direction = signal.direction
         entry_price = signal.entry_price
