@@ -378,11 +378,11 @@ async def signal_engine_status() -> dict:
     # HA engines
     ha_result = []
     try:
-        from app.modules.ha_signal_engine import get_all_ha_engines, _ha_engine_task
-        ha_engines = get_all_ha_engines()
+        import app.modules.ha_signal_engine as _ha_mod
+        ha_engines = _ha_mod.get_all_ha_engines()
         ha_task_status = "NO_TASK"
-        if _ha_engine_task is not None:
-            ha_task_status = "DONE" if _ha_engine_task.done() else "RUNNING"
+        if _ha_mod._ha_engine_task is not None:
+            ha_task_status = "DONE" if _ha_mod._ha_engine_task.done() else "RUNNING"
         for sym, eng in ha_engines.items():
             ha_result.append({
                 "symbol": sym,
