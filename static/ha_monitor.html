@@ -104,8 +104,8 @@ tr.ob-row td:nth-child(8){color:var(--color-short);font-weight:600}
     <div class="card-title">Reversal Ayarlar</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
       <div class="cr"><span class="k">RSI Len</span><span class="v" id="revRsiLen">10</span></div>
-      <div class="cr"><span class="k">LONG Kapat RSI≥</span><span class="v red" id="revExitLong">65</span></div>
-      <div class="cr"><span class="k">SHORT Kapat RSI≤</span><span class="v green" id="revExitShort">35</span></div>
+      <div class="cr"><span class="k">LONG Kapat</span><span class="v red">RSI ↓</span></div>
+      <div class="cr"><span class="k">SHORT Kapat</span><span class="v green">RSI ↑</span></div>
       <div class="cr"><span class="k">Komisyon</span><span class="v">%0.08</span></div>
     </div>
   </div>
@@ -358,7 +358,7 @@ function renderAll(binanceTrades){
       window._revTrades[origIdx].forEach(function(rt){
         var rtCls=rt.pnl>=0?'green':'red';
         var rtIcon=rt.pnl>=0?'✓':'✗';
-        var rtType=rt.type==='RSI_EXIT'?'RSI':'REV';
+        var rtType=(rt.type==='RSI_DOWN'||rt.type==='RSI_UP')?'RSI'+((rt.type==='RSI_UP')?' ↑':' ↓'):'REV';
         sigCell+=' <span style="font-size:10px;font-weight:600;color:var(--color-'+(rt.pnl>=0?'long':'short')+')">'+rtIcon+' '+rtType+' '+fmt(rt.pnl,2)+'% @'+fmt(rt.exit,dec(rt.exit))+'</span>';
       });
     }
@@ -423,41 +423,42 @@ function renderAll(binanceTrades){
 
 function runReversalSim(candles){
   if(!candles||candles.length<3){$('revStats').innerHTML='Yetersiz veri';return}
-  var rsiExitLong=65, rsiExitShort=35, commPct=0.0008;
+  var commPct=0.0008;
   var state=0, entry=0, entryIdx=0;
   var trades=[], signals=[];
   var nWin=0, nLoss=0, sumPnl=0, sumWin=0, sumLoss=0, peak=0, maxDD=0;
 
-  // HA mumlardan bullSignal/bearSignal hesapla
   for(var i=1;i<candles.length;i++){
     var c=candles[i]; var prev=candles[i-1];
     if(!c||!prev)continue;
     var rsi=c.rsi;
+    var prevRsi=prev.rsi;
 
-    // Önceki mumun sinyali (bullSignal[1], bearSignal[1])
-    // bullSignal: haOpen == haLow (tolerans: fiyatin %0.01'i)
-    // bearSignal: haOpen == haHigh
+    // RSI yön tespiti
+    var rsiUp=(rsi!=null && prevRsi!=null && rsi>prevRsi);
+    var rsiDown=(rsi!=null && prevRsi!=null && rsi<prevRsi);
+
+    // Önceki mumun HA sinyali
     var tol=prev.low*0.0001||0.0001;
     var prevBull=(prev.open!=null && prev.low!=null && Math.abs(prev.open-prev.low)<=tol);
     var prevBear=(prev.open!=null && prev.high!=null && Math.abs(prev.open-prev.high)<=tol);
 
-    // 1. RSI Exit (önce)
-    if(state==1 && rsi!=null && rsi>=rsiExitLong){
+    // 1. RSI Yön Exit (önce) — giriş mumunda çıkış yok
+    if(state==1 && rsiDown && i>entryIdx){
       var pct=(c.close-entry)/entry*100 - commPct*100;
-      trades.push({idx:i,type:'RSI_EXIT',dir:'LONG',entry:entry,exit:c.close,pnl:pct,entryIdx:entryIdx});
+      trades.push({idx:i,type:'RSI_DOWN',dir:'LONG',entry:entry,exit:c.close,pnl:pct,entryIdx:entryIdx});
       sumPnl+=pct; if(pct>=0){nWin++;sumWin+=pct}else{nLoss++;sumLoss+=pct}
       state=0;
     }
-    if(state==-1 && rsi!=null && rsi<=rsiExitShort){
+    if(state==-1 && rsiUp && i>entryIdx){
       var pct2=(entry-c.close)/entry*100 - commPct*100;
-      trades.push({idx:i,type:'RSI_EXIT',dir:'SHORT',entry:entry,exit:c.close,pnl:pct2,entryIdx:entryIdx});
+      trades.push({idx:i,type:'RSI_UP',dir:'SHORT',entry:entry,exit:c.close,pnl:pct2,entryIdx:entryIdx});
       sumPnl+=pct2; if(pct2>=0){nWin++;sumWin+=pct2}else{nLoss++;sumLoss+=pct2}
       state=0;
     }
 
-    // 2. HA Reversal giriş (bullSignal[1] veya bearSignal[1])
-    if(prevBull && state!=1){
-      // Ters pozisyon varsa kapat
+    // 2. HA Reversal giriş + RSI yön filtresi
+    if(prevBull && state!=1 && rsiUp){
       if(state==-1){
         var pct3=(entry-c.open)/entry*100 - commPct*100;
         trades.push({idx:i,type:'REVERSE',dir:'SHORT',entry:entry,exit:c.open,pnl:pct3,entryIdx:entryIdx});
@@ -466,7 +467,7 @@ function runReversalSim(candles){
       state=1; entry=c.open; entryIdx=i;
       signals.push({idx:i,dir:'BUY',price:c.open,rsi:rsi});
     }
-    else if(prevBear && state!=-1){
+    else if(prevBear && state!=-1 && rsiDown){
       if(state==1){
         var pct4=(c.open-entry)/entry*100 - commPct*100;
         trades.push({idx:i,type:'REVERSE',dir:'LONG',entry:entry,exit:c.open,pnl:pct4,entryIdx:entryIdx});
@@ -476,7 +477,6 @@ function runReversalSim(candles){
       signals.push({idx:i,dir:'SELL',price:c.open,rsi:rsi});
     }
 
-    // Equity/DD
     if(sumPnl>peak)peak=sumPnl;
     if(peak-sumPnl>maxDD)maxDD=peak-sumPnl;
   }

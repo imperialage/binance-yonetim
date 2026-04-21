@@ -89,16 +89,9 @@ class HeikinAshiEngine(SignalEngine):
         # HA Reversal state
         self.prev_bull_signal: bool = False  # onceki mumda bullSignal (haOpen==haLow)
         self.prev_bear_signal: bool = False  # onceki mumda bearSignal (haOpen==haHigh)
-        # RSI exit esikleri — SABIT (Pine Script indikatorden)
-        self.rsi_exit_long: float = 65.0     # LONG kapat RSI>=65
-        self.rsi_exit_short: float = 35.0    # SHORT kapat RSI<=35
-        # RSI uzunluk — GERÇEK close üzerinden hesaplanacak (HA close DEĞİL)
-        self.rsi_real_len: int = 10          # RSI(10)
-        # Gerçek close RSI state (HA close'dan AYRI)
-        self.real_rsi_avg_gain: float = 0.0
-        self.real_rsi_avg_loss: float = 0.0
-        self.real_rsi_prev_close: float = 0.0
-        self.real_rsi_warmed_up: bool = False
+        # RSI yön filtresi state
+        self.prev_closed_rsi: float | None = None  # onceki mumun HA RSI'ı
+        self.entry_bar_time: int = 0  # giris mumunun zamani (giris mumunda cikis engeli)
 
     # ── Override: Warmup ────────────────────────────────
     async def warmup(self) -> None:
@@ -152,21 +145,9 @@ class HeikinAshiEngine(SignalEngine):
                 self.rsi_prev_close = ha_closes[n - 1]
                 self.rsi_warmed_up = True
 
-            # GERÇEK close RSI state — Pine Script rsi = ta.rsi(close, 1)
-            real_closes = [float(k[4]) for k in klines[:-1]]  # gerçek close (son mum hariç)
-            rn = len(real_closes)
-            if rn >= self.rsi_real_len + 1:
-                rg = [0.0] * rn; rl = [0.0] * rn
-                for i in range(1, rn):
-                    d = real_closes[i] - real_closes[i - 1]
-                    rg[i] = max(d, 0.0); rl[i] = max(-d, 0.0)
-                self.real_rsi_avg_gain = sum(rg[1:self.rsi_real_len + 1]) / self.rsi_real_len
-                self.real_rsi_avg_loss = sum(rl[1:self.rsi_real_len + 1]) / self.rsi_real_len
-                for i in range(self.rsi_real_len + 1, rn):
-                    self.real_rsi_avg_gain = (self.real_rsi_avg_gain * (self.rsi_real_len - 1) + rg[i]) / self.rsi_real_len
-                    self.real_rsi_avg_loss = (self.real_rsi_avg_loss * (self.rsi_real_len - 1) + rl[i]) / self.rsi_real_len
-                self.real_rsi_prev_close = real_closes[-1]
-                self.real_rsi_warmed_up = True
+            # prev_closed_rsi — onceki mumun HA RSI'ı (yon karsilastirmasi icin)
+            if len(self.closed_candles) >= 2:
+                self.prev_closed_rsi = self.closed_candles[-2].get("rsi")
 
             # HA state
             if self.closed_candles:
@@ -269,18 +250,6 @@ class HeikinAshiEngine(SignalEngine):
             closed_rsi = self._calc_live_rsi(ha_c)
             self._advance_candle(ha_c)
 
-            # GERÇEK close RSI — Pine Script: rsi = ta.rsi(close, 10)
-            real_closed_rsi = None
-            if self.real_rsi_warmed_up and self.real_rsi_prev_close > 0:
-                delta = real_c - self.real_rsi_prev_close
-                gain = max(delta, 0.0); loss = max(-delta, 0.0)
-                ag = (self.real_rsi_avg_gain * (self.rsi_real_len - 1) + gain) / self.rsi_real_len
-                al = (self.real_rsi_avg_loss * (self.rsi_real_len - 1) + loss) / self.rsi_real_len
-                real_closed_rsi = 100.0 if al == 0 else 100.0 - 100.0 / (1.0 + ag / al)
-                self.real_rsi_avg_gain = ag
-                self.real_rsi_avg_loss = al
-            self.real_rsi_prev_close = real_c
-
             # HA state guncelle
             self.ha_prev_open = ha_o
             self.ha_prev_close = ha_c
@@ -298,35 +267,55 @@ class HeikinAshiEngine(SignalEngine):
                 self.closed_candles = self.closed_candles[-max_keep:]
 
             # ── HA Reversal sinyal tespiti (kapanan mum icin) ──
-            # bullSignal = haOpen == haLow (alt golge yok)
-            # bearSignal = haOpen == haHigh (ust golge yok)
             tol = ha_l * 0.0001 if ha_l > 0 else 0.0001
             self.prev_bull_signal = abs(ha_o - ha_l) <= tol
             self.prev_bear_signal = abs(ha_o - ha_h) <= tol
+
+            # ── RSI yön tespiti ──
+            rsi_up = False
+            rsi_down = False
+            if closed_rsi is not None and self.prev_closed_rsi is not None:
+                rsi_up = closed_rsi > self.prev_closed_rsi
+                rsi_down = closed_rsi < self.prev_closed_rsi
 
             await log.ainfo("ha_candle_closed", symbol=self.symbol,
                             ha_o=round(ha_o, 4), ha_h=round(ha_h, 4),
                             ha_l=round(ha_l, 4), ha_c=round(ha_c, 4),
                             real_o=round(real_o, 4), real_c=round(real_c, 4),
                             rsi=round(closed_rsi, 2) if closed_rsi else None,
+                            prev_rsi=round(self.prev_closed_rsi, 2) if self.prev_closed_rsi else None,
+                            rsi_up=rsi_up, rsi_down=rsi_down,
                             tol=round(tol, 6),
                             bull=self.prev_bull_signal, bear=self.prev_bear_signal)
 
-            # ── RSI Exit — HA close RSI(10) ile mum kapanışında kontrol ──
-            if closed_rsi is not None:
+            # ── RSI Yön Exit — mum kapanışında kontrol ──
+            # LONG: RSI düştüyse (rsiDown) → momentum kaybı → kapat
+            # SHORT: RSI yükseldiyse (rsiUp) → momentum kaybı → kapat
+            # Giriş mumunda çıkış yok (entry_bar_time kontrolü)
+            if closed_rsi is not None and self.prev_closed_rsi is not None:
                 st = _get_acc_state(self.symbol)
                 for acc in ["a", "b"]:
                     acc_side = st[acc]["side"]
                     if acc_side is None:
                         continue
-                    if acc_side == "LONG" and closed_rsi >= self.rsi_exit_long:
-                        await log.ainfo("ha_rsi_exit", symbol=self.symbol, account=acc.upper(),
-                                        side="LONG", rsi=round(closed_rsi, 2))
-                        await _close_account_position(self.symbol, acc, "RSI_EXIT")
-                    elif acc_side == "SHORT" and closed_rsi <= self.rsi_exit_short:
-                        await log.ainfo("ha_rsi_exit", symbol=self.symbol, account=acc.upper(),
-                                        side="SHORT", rsi=round(closed_rsi, 2))
-                        await _close_account_position(self.symbol, acc, "RSI_EXIT")
+                    # Giriş mumunda çıkış yapma
+                    if st[acc].get("entry_bar") == self.candle_start:
+                        continue
+                    if acc_side == "LONG" and rsi_down:
+                        await log.ainfo("ha_rsi_direction_exit", symbol=self.symbol,
+                                        account=acc.upper(), side="LONG",
+                                        rsi=round(closed_rsi, 2),
+                                        prev_rsi=round(self.prev_closed_rsi, 2))
+                        await _close_account_position(self.symbol, acc, "RSI_DOWN")
+                    elif acc_side == "SHORT" and rsi_up:
+                        await log.ainfo("ha_rsi_direction_exit", symbol=self.symbol,
+                                        account=acc.upper(), side="SHORT",
+                                        rsi=round(closed_rsi, 2),
+                                        prev_rsi=round(self.prev_closed_rsi, 2))
+                        await _close_account_position(self.symbol, acc, "RSI_UP")
+
+            # prev_closed_rsi güncelle (sonraki mum için)
+            self.prev_closed_rsi = closed_rsi
 
             # Yeni mum
             self.candle_start = new_candle_start
@@ -337,56 +326,44 @@ class HeikinAshiEngine(SignalEngine):
             self._update_ha_candle()
             self.signal_fired_this_bar = False
 
-        # 4. Canlı HA RSI exit — her tick'te kontrol
-        live_ha_rsi = self._calc_live_rsi(self.ha_candle_close)
-        if live_ha_rsi is not None:
-            st = _get_acc_state(self.symbol)
-            for acc in ["a", "b"]:
-                acc_side = st[acc]["side"]
-                if acc_side is None:
-                    continue
-                if acc_side == "LONG" and live_ha_rsi >= self.rsi_exit_long:
-                    await log.ainfo("ha_live_rsi_exit", symbol=self.symbol, account=acc.upper(),
-                                    side="LONG", rsi=round(live_ha_rsi, 2))
-                    await _close_account_position(self.symbol, acc, "LIVE_RSI_EXIT")
-                elif acc_side == "SHORT" and live_ha_rsi <= self.rsi_exit_short:
-                    await log.ainfo("ha_live_rsi_exit", symbol=self.symbol, account=acc.upper(),
-                                    side="SHORT", rsi=round(live_ha_rsi, 2))
-                    await _close_account_position(self.symbol, acc, "LIVE_RSI_EXIT")
-
-        # 5. Bu mumda sinyal verildi mi?
+        # 4. Bu mumda sinyal verildi mi?
         if self.signal_fired_this_bar:
             return None
 
-        # 5. Sinyal SADECE MUM KAPANIŞINDA — prev_bull/bear_signal
-        # Pine Script: bullSignal[1] → onceki mumda tespit, bu mumun ilk tickinde gir
+        # 5. Sinyal: bullSignal[1] AND rsiUp / bearSignal[1] AND rsiDown
+        # RSI yön filtresi: düşerken LONG açma, yükselirken SHORT açma
         if not self.prev_bull_signal and not self.prev_bear_signal:
             return None
 
-        if self.prev_bull_signal:
+        # RSI yön kontrolü için canlı RSI hesapla
+        live_rsi = self._calc_live_rsi(self.ha_candle_close)
+        if live_rsi is None or self.prev_closed_rsi is None:
+            return None
+        live_rsi_up = live_rsi > self.prev_closed_rsi
+        live_rsi_down = live_rsi < self.prev_closed_rsi
+
+        if self.prev_bull_signal and live_rsi_up:
             st = _get_acc_state(self.symbol)
             if st["a"]["side"] == "LONG" and st["b"]["side"] == "LONG":
                 return None
-            entry_price = price
             self.signal_fired_this_bar = True
             self.last_signal_time = time.time()
             signal = {
-                "symbol": self.symbol, "direction": "BUY", "entry_price": entry_price,
+                "symbol": self.symbol, "direction": "BUY", "entry_price": price,
                 "rsi_a": None, "rsi_b": None, "gap": None,
                 "candle_a_time": self.candle_start, "source": "ha_server",
             }
             self.last_signal = signal
             return signal
 
-        if self.prev_bear_signal:
+        if self.prev_bear_signal and live_rsi_down:
             st = _get_acc_state(self.symbol)
             if st["a"]["side"] == "SHORT" and st["b"]["side"] == "SHORT":
                 return None
-            entry_price = price
             self.signal_fired_this_bar = True
             self.last_signal_time = time.time()
             signal = {
-                "symbol": self.symbol, "direction": "SELL", "entry_price": entry_price,
+                "symbol": self.symbol, "direction": "SELL", "entry_price": price,
                 "rsi_a": None, "rsi_b": None, "gap": None,
                 "candle_a_time": self.candle_start, "source": "ha_server",
             }
@@ -591,9 +568,9 @@ async def _open_account_position(sym: str, account: str, direction: str,
         st[account]["entry"] = fill_price
         st[account]["qty"] = quantity
         st[account]["time"] = int(time.time())
-        # Giriş anındaki RSI kaydet (OB/OS exit kontrolü için)
+        # Giriş mumunu kaydet (giriş mumunda çıkış engeli için)
         _eng = _ha_engines.get(sym)
-        st[account]["entry_rsi"] = _eng._calc_live_rsi(_eng.ha_candle_close) if _eng else 50
+        st[account]["entry_bar"] = _eng.candle_start if _eng else 0
 
         await log.ainfo("ha_pingpong_opened", symbol=sym, account=account.upper(),
                         direction=direction, entry=round(fill_price, 6), qty=quantity)
@@ -774,9 +751,7 @@ async def _ha_engine_loop() -> None:
                             eng.short_thresh = s.get("short_thresh", 70.0)
                             eng.max_gap = s.get("max_gap", 21)
                             eng.entry_buffer = s.get("entry_buffer", 0.1) / 100.0
-                            # RSI exit thresholds SABIT — Pine Script indikatorden
-                            # eng.rsi_exit_long = 65.0 (degistirilmez)
-                            # eng.rsi_exit_short = 35.0 (degistirilmez)
+                            # RSI exit: yon karsilastirmasi (sabit threshold yok)
                         elif s.get("active") and s.get("ha_enabled") and sym not in _ha_engines:
                             new_eng = HeikinAshiEngine(sym, s)
                             await new_eng.warmup()
