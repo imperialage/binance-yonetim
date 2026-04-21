@@ -305,8 +305,11 @@ class HeikinAshiEngine(SignalEngine):
             self.prev_bear_signal = abs(ha_o - ha_h) <= tol
 
             await log.ainfo("ha_candle_closed", symbol=self.symbol,
-                            ha_close=round(ha_c, 4), real_close=round(real_c, 4),
+                            ha_o=round(ha_o, 4), ha_h=round(ha_h, 4),
+                            ha_l=round(ha_l, 4), ha_c=round(ha_c, 4),
+                            real_o=round(real_o, 4), real_c=round(real_c, 4),
                             rsi=round(closed_rsi, 2) if closed_rsi else None,
+                            tol=round(tol, 6),
                             bull=self.prev_bull_signal, bear=self.prev_bear_signal)
 
             # ── RSI Exit — HA close RSI(10) ile mum kapanışında kontrol ──
