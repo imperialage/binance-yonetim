@@ -342,8 +342,6 @@ async def signal_engine_status() -> dict:
             task_status = f"DONE_ERROR: {exc}" if exc else "DONE_OK"
         else:
             task_status = "RUNNING"
-    if not engines:
-        return {"status": "NOT_RUNNING", "task": task_status, "engines": [], "count": 0}
     result = []
     for sym, eng in engines.items():
         result.append({
