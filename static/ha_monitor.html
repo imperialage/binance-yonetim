@@ -104,7 +104,7 @@ tr.ob-row td:nth-child(8){color:var(--color-short);font-weight:600}
     <div class="card-title">Reversal Ayarlar</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
       <div class="cr"><span class="k">RSI Len</span><span class="v" id="revRsiLen">10</span></div>
-      <div class="cr"><span class="k">LONG Kapat RSI≥</span><span class="v red" id="revExitLong">70</span></div>
+      <div class="cr"><span class="k">LONG Kapat RSI≥</span><span class="v red" id="revExitLong">65</span></div>
       <div class="cr"><span class="k">SHORT Kapat RSI≤</span><span class="v green" id="revExitShort">35</span></div>
       <div class="cr"><span class="k">Komisyon</span><span class="v">%0.08</span></div>
     </div>
@@ -421,7 +421,7 @@ function renderAll(binanceTrades){
 
 function runReversalSim(candles){
   if(!candles||candles.length<3){$('revStats').innerHTML='Yetersiz veri';return}
-  var rsiExitLong=70, rsiExitShort=35, commPct=0.0008;
+  var rsiExitLong=65, rsiExitShort=35, commPct=0.0008;
   var state=0, entry=0, entryIdx=0;
   var trades=[], signals=[];
   var nWin=0, nLoss=0, sumPnl=0, sumWin=0, sumLoss=0, peak=0, maxDD=0;

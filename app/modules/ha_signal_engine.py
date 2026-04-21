@@ -90,10 +90,10 @@ class HeikinAshiEngine(SignalEngine):
         self.prev_bull_signal: bool = False  # onceki mumda bullSignal (haOpen==haLow)
         self.prev_bear_signal: bool = False  # onceki mumda bearSignal (haOpen==haHigh)
         # RSI exit esikleri — SABIT (Pine Script indikatorden)
-        self.rsi_exit_long: float = 63.0     # LONG kapat RSI>=63
+        self.rsi_exit_long: float = 65.0     # LONG kapat RSI>=65
         self.rsi_exit_short: float = 35.0    # SHORT kapat RSI<=35
         # RSI uzunluk — GERÇEK close üzerinden hesaplanacak (HA close DEĞİL)
-        self.rsi_real_len: int = 1           # RSI(1)
+        self.rsi_real_len: int = 10          # RSI(10)
         # Gerçek close RSI state (HA close'dan AYRI)
         self.real_rsi_avg_gain: float = 0.0
         self.real_rsi_avg_loss: float = 0.0
@@ -257,7 +257,7 @@ class HeikinAshiEngine(SignalEngine):
             closed_rsi = self._calc_live_rsi(ha_c)
             self._advance_candle(ha_c)
 
-            # GERÇEK close RSI — Pine Script: rsi = ta.rsi(close, 1)
+            # GERÇEK close RSI — Pine Script: rsi = ta.rsi(close, 10)
             real_closed_rsi = None
             if self.real_rsi_warmed_up and self.real_rsi_prev_close > 0:
                 delta = real_c - self.real_rsi_prev_close
@@ -288,8 +288,9 @@ class HeikinAshiEngine(SignalEngine):
             # ── HA Reversal sinyal tespiti (kapanan mum icin) ──
             # bullSignal = haOpen == haLow (alt golge yok)
             # bearSignal = haOpen == haHigh (ust golge yok)
-            self.prev_bull_signal = abs(ha_o - ha_l) < 1e-10
-            self.prev_bear_signal = abs(ha_o - ha_h) < 1e-10
+            tol = ha_l * 0.0001 if ha_l > 0 else 0.0001
+            self.prev_bull_signal = abs(ha_o - ha_l) <= tol
+            self.prev_bear_signal = abs(ha_o - ha_h) <= tol
 
             await log.ainfo("ha_candle_closed", symbol=self.symbol,
                             ha_close=round(ha_c, 4), real_close=round(real_c, 4),
@@ -682,7 +683,7 @@ async def _ha_engine_loop() -> None:
                             eng.max_gap = s.get("max_gap", 21)
                             eng.entry_buffer = s.get("entry_buffer", 0.1) / 100.0
                             # RSI exit thresholds SABIT — Pine Script indikatorden
-                            # eng.rsi_exit_long = 63.0 (degistirilmez)
+                            # eng.rsi_exit_long = 65.0 (degistirilmez)
                             # eng.rsi_exit_short = 35.0 (degistirilmez)
                         elif s.get("active") and s.get("ha_enabled") and sym not in _ha_engines:
                             new_eng = HeikinAshiEngine(sym, s)
