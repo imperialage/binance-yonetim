@@ -322,7 +322,24 @@ class HeikinAshiEngine(SignalEngine):
             self._update_ha_candle()
             self.signal_fired_this_bar = False
 
-        # 4. Bu mumda sinyal verildi mi?
+        # 4. Canlı HA RSI exit — her tick'te kontrol
+        live_ha_rsi = self._calc_live_rsi(self.ha_candle_close)
+        if live_ha_rsi is not None:
+            st = _get_acc_state(self.symbol)
+            for acc in ["a", "b"]:
+                acc_side = st[acc]["side"]
+                if acc_side is None:
+                    continue
+                if acc_side == "LONG" and live_ha_rsi >= self.rsi_exit_long:
+                    await log.ainfo("ha_live_rsi_exit", symbol=self.symbol, account=acc.upper(),
+                                    side="LONG", rsi=round(live_ha_rsi, 2))
+                    await _close_account_position(self.symbol, acc, "LIVE_RSI_EXIT")
+                elif acc_side == "SHORT" and live_ha_rsi <= self.rsi_exit_short:
+                    await log.ainfo("ha_live_rsi_exit", symbol=self.symbol, account=acc.upper(),
+                                    side="SHORT", rsi=round(live_ha_rsi, 2))
+                    await _close_account_position(self.symbol, acc, "LIVE_RSI_EXIT")
+
+        # 5. Bu mumda sinyal verildi mi?
         if self.signal_fired_this_bar:
             return None
 
