@@ -184,12 +184,24 @@ class HeikinAshiEngine(SignalEngine):
             self._update_ha_candle()
 
             self._load_used_a()
-            await self._sync_position()
+            # _sync_position ÇAĞIRMA — HA motor kendi _account_state
+            # yönetimini yapıyor, SignalEngine.has_position kullanmıyor
             self.warmed_up = True
             await log.ainfo("ha_warmup_done", symbol=self.symbol, candles=len(self.closed_candles))
 
         except Exception as e:
             await log.aerror("ha_warmup_error", symbol=self.symbol, error=str(e))
+
+    # ── Override: HA motor kendi _account_state yönetimini yapar ──
+    # SignalEngine'den miras gelen bu metodlar HA'da NO-OP
+    async def _sync_position(self) -> None:
+        pass
+
+    def on_position_closed(self, exit_info: dict | None = None) -> None:
+        pass
+
+    def on_position_opened(self, side: str) -> None:
+        pass
 
     # ── HA mum guncelleme ───────────────────────────────
     def _update_ha_candle(self) -> None:

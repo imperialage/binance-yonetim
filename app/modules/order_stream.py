@@ -120,46 +120,56 @@ async def _handle_event(data: dict[str, Any]) -> None:
                 await log.aerror("fill_callback_error", symbol=symbol, error=str(e))
 
         # FILLED event → signal_engine'e bildir (pozisyon acildi/kapandi)
+        # HA engine sembollerinde MUDAHALE ETME — HA motor kendi _account_state'ini yonetiyor
         if status == "FILLED":
             try:
                 from app.modules.signal_engine import get_engine
                 from app.modules.ha_signal_engine import get_ha_engine
-                engine = get_ha_engine(symbol) or get_engine(symbol)
-                if engine:
-                    reduce_only = order.get("R", False)  # reduceOnly flag
-                    close_pos = order.get("cp", False)    # closePosition flag
+                ha_engine = get_ha_engine(symbol)
+                if ha_engine:
+                    # HA motor sembolu — sadece logla, state'e dokunma
+                    reduce_only = order.get("R", False)
+                    close_pos = order.get("cp", False)
                     if reduce_only or close_pos:
-                        async with engine._state_lock:
-                            if not engine.has_position:
-                                return  # zaten kapali — polling halletmis
-                            # Pozisyon kapandi — ONCE eski emirleri temizle, SONRA state sifirla
-                            try:
-                                from app.modules.binance_client import cancel_all_open_orders
-                                await cancel_all_open_orders(symbol)
-                                await log.ainfo("position_closed_orders_cleaned_instant", symbol=symbol)
-                            except Exception:
-                                pass
-                            # Kapanış bilgilerini exit_info olarak aktar
-                            exit_info = {
-                                "avg_price": avg_price,
-                                "qty": qty,
-                                "order_type": order_type,
-                                "side": side,
-                                "realized_pnl": float(order.get("rp", 0)),
-                            }
-                            engine.on_position_closed(exit_info=exit_info)
-                            await log.ainfo("signal_engine_position_closed", symbol=symbol, side=side)
-                            # last_signal mekanizmasi kaldirildi — yeni sinyal beklenir
+                        await log.ainfo("order_stream_ha_close_detected", symbol=symbol, side=side,
+                                        avg_price=avg_price, order_type=order_type)
                     else:
-                        async with engine._state_lock:
-                            pos_side = "LONG" if side == "BUY" else "SHORT"
-                            engine.on_position_opened(pos_side)
-                            # Entry bilgilerini kaydet (check_pending_fill de yapar, yedek)
-                            if avg_price > 0 and engine.entry_price <= 0:
-                                engine.entry_price = avg_price
-                                engine.entry_time = int(time.time())
-                                engine.entry_qty = qty
-                            await log.ainfo("signal_engine_position_opened", symbol=symbol, side=pos_side)
+                        await log.ainfo("order_stream_ha_open_detected", symbol=symbol, side=side,
+                                        avg_price=avg_price)
+                else:
+                    # Normal motor sembolu — eski davranış
+                    engine = get_engine(symbol)
+                    if engine:
+                        reduce_only = order.get("R", False)
+                        close_pos = order.get("cp", False)
+                        if reduce_only or close_pos:
+                            async with engine._state_lock:
+                                if not engine.has_position:
+                                    return  # zaten kapali — polling halletmis
+                                try:
+                                    from app.modules.binance_client import cancel_all_open_orders
+                                    await cancel_all_open_orders(symbol)
+                                    await log.ainfo("position_closed_orders_cleaned_instant", symbol=symbol)
+                                except Exception:
+                                    pass
+                                exit_info = {
+                                    "avg_price": avg_price,
+                                    "qty": qty,
+                                    "order_type": order_type,
+                                    "side": side,
+                                    "realized_pnl": float(order.get("rp", 0)),
+                                }
+                                engine.on_position_closed(exit_info=exit_info)
+                                await log.ainfo("signal_engine_position_closed", symbol=symbol, side=side)
+                        else:
+                            async with engine._state_lock:
+                                pos_side = "LONG" if side == "BUY" else "SHORT"
+                                engine.on_position_opened(pos_side)
+                                if avg_price > 0 and engine.entry_price <= 0:
+                                    engine.entry_price = avg_price
+                                    engine.entry_time = int(time.time())
+                                    engine.entry_qty = qty
+                                await log.ainfo("signal_engine_position_opened", symbol=symbol, side=pos_side)
             except Exception as e:
                 await log.awarning("signal_engine_notify_error", symbol=symbol, error=str(e))
 
