@@ -246,7 +246,7 @@ async def st_webhook(request: Request) -> JSONResponse:
         direction=direction,
         band=tf,
         price=price,
-        entered=settings.trading_enabled,
+        entered=False,  # Webhook sadece loglar, trade ACMAZ (HA motor yapar)
         source="webhook",
         webhook_tp=webhook_tp,
         webhook_sl=webhook_sl,
