@@ -501,6 +501,30 @@ async def place_stop_market_instant(
     return result
 
 
+async def place_stop_market_instant_b(
+    symbol: str,
+    side: str,
+    quantity: float,
+    stop_price: float,
+) -> dict:
+    """Place STOP_MARKET order — Hesap B. Algo tracking dahil."""
+    client = await get_client_b()
+    params = _sign_b({
+        "symbol": symbol,
+        "side": side,
+        "type": "STOP_MARKET",
+        "algoType": "CONDITIONAL",
+        "quantity": quantity,
+        "triggerPrice": stop_price,
+    })
+    resp = await client.post("/fapi/v1/algoOrder", params=params)
+    _raise_for_binance(resp)
+    result = resp.json()
+    await _track_algo_id_b_async(symbol, result.get("algoId"))
+    log.info("sl_instant_b_placed", symbol=symbol, side=side, stop_price=stop_price, algo_id=result.get("algoId"))
+    return result
+
+
 async def place_stop_market_order(
     symbol: str,
     side: str,
