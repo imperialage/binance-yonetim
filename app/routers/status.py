@@ -1050,11 +1050,15 @@ async def api_ha_live_rsi(symbol: str = "MYXUSDT") -> dict:
         engine.candle_close = price
         engine._update_ha_candle()
 
-    ha_rsi = engine._calc_live_rsi(engine.ha_candle_close) if engine.rsi_warmed_up else None
+    # RSI(10) GERÇEK close üzerinden (monitör görsel amaçlı)
+    real_rsi = None
+    if engine.rsi_warmed_up and price is not None:
+        from app.modules.live_rsi import get_live_rsi
+        real_rsi = await get_live_rsi(sym, engine.interval, price, engine.rsi_len)
 
     return {
         "symbol": sym,
-        "rsi": ha_rsi,
+        "rsi": real_rsi,
         "price": price,
         "ha_close": round(engine.ha_candle_close, 6),
         "ha_engine": True,
@@ -1647,9 +1651,9 @@ async def api_ha_chart_data(
     # Normal klines → HA mumlari
     ha_candles = convert_klines_to_ha(raw_klines)
 
-    # HA close'lardan RSI
-    ha_closes = [c["close"] for c in ha_candles]
-    rsi_values = calculate_rsi(ha_closes, rsi_len)
+    # GERÇEK close'lardan RSI (Pine Script: ta.rsi(close, rsiLen))
+    real_closes = [c.get("real_close", c["close"]) for c in ha_candles]
+    rsi_values = calculate_rsi(real_closes, rsi_len)
 
     candles = []
     for i, hc in enumerate(ha_candles):
