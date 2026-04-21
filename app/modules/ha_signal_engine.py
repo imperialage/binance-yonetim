@@ -98,14 +98,7 @@ class HeikinAshiEngine(SignalEngine):
         """Binance'tan 200 normal mum cek → HA'ya donustur → RSI hesapla."""
         import httpx
         try:
-            proxy_url = None
-            try:
-                from app.config import settings as app_settings
-                proxy_url = app_settings.binance_proxy_url or None
-            except Exception:
-                pass
-
-            async with httpx.AsyncClient(timeout=30, proxy=proxy_url) as client:
+            async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(BINANCE_URL, params={
                     "symbol": self.symbol, "interval": self.interval, "limit": 1500,
                 })
@@ -222,13 +215,7 @@ class HeikinAshiEngine(SignalEngine):
             real_o, real_h, real_l, real_c = self.candle_open, self.candle_high, self.candle_low, self.candle_close
             try:
                 import httpx
-                proxy_url = None
-                try:
-                    from app.config import settings as _s
-                    proxy_url = _s.binance_proxy_url or None
-                except Exception:
-                    pass
-                async with httpx.AsyncClient(timeout=5, proxy=proxy_url) as _client:
+                async with httpx.AsyncClient(timeout=5) as _client:
                     _resp = await _client.get(BINANCE_URL, params={
                         "symbol": self.symbol, "interval": self.interval, "limit": 2,
                     })
