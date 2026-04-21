@@ -105,7 +105,7 @@ class HeikinAshiEngine(SignalEngine):
             except Exception:
                 pass
 
-            async with httpx.AsyncClient(timeout=15, proxy=proxy_url) as client:
+            async with httpx.AsyncClient(timeout=30, proxy=proxy_url) as client:
                 resp = await client.get(BINANCE_URL, params={
                     "symbol": self.symbol, "interval": self.interval, "limit": 1500,
                 })
@@ -540,19 +540,29 @@ async def _ha_engine_loop() -> None:
     from app.modules.st_signal_logger import log_st_signal
     tz_ist = timezone(timedelta(hours=3))
 
-    # Baslangicta ha_enabled sembolleri yukle (rate limit dostu: 3sn arayla)
+    # Baslangicta ha_enabled sembolleri yukle
+    global _last_crash_error
     try:
         all_settings = await get_all_settings()
-        for s in all_settings:
-            if s.get("active") and s.get("ha_enabled"):
-                sym = s["symbol"]
+        ha_symbols = [s for s in all_settings if s.get("active") and s.get("ha_enabled")]
+        await log.ainfo("ha_engine_loading", count=len(ha_symbols),
+                        symbols=[s["symbol"] for s in ha_symbols])
+        for s in ha_symbols:
+            sym = s["symbol"]
+            try:
                 engine = HeikinAshiEngine(sym, s)
                 await engine.warmup()
                 if engine.warmed_up:
                     _ha_engines[sym] = engine
                     await log.ainfo("ha_engine_started", symbol=sym)
-                await asyncio.sleep(10)  # Rate limit — semboller arasi bekleme (ban onleme)
+                else:
+                    await log.awarning("ha_warmup_failed", symbol=sym)
+            except Exception as we:
+                _last_crash_error = f"warmup {sym}: {we}"
+                await log.aerror("ha_warmup_exception", symbol=sym, error=str(we))
+            await asyncio.sleep(3)  # Rate limit
     except Exception as e:
+        _last_crash_error = f"init: {e}"
         await log.aerror("ha_engine_init_error", error=str(e))
 
     if not _ha_engines:
