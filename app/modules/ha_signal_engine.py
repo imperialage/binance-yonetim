@@ -34,6 +34,7 @@ log = get_logger(__name__)
 # HA engine registry (SignalEngine'in _engines'inden ayri)
 _ha_engines: dict[str, HeikinAshiEngine] = {}
 _ha_engine_task: asyncio.Task | None = None
+_last_crash_error: str = ""
 
 
 # ── Heikin-Ashi donusum fonksiyonlari ─────────────────
@@ -639,19 +640,30 @@ async def _ha_engine_loop() -> None:
 
     tz_ist = timezone(timedelta(hours=3))
 
-    # Baslangicta ha_enabled sembolleri yukle (rate limit dostu: 3sn arayla)
+    # Baslangicta ha_enabled sembolleri yukle
+    global _last_crash_error
     try:
         all_settings = await get_all_settings()
-        for s in all_settings:
-            if s.get("active") and s.get("ha_enabled"):
-                sym = s["symbol"]
+        ha_syms = [s for s in all_settings if s.get("active") and s.get("ha_enabled")]
+        await log.ainfo("ha_engine_loading", count=len(ha_syms),
+                        symbols=[s["symbol"] for s in ha_syms])
+        for s in ha_syms:
+            sym = s["symbol"]
+            try:
                 engine = HeikinAshiEngine(sym, s)
                 await engine.warmup()
                 if engine.warmed_up:
                     _ha_engines[sym] = engine
                     await log.ainfo("ha_engine_started", symbol=sym)
-                await asyncio.sleep(10)  # Rate limit — semboller arasi bekleme (ban onleme)
+                else:
+                    _last_crash_error = f"warmup failed: {sym}"
+                    await log.awarning("ha_warmup_failed", symbol=sym)
+            except Exception as we:
+                _last_crash_error = f"warmup {sym}: {we}"
+                await log.aerror("ha_warmup_exception", symbol=sym, error=str(we))
+            await asyncio.sleep(3)
     except Exception as e:
+        _last_crash_error = f"init: {e}"
         await log.aerror("ha_engine_init_error", error=str(e))
 
     if not _ha_engines:
@@ -880,14 +892,16 @@ async def _ha_engine_loop() -> None:
 
 async def _ha_engine_loop_safe() -> None:
     """Wrapper — exception'i loglar, task crash ettiginde gorunur."""
+    global _last_crash_error
     try:
         await _ha_engine_loop()
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        await log.aerror("HA_ENGINE_LOOP_CRASHED", error=str(e), error_type=type(e).__name__)
         import traceback
-        await log.aerror("HA_ENGINE_TRACEBACK", tb=traceback.format_exc())
+        _last_crash_error = traceback.format_exc()
+        await log.aerror("HA_ENGINE_LOOP_CRASHED", error=str(e), error_type=type(e).__name__)
+        await log.aerror("HA_ENGINE_TRACEBACK", tb=_last_crash_error)
 
 
 def start_ha_engine_loop() -> None:
