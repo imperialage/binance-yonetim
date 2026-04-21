@@ -1651,9 +1651,9 @@ async def api_ha_chart_data(
     # Normal klines → HA mumlari
     ha_candles = convert_klines_to_ha(raw_klines)
 
-    # GERÇEK close'lardan RSI (Pine Script: ta.rsi(close, rsiLen))
+    # GERÇEK close'lardan RSI(10) — monitör görsel (motor exit RSI(1) ayrı)
     real_closes = [c.get("real_close", c["close"]) for c in ha_candles]
-    rsi_values = calculate_rsi(real_closes, rsi_len)
+    rsi_values = calculate_rsi(real_closes, 10)
 
     candles = []
     for i, hc in enumerate(ha_candles):
