@@ -135,7 +135,7 @@ class HeikinAshiEngine(SignalEngine):
                 hc["rsi"] = rsi_values[i] if i < len(rsi_values) else None
                 self.closed_candles.append(hc)
 
-            # RSI state (HA close uzerinden — eski, uyumluluk icin)
+            # RSI state (HA close uzerinden — exit kontrolu icin aktif)
             n = len(ha_closes) - 1
             if n > self.rsi_len:
                 gains = [0.0] * n
@@ -253,7 +253,7 @@ class HeikinAshiEngine(SignalEngine):
             ha_o, ha_h, ha_l, ha_c = _calc_ha(real_o, real_h, real_l, real_c,
                                                self.ha_prev_open, self.ha_prev_close)
 
-            # HA RSI (eski, uyumluluk)
+            # HA RSI — exit kontrolu icin kullaniliyor
             closed_rsi = self._calc_live_rsi(ha_c)
             self._advance_candle(ha_c)
 
@@ -297,20 +297,20 @@ class HeikinAshiEngine(SignalEngine):
                             rsi=round(closed_rsi, 2) if closed_rsi else None,
                             bull=self.prev_bull_signal, bear=self.prev_bear_signal)
 
-            # ── RSI Exit — GERÇEK close RSI(1) ile mum kapanışında kontrol ──
-            if real_closed_rsi is not None:
+            # ── RSI Exit — HA close RSI(10) ile mum kapanışında kontrol ──
+            if closed_rsi is not None:
                 st = _get_acc_state(self.symbol)
                 for acc in ["a", "b"]:
                     acc_side = st[acc]["side"]
                     if acc_side is None:
                         continue
-                    if acc_side == "LONG" and real_closed_rsi >= self.rsi_exit_long:
+                    if acc_side == "LONG" and closed_rsi >= self.rsi_exit_long:
                         await log.ainfo("ha_rsi_exit", symbol=self.symbol, account=acc.upper(),
-                                        side="LONG", rsi=round(real_closed_rsi, 2))
+                                        side="LONG", rsi=round(closed_rsi, 2))
                         await _close_account_position(self.symbol, acc, "RSI_EXIT")
-                    elif acc_side == "SHORT" and real_closed_rsi <= self.rsi_exit_short:
+                    elif acc_side == "SHORT" and closed_rsi <= self.rsi_exit_short:
                         await log.ainfo("ha_rsi_exit", symbol=self.symbol, account=acc.upper(),
-                                        side="SHORT", rsi=round(real_closed_rsi, 2))
+                                        side="SHORT", rsi=round(closed_rsi, 2))
                         await _close_account_position(self.symbol, acc, "RSI_EXIT")
 
             # Yeni mum
