@@ -320,24 +320,26 @@ function renderAll(binanceTrades){
     // Binance cikis — HA Reversal modunda gizli (simülasyon gösteriyor)
     // for(var ei=bnExits.length-1;ei>=0;ei--){...}
 
-    // DB sinyaller — TAMAMEN GIZLE (HA Reversal sinyalleri simülasyondan gösteriliyor)
-    // Sadece gerçek motor trade'leri göster (entered=1 + source=ha_server + rsi_a=null = yeni motor)
+    // DB sinyaller — sadece HA motor sinyallerini göster (ha_server + ha_close_*)
     for(var si=0;si<dbSigs.length;si++){
       var ds=dbSigs[si];
-      // Tüm eski sinyalleri gizle — simülasyon zaten gösteriyor
-      continue;
-      var isE=ds.entered===1||ds.entered===true;
+      var src=ds.source||'';
+      // Sadece HA motor sinyallerini göster
+      if(src.indexOf('ha_')<0) continue;
       var dir=ds.direction||'';
-      var srcCls=isE?'sig-row':'sig-row-skip';
-      var badge=isE?(dir==='BUY'?'<span class="badge b-buy">▲ BUY</span>':'<span class="badge b-sell">▼ SELL</span>'):'<span class="badge b-skip">'+(dir==='BUY'?'▲ BUY':'▼ SELL')+' SKIP</span>';
-      var stp=dir==='BUY'?ds.price*(1+tpPct/100):ds.price*(1-tpPct/100);
-      var ssl=dir==='BUY'?ds.price*(1-slPct/100):ds.price*(1+slPct/100);
-      var rInfo=(ds.rsi_a!=null&&ds.rsi_b!=null)?' RSI:<span style="color:#A371F7">'+fmt(ds.rsi_a,2)+'→'+fmt(ds.rsi_b,2)+'</span>':'';
-      var gInfo=ds.gap!=null?' ↕'+ds.gap:'';
-      var skip=(!isE&&ds.skip_reason)?' <span style="color:#F6465D;font-size:9px">⚠ '+ds.skip_reason+'</span>':'';
-      var src=ds.source==='ha_server'?' <span class="ha-tag">HA</span>':'';
-      html+='<tr class="'+srcCls+'"><td colspan="9" class="sig-detail">'+badge+' <span class="yellow">'+fmt(ds.price,dec(ds.price))+'</span> TP:<span class="green">'+fmt(stp,dec(stp))+'</span> SL:<span class="red">'+fmt(ssl,dec(ssl))+'</span>'+rInfo+gInfo+skip+src+'</td></tr>';
-      if(isE) rowCls='sig-row';
+      var isClose=dir.indexOf('CLOSE_')===0;
+      var badge='';
+      if(isClose){
+        // Kapanış sinyali
+        var reason=src.replace('ha_close_','').toUpperCase();
+        var pDir=dir.replace('CLOSE_','');
+        badge='<span style="background:#F0B90B20;color:#F0B90B;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">✕ CLOSE '+reason+'</span>';
+      } else {
+        // Giriş sinyali
+        badge=(dir==='BUY'?'<span style="background:#0ECB8130;color:#0ECB81;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700">▲ MOTOR LONG</span>':'<span style="background:#F6465D30;color:#F6465D;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700">▼ MOTOR SHORT</span>');
+      }
+      html+='<tr class="sig-row"><td colspan="9" class="sig-detail">'+badge+' <span class="yellow">'+fmt(ds.price,dec(ds.price))+'</span> <span style="color:#484f58;font-size:9px">'+src+'</span></td></tr>';
+      if(!isClose) rowCls='sig-row';
     }
 
     // Binance giris — HA Reversal modunda gizli (simülasyon gösteriyor)
