@@ -1025,6 +1025,16 @@ async def api_live_rsi(symbol: str = "XAGUSDT", interval: str = "15m", rsi_len: 
     return {"symbol": symbol.upper(), "interval": interval, "rsi": rsi, "price": price}
 
 
+@router.get("/api/ha-crash")
+async def api_ha_crash() -> dict:
+    """HA motor crash bilgisi."""
+    from app.modules.ha_signal_engine import _last_crash_error, _ha_engine_task
+    return {
+        "task_done": _ha_engine_task.done() if _ha_engine_task else True,
+        "crash_error": _last_crash_error or "no crash",
+    }
+
+
 @router.get("/api/ha-live-rsi")
 async def api_ha_live_rsi(symbol: str = "MYXUSDT") -> dict:
     """HA engine'den canli RSI — 1sn polling icin."""
