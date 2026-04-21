@@ -488,8 +488,32 @@ async def _close_account_position(sym: str, account: str, reason: str) -> None:
         else:
             await place_market_order_b(sym, close_side, qty, reduce_only=True)
 
+        exit_price = get_live_price(sym) or 0
+        entry_price = acc["entry"]
+        pnl_pct = 0.0
+        if entry_price > 0 and exit_price > 0:
+            if acc["side"] == "LONG":
+                pnl_pct = (exit_price - entry_price) / entry_price * 100
+            elif acc["side"] == "SHORT":
+                pnl_pct = (entry_price - exit_price) / entry_price * 100
+
         await log.ainfo("ha_pingpong_closed", symbol=sym, account=account.upper(),
-                        side=acc["side"], entry=acc["entry"], reason=reason)
+                        side=acc["side"], entry=acc["entry"], exit=round(exit_price, 6),
+                        pnl_pct=round(pnl_pct, 3), reason=reason)
+
+        # Kapanışı st_signal_logger'a logla (sebep görünsün)
+        try:
+            from app.modules.st_signal_logger import log_st_signal
+            from datetime import datetime, timezone, timedelta
+            dt_str = datetime.now(timezone(timedelta(hours=3))).strftime("%Y-%m-%d %H:%M:%S")
+            close_dir = "SELL" if acc["side"] == "LONG" else "BUY"
+            await log_st_signal(
+                dt=dt_str, symbol=sym, direction=f"CLOSE_{close_dir}",
+                band="15M", price=exit_price,
+                entered=True, source=f"ha_close_{reason.lower()}",
+            )
+        except Exception:
+            pass
 
         # State temizle — SADECE market order basarili olduysa
         acc["side"] = None
