@@ -462,14 +462,15 @@ async def _close_account_position(sym: str, account: str, reason: str) -> None:
         await log.ainfo("ha_pingpong_closed", symbol=sym, account=account.upper(),
                         side=acc["side"], entry=acc["entry"], reason=reason)
 
-    except Exception as e:
-        await log.aerror("ha_pingpong_close_error", symbol=sym, account=account, error=str(e))
+        # State temizle — SADECE market order basarili olduysa
+        acc["side"] = None
+        acc["entry"] = 0.0
+        acc["qty"] = 0.0
+        acc["time"] = 0
 
-    # State temizle
-    acc["side"] = None
-    acc["entry"] = 0.0
-    acc["qty"] = 0.0
-    acc["time"] = 0
+    except Exception as e:
+        # Market order BASARISIZ — state'e DOKUNMA (pozisyon hala acik olabilir)
+        await log.aerror("ha_pingpong_close_error", symbol=sym, account=account, error=str(e))
 
 
 async def _open_account_position(sym: str, account: str, direction: str,
@@ -557,14 +558,16 @@ async def _open_account_position(sym: str, account: str, direction: str,
                 if account == "a":
                     await place_stop_market_instant(sym, sl_side, quantity, sl_price)
                 else:
-                    # Hesap B icin SL — algoOrder API
-                    from app.modules.binance_client import get_client_b, _sign_b
+                    # Hesap B icin SL — algoOrder API + tracking
+                    from app.modules.binance_client import get_client_b, _sign_b, _track_algo_id_b_async
                     client_b = await get_client_b()
                     sl_params = _sign_b({
                         "symbol": sym, "side": sl_side, "type": "STOP_MARKET",
                         "algoType": "CONDITIONAL", "quantity": quantity, "triggerPrice": sl_price,
                     })
                     resp = await client_b.post("/fapi/v1/algoOrder", params=sl_params)
+                    sl_result = resp.json() if resp.is_success else {}
+                    await _track_algo_id_b_async(sym, sl_result.get("algoId"))
                 await log.ainfo("ha_safety_sl_placed", symbol=sym, account=account.upper(),
                                 sl_price=sl_price, sl_side=sl_side)
             except Exception as e:
@@ -609,6 +612,48 @@ async def _ha_engine_loop() -> None:
 
     has_account_b = is_account_b_configured()
     await log.ainfo("ha_engine_accounts", account_a=True, account_b=has_account_b)
+
+    # ── STARTUP SYNC: Binance'tan A/B pozisyonlari _account_state'e yukle ──
+    from app.modules.binance_client import get_position_risk, get_position_risk_b
+    for sym in list(_ha_engines.keys()):
+        try:
+            st = _get_acc_state(sym)
+            pos_a = await get_position_risk(sym)
+            for p in pos_a:
+                if p.get("symbol") == sym:
+                    amt = float(p.get("positionAmt", 0))
+                    if amt > 0:
+                        st["a"]["side"] = "LONG"
+                        st["a"]["entry"] = float(p.get("entryPrice", 0))
+                        st["a"]["qty"] = abs(amt)
+                    elif amt < 0:
+                        st["a"]["side"] = "SHORT"
+                        st["a"]["entry"] = float(p.get("entryPrice", 0))
+                        st["a"]["qty"] = abs(amt)
+                    else:
+                        st["a"]["side"] = None
+                    break
+            if has_account_b:
+                pos_b = await get_position_risk_b(sym)
+                for p in pos_b:
+                    if p.get("symbol") == sym:
+                        amt = float(p.get("positionAmt", 0))
+                        if amt > 0:
+                            st["b"]["side"] = "LONG"
+                            st["b"]["entry"] = float(p.get("entryPrice", 0))
+                            st["b"]["qty"] = abs(amt)
+                        elif amt < 0:
+                            st["b"]["side"] = "SHORT"
+                            st["b"]["entry"] = float(p.get("entryPrice", 0))
+                            st["b"]["qty"] = abs(amt)
+                        else:
+                            st["b"]["side"] = None
+                        break
+            await log.ainfo("ha_startup_sync", symbol=sym,
+                            a_side=st["a"]["side"], b_side=st["b"]["side"])
+        except Exception as e:
+            await log.awarning("ha_startup_sync_error", symbol=sym, error=str(e))
+        await asyncio.sleep(1)  # Rate limit
 
     last_pos_sync = time.time()
     last_settings_reload = time.time()

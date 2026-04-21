@@ -154,12 +154,38 @@ async def place_market_order_b(symbol: str, side: str, quantity: float, reduce_o
 
 
 async def cancel_all_open_orders_b(symbol: str) -> dict:
-    """Cancel all open orders — Hesap B."""
+    """Cancel all open orders — Hesap B (regular + algo)."""
     client = await get_client_b()
-    params = _sign_b({"symbol": symbol})
-    resp = await client.delete("/fapi/v1/allOpenOrders", params=params)
-    _raise_for_binance(resp)
-    return resp.json()
+    cancelled_regular = 0
+    cancelled_algo = 0
+
+    # 1. Regular orders toplu sil
+    try:
+        params = _sign_b({"symbol": symbol})
+        resp = await client.delete("/fapi/v1/allOpenOrders", params=params)
+        _raise_for_binance(resp)
+        cancelled_regular = 1
+    except Exception as e:
+        log.warning("bulk_cancel_b_failed", symbol=symbol, error=str(e))
+
+    # 2. Tracked algo emirlerini sil (B hesap)
+    async with _algo_lock_b:
+        data = _load_algo_ids_b()
+        algo_ids = data.pop(symbol, [])
+        _save_algo_ids_b(data)
+
+    for aid in algo_ids:
+        try:
+            del_params = _sign_b({"algoId": aid})
+            del_resp = await client.delete("/fapi/v1/algoOrder", params=del_params)
+            del_resp.raise_for_status()
+            cancelled_algo += 1
+            log.info("algo_order_b_cancelled", symbol=symbol, algo_id=aid)
+        except Exception as e:
+            log.info("algo_cancel_b_skip", symbol=symbol, algo_id=aid, error=str(e))
+
+    log.info("all_orders_b_cancelled", symbol=symbol, regular=cancelled_regular, algo=cancelled_algo)
+    return {"regular": cancelled_regular, "algo": cancelled_algo}
 
 
 async def set_leverage_b(symbol: str, leverage: int = 1) -> dict:
@@ -259,9 +285,11 @@ import os as _os
 from pathlib import Path as _Path
 
 _ALGO_IDS_PATH = _Path(_os.getenv("DATA_DIR", "data")) / "algo_ids.json"
+_ALGO_IDS_B_PATH = _Path(_os.getenv("DATA_DIR", "data")) / "algo_ids_b.json"
 
 import asyncio as _asyncio
 _algo_lock = _asyncio.Lock()
+_algo_lock_b = _asyncio.Lock()
 
 
 def _load_algo_ids() -> dict[str, list[int]]:
@@ -281,6 +309,39 @@ def _save_algo_ids(data: dict[str, list[int]]) -> None:
         _ALGO_IDS_PATH.write_text(_json.dumps(data))
     except Exception as e:
         log.warning("algo_ids_save_failed", error=str(e))
+
+
+def _load_algo_ids_b() -> dict[str, list[int]]:
+    """Load tracked algo IDs from disk — Hesap B."""
+    try:
+        if _ALGO_IDS_B_PATH.exists():
+            return _json.loads(_ALGO_IDS_B_PATH.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def _save_algo_ids_b(data: dict[str, list[int]]) -> None:
+    """Save tracked algo IDs to disk — Hesap B."""
+    try:
+        _ALGO_IDS_B_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _ALGO_IDS_B_PATH.write_text(_json.dumps(data))
+    except Exception as e:
+        log.warning("algo_ids_b_save_failed", error=str(e))
+
+
+async def _track_algo_id_b_async(symbol: str, algo_id: int | str | None) -> None:
+    """Track an algo order ID for Hesap B (persistent, thread-safe)."""
+    if algo_id is None:
+        return
+    aid = int(algo_id)
+    async with _algo_lock_b:
+        data = _load_algo_ids_b()
+        if symbol not in data:
+            data[symbol] = []
+        if aid not in data[symbol]:
+            data[symbol].append(aid)
+        _save_algo_ids_b(data)
 
 
 async def _track_algo_id_async(symbol: str, algo_id: int | str | None) -> None:

@@ -103,13 +103,14 @@ async def _trailing_loop() -> None:
         while True:
             await asyncio.sleep(0.2)
 
-            # Tum engine'leri topla (normal + HA)
+            # Sadece normal engine'ler — HA engine ping-pong sistemi
+            # kendi RSI Exit'ini kullaniyor, trailing TP uyumsuz
             all_engines: dict[str, Any] = {}
             try:
                 for sym, eng in get_all_engines().items():
                     all_engines[sym] = eng
-                for sym, eng in get_all_ha_engines().items():
-                    all_engines[sym] = eng
+                # HA engine'ler DAHIL EDILMIYOR — ping-pong _account_state
+                # ile yonetiliyor, engine.has_position sadece Hesap A'yi goruyor
             except Exception:
                 continue
 
