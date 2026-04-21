@@ -114,7 +114,7 @@ class HeikinAshiEngine(SignalEngine):
 
             async with httpx.AsyncClient(timeout=15, proxy=proxy_url) as client:
                 resp = await client.get(BINANCE_URL, params={
-                    "symbol": self.symbol, "interval": self.interval, "limit": 1000,
+                    "symbol": self.symbol, "interval": self.interval, "limit": 1500,
                 })
                 resp.raise_for_status()
                 klines = resp.json()
