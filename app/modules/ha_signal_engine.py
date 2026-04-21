@@ -80,6 +80,8 @@ class HeikinAshiEngine(SignalEngine):
 
     def __init__(self, symbol: str, settings: dict[str, Any]):
         super().__init__(symbol, settings)
+        # HA RSI sabit 10 — settings'teki rsi_len eski diverjans icin
+        self.rsi_len = 10
         # HA state
         self.ha_prev_open: float = 0.0
         self.ha_prev_close: float = 0.0
@@ -781,7 +783,7 @@ async def _ha_engine_loop() -> None:
                         if sym in _ha_engines:
                             eng = _ha_engines[sym]
                             eng.settings = s
-                            eng.rsi_len = s.get("rsi_len", 10)
+                            # eng.rsi_len sabit 10 — settings'ten override etme
                             eng.long_thresh = s.get("long_thresh", 32.0)
                             eng.short_thresh = s.get("short_thresh", 70.0)
                             eng.max_gap = s.get("max_gap", 21)
