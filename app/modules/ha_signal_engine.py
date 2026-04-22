@@ -122,6 +122,7 @@ class HeikinAshiEngine(SignalEngine):
             for i in range(len(ha_candles) - 1):
                 hc = ha_candles[i]
                 hc["rsi"] = rsi_values[i] if i < len(rsi_values) else None
+                hc["prev_rsi"] = rsi_values[i - 1] if i > 0 and i - 1 < len(rsi_values) else None
                 self.closed_candles.append(hc)
 
             # RSI state (HA close uzerinden — exit kontrolu icin aktif)
