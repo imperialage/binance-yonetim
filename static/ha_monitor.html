@@ -443,16 +443,22 @@ function runReversalSim(candles){
     var prevBull=(prev.open!=null && prev.low!=null && Math.abs(prev.open-prev.low)<=tol);
     var prevBear=(prev.open!=null && prev.high!=null && Math.abs(prev.open-prev.high)<=tol);
 
-    // 1. RSI Yön Exit (önce) — giriş mumunda çıkış yok
+    // 1. Onceki mumda RSI Exit karari verildiyse → bu mumun open'indan kapat
+    var next=candles[i+1]||null;
     if(state==1 && rsiDown && i>entryIdx){
-      var pct=(c.close-entry)/entry*100 - commPct*100;
-      trades.push({idx:i,type:'RSI_DOWN',dir:'LONG',entry:entry,exit:c.close,pnl:pct,entryIdx:entryIdx});
+      // Karar bu mumda, cikis sonraki mumun open'i (yoksa bu mumun close)
+      var exitP=next?next.open:c.close;
+      var exitIdx=next?(i+1):i;
+      var pct=(exitP-entry)/entry*100 - commPct*100;
+      trades.push({idx:exitIdx,type:'RSI_DOWN',dir:'LONG',entry:entry,exit:exitP,pnl:pct,entryIdx:entryIdx});
       sumPnl+=pct; if(pct>=0){nWin++;sumWin+=pct}else{nLoss++;sumLoss+=pct}
       state=0;
     }
     if(state==-1 && rsiUp && i>entryIdx){
-      var pct2=(entry-c.close)/entry*100 - commPct*100;
-      trades.push({idx:i,type:'RSI_UP',dir:'SHORT',entry:entry,exit:c.close,pnl:pct2,entryIdx:entryIdx});
+      var exitP2=next?next.open:c.close;
+      var exitIdx2=next?(i+1):i;
+      var pct2=(entry-exitP2)/entry*100 - commPct*100;
+      trades.push({idx:exitIdx2,type:'RSI_UP',dir:'SHORT',entry:entry,exit:exitP2,pnl:pct2,entryIdx:entryIdx});
       sumPnl+=pct2; if(pct2>=0){nWin++;sumWin+=pct2}else{nLoss++;sumLoss+=pct2}
       state=0;
     }
