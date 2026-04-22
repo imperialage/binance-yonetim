@@ -1054,6 +1054,35 @@ async def api_ha_crash(symbol: str = "") -> dict:
     return result
 
 
+@router.get("/api/ha/debug-candles")
+async def api_ha_debug_candles(symbol: str = "MYXUSDT", limit: int = 20) -> dict:
+    """Motor'un bellekteki son N kapanmis mumunu RSI ile dondur."""
+    from app.modules.ha_signal_engine import get_ha_engine
+    from datetime import datetime, timezone, timedelta
+    tz = timezone(timedelta(hours=3))
+    eng = get_ha_engine(symbol.upper())
+    if not eng or not eng.warmed_up:
+        return {"symbol": symbol.upper(), "error": "engine not found", "candles": []}
+    candles = eng.closed_candles[-limit:]
+    return {
+        "symbol": symbol.upper(),
+        "count": len(candles),
+        "candles": [
+            {
+                "time": datetime.fromtimestamp(c["time"], tz=tz).strftime("%d.%m %H:%M"),
+                "ha_o": round(c["open"], 6),
+                "ha_h": round(c["high"], 6),
+                "ha_l": round(c["low"], 6),
+                "ha_c": round(c["close"], 6),
+                "real_c": round(c.get("real_close", c["close"]), 6),
+                "rsi": round(c["rsi"], 2) if c.get("rsi") is not None else None,
+                "prev_rsi": round(c["prev_rsi"], 2) if c.get("prev_rsi") is not None else None,
+            }
+            for c in candles
+        ],
+    }
+
+
 @router.get("/api/ha-live-rsi")
 async def api_ha_live_rsi(symbol: str = "MYXUSDT") -> dict:
     """HA engine'den canli RSI — 1sn polling icin."""
