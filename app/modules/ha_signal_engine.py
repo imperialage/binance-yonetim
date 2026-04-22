@@ -213,109 +213,115 @@ class HeikinAshiEngine(SignalEngine):
         # 2. Mum kapandi mi?
         new_candle_start = (now // self.iv_sec) * self.iv_sec
         if new_candle_start > self.candle_start and now - new_candle_start > 2:
-            # Binance'tan gercek OHLC cek
-            real_o, real_h, real_l, real_c = self.candle_open, self.candle_high, self.candle_low, self.candle_close
+            # ── TOPLU HESAPLAMA: Binance'tan 1500 mum cek → HA → RSI ──
+            # Kümülatif state TUTMA — her mum kapanisinda sifirdan hesapla
+            # Simülasyonla birebir ayni sonuc, drift imkansiz
             try:
                 import httpx
-                async with httpx.AsyncClient(timeout=10) as _client:
+                from app.modules.rsi_calculator import calculate_rsi_with_state
+                async with httpx.AsyncClient(timeout=30) as _client:
                     _resp = await _client.get(BINANCE_URL, params={
-                        "symbol": self.symbol, "interval": self.interval, "limit": 2,
+                        "symbol": self.symbol, "interval": self.interval, "limit": 1500,
                     })
-                    if _resp.is_success:
-                        _kl = _resp.json()
-                        if _kl and len(_kl) >= 2:
-                            real_o = float(_kl[0][1])
-                            real_h = float(_kl[0][2])
-                            real_l = float(_kl[0][3])
-                            real_c = float(_kl[0][4])
-            except Exception:
-                pass
+                    _resp.raise_for_status()
+                    klines = _resp.json()
 
-            # HA hesapla
-            ha_o, ha_h, ha_l, ha_c = _calc_ha(real_o, real_h, real_l, real_c,
-                                               self.ha_prev_open, self.ha_prev_close)
+                if klines and len(klines) >= self.rsi_len + 2:
+                    ha_candles = convert_klines_to_ha(klines)
+                    # Son mum haric (canli mum)
+                    closed_ha = ha_candles[:-1]
+                    ha_closes = [c["close"] for c in closed_ha]
+                    rsi_values, rsi_state = calculate_rsi_with_state(ha_closes, self.rsi_len)
 
-            # HA RSI hesapla
-            closed_rsi = self._calc_live_rsi(ha_c)
-            self._advance_candle(ha_c)
+                    # RMA state guncelle (canli RSI icin)
+                    self.rsi_avg_gain = rsi_state["avg_gain"]
+                    self.rsi_avg_loss = rsi_state["avg_loss"]
+                    self.rsi_prev_close = rsi_state["prev_close"]
+                    self.rsi_warmed_up = True
 
-            # Onceki mumun RSI'i (closed_candles'tan)
-            prev_rsi = self.closed_candles[-1]["rsi"] if self.closed_candles and self.closed_candles[-1].get("rsi") is not None else None
+                    # HA state guncelle
+                    last = closed_ha[-1]
+                    self.ha_prev_open = last["open"]
+                    self.ha_prev_close = last["close"]
 
-            # HA state guncelle
-            self.ha_prev_open = ha_o
-            self.ha_prev_close = ha_c
+                    # Son kapanan mumun degerleri
+                    ha_o = last["open"]
+                    ha_h = last["high"]
+                    ha_l = last["low"]
+                    ha_c = last["close"]
+                    real_c = last.get("real_close", ha_c)
+                    real_o = last.get("real_open", ha_o)
+                    closed_rsi = rsi_values[-1] if rsi_values and rsi_values[-1] is not None else None
+                    prev_rsi = rsi_values[-2] if len(rsi_values) >= 2 and rsi_values[-2] is not None else None
 
-            # Kapanan mumu kaydet
-            closed = {
-                "time": self.candle_start,
-                "open": ha_o, "high": ha_h, "low": ha_l, "close": ha_c,
-                "real_open": real_o, "real_high": real_h, "real_low": real_l, "real_close": real_c,
-                "rsi": closed_rsi,
-                "prev_rsi": prev_rsi,
-            }
-            self.closed_candles.append(closed)
-            max_keep = max(self.max_gap + 20, 100)
-            if len(self.closed_candles) > max_keep:
-                self.closed_candles = self.closed_candles[-max_keep:]
+                    # closed_candles guncelle
+                    self.closed_candles = []
+                    for i, hc in enumerate(closed_ha):
+                        hc["rsi"] = rsi_values[i] if i < len(rsi_values) else None
+                        hc["prev_rsi"] = rsi_values[i - 1] if i > 0 and i - 1 < len(rsi_values) else None
+                        self.closed_candles.append(hc)
+                    max_keep = max(self.max_gap + 20, 100)
+                    if len(self.closed_candles) > max_keep:
+                        self.closed_candles = self.closed_candles[-max_keep:]
 
-            # ── HA Reversal sinyal tespiti ──
-            tol = ha_o * 0.0005 if ha_o > 0 else 0.0005  # %0.05 tolerans
-            self.prev_bull_signal = abs(ha_o - ha_l) <= tol
-            self.prev_bear_signal = abs(ha_o - ha_h) <= tol
+                    # ── HA Reversal sinyal tespiti ──
+                    tol = ha_o * 0.0005 if ha_o > 0 else 0.0005
+                    self.prev_bull_signal = abs(ha_o - ha_l) <= tol
+                    self.prev_bear_signal = abs(ha_o - ha_h) <= tol
 
-            # ── RSI yon tespiti ──
-            rsi_up = False
-            rsi_down = False
-            if closed_rsi is not None and prev_rsi is not None:
-                rsi_up = closed_rsi > prev_rsi
-                rsi_down = closed_rsi < prev_rsi
+                    # ── RSI yon tespiti ──
+                    rsi_up = False
+                    rsi_down = False
+                    if closed_rsi is not None and prev_rsi is not None:
+                        rsi_up = closed_rsi > prev_rsi
+                        rsi_down = closed_rsi < prev_rsi
 
-            await log.ainfo("ha_candle_closed", symbol=self.symbol,
-                            ha_o=round(ha_o, 4), ha_h=round(ha_h, 4),
-                            ha_l=round(ha_l, 4), ha_c=round(ha_c, 4),
-                            real_o=round(real_o, 4), real_c=round(real_c, 4),
-                            rsi=round(closed_rsi, 2) if closed_rsi else None,
-                            prev_rsi=round(prev_rsi, 2) if prev_rsi else None,
-                            rsi_up=rsi_up, rsi_down=rsi_down,
-                            tol=round(tol, 6),
-                            bull=self.prev_bull_signal, bear=self.prev_bear_signal)
-
-            # ── CIKIS karari (mum kapanisinda — emir sonraki mum open'da) ──
-            self.pending_close_reason = ""
-            st = _get_acc_state(self.symbol)
-            for acc in ["a", "b"]:
-                acc_side = st[acc]["side"]
-                if acc_side is None:
-                    continue
-                if acc_side == "LONG" and rsi_down:
-                    self.pending_close_reason = "RSI_DOWN"
-                    await log.ainfo("ha_pending_close", symbol=self.symbol,
-                                    side="LONG", reason="RSI_DOWN",
+                    await log.ainfo("ha_candle_closed", symbol=self.symbol,
+                                    ha_o=round(ha_o, 4), ha_h=round(ha_h, 4),
+                                    ha_l=round(ha_l, 4), ha_c=round(ha_c, 4),
+                                    real_o=round(real_o, 4), real_c=round(real_c, 4),
                                     rsi=round(closed_rsi, 2) if closed_rsi else None,
-                                    prev_rsi=round(prev_rsi, 2) if prev_rsi else None)
-                elif acc_side == "SHORT" and rsi_up:
-                    self.pending_close_reason = "RSI_UP"
-                    await log.ainfo("ha_pending_close", symbol=self.symbol,
-                                    side="SHORT", reason="RSI_UP",
-                                    rsi=round(closed_rsi, 2) if closed_rsi else None,
-                                    prev_rsi=round(prev_rsi, 2) if prev_rsi else None)
+                                    prev_rsi=round(prev_rsi, 2) if prev_rsi else None,
+                                    rsi_up=rsi_up, rsi_down=rsi_down,
+                                    tol=round(tol, 6),
+                                    bull=self.prev_bull_signal, bear=self.prev_bear_signal)
 
-            # ── GIRIS karari (mum kapanisinda — emir sonraki mum open'da) ──
-            # Ayni yonde acik pozisyon varsa giris yapma (simülasyondaki state!=1/state!=-1)
-            # pending_close varsa pozisyon kapatilacak → effective_side = None
-            self.pending_open_direction = ""
-            effective_side = st["a"]["side"]
-            if self.pending_close_reason:
-                effective_side = None  # kapatilacak, sonraki mumda bos olacak
-            if self.prev_bull_signal and rsi_up and effective_side != "LONG":
-                self.pending_open_direction = "BUY"
-                await log.ainfo("ha_pending_open", symbol=self.symbol, direction="BUY",
-                                rsi=round(closed_rsi, 2) if closed_rsi else None)
-            elif self.prev_bear_signal and rsi_down and effective_side != "SHORT":
-                self.pending_open_direction = "SELL"
-                await log.ainfo("ha_pending_open", symbol=self.symbol, direction="SELL",
-                                rsi=round(closed_rsi, 2) if closed_rsi else None)
+                    # ── CIKIS karari ──
+                    self.pending_close_reason = ""
+                    st = _get_acc_state(self.symbol)
+                    for acc in ["a", "b"]:
+                        acc_side = st[acc]["side"]
+                        if acc_side is None:
+                            continue
+                        if acc_side == "LONG" and rsi_down:
+                            self.pending_close_reason = "RSI_DOWN"
+                            await log.ainfo("ha_pending_close", symbol=self.symbol,
+                                            side="LONG", reason="RSI_DOWN",
+                                            rsi=round(closed_rsi, 2) if closed_rsi else None,
+                                            prev_rsi=round(prev_rsi, 2) if prev_rsi else None)
+                        elif acc_side == "SHORT" and rsi_up:
+                            self.pending_close_reason = "RSI_UP"
+                            await log.ainfo("ha_pending_close", symbol=self.symbol,
+                                            side="SHORT", reason="RSI_UP",
+                                            rsi=round(closed_rsi, 2) if closed_rsi else None,
+                                            prev_rsi=round(prev_rsi, 2) if prev_rsi else None)
+
+                    # ── GIRIS karari ──
+                    self.pending_open_direction = ""
+                    effective_side = st["a"]["side"]
+                    if self.pending_close_reason:
+                        effective_side = None
+                    if self.prev_bull_signal and rsi_up and effective_side != "LONG":
+                        self.pending_open_direction = "BUY"
+                        await log.ainfo("ha_pending_open", symbol=self.symbol, direction="BUY",
+                                        rsi=round(closed_rsi, 2) if closed_rsi else None)
+                    elif self.prev_bear_signal and rsi_down and effective_side != "SHORT":
+                        self.pending_open_direction = "SELL"
+                        await log.ainfo("ha_pending_open", symbol=self.symbol, direction="SELL",
+                                        rsi=round(closed_rsi, 2) if closed_rsi else None)
+
+            except Exception as e:
+                await log.aerror("ha_bar_close_error", symbol=self.symbol, error=str(e))
 
             # Yeni mum baslat
             self.candle_start = new_candle_start
