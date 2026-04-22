@@ -801,9 +801,9 @@ async def _ha_engine_loop() -> None:
                     )
 
                     if app_settings.trading_enabled:
-                        # ── ÖNCE: Binance'tan gerçek pozisyon sync (state kayıp olabilir) ──
+                        # Pre-trade sync — Binance'tan gercek pozisyon
                         try:
-                            from app.modules.binance_client import get_position_risk, get_position_risk_b
+                            from app.modules.binance_client import get_position_risk
                             st = _get_acc_state(sym)
                             pos_a = await get_position_risk(sym)
                             for p in pos_a:
@@ -813,15 +813,6 @@ async def _ha_engine_loop() -> None:
                                     elif a_amt < 0: st["a"]["side"] = "SHORT"; st["a"]["qty"] = abs(a_amt)
                                     else: st["a"]["side"] = None
                                     break
-                            if has_account_b:
-                                pos_b = await get_position_risk_b(sym)
-                                for p in pos_b:
-                                    if p.get("symbol") == sym:
-                                        b_amt = float(p.get("positionAmt", 0))
-                                        if b_amt > 0: st["b"]["side"] = "LONG"; st["b"]["qty"] = abs(b_amt)
-                                        elif b_amt < 0: st["b"]["side"] = "SHORT"; st["b"]["qty"] = abs(b_amt)
-                                        else: st["b"]["side"] = None
-                                        break
                         except Exception as _sync_err:
                             await log.awarning("ha_pre_trade_sync_error", symbol=sym, error=str(_sync_err))
 
@@ -829,29 +820,19 @@ async def _ha_engine_loop() -> None:
                         direction = signal["direction"]
                         new_side = "LONG" if direction == "BUY" else "SHORT"
 
-                        # 1. Ters pozisyonlu hesaplari kapat
-                        opposite = "SHORT" if new_side == "LONG" else "LONG"
-                        for acc in ["a", "b"]:
-                            if st[acc]["side"] == opposite:
-                                await _close_account_position(sym, acc, "REVERSE")
+                        # Ayni yonde acik → skip
+                        if st["a"]["side"] == new_side:
+                            await log.ainfo("ha_skip_same_side", symbol=sym, side=new_side)
+                        else:
+                            # Ters pozisyon varsa kapat
+                            opposite = "SHORT" if new_side == "LONG" else "LONG"
+                            if st["a"]["side"] == opposite:
+                                await _close_account_position(sym, "a", "REVERSE")
 
-                        # 2. Bos hesap bul → yeni pozisyon ac
-                        free = _find_free_account(sym)
-                        if free is None and has_account_b:
-                            # Ikisi de dolu (ayni yonde) → en eski kapat
-                            oldest = _find_oldest_account(sym)
-                            await _close_account_position(sym, oldest, "ROTATION")
-                            free = oldest
-                        elif free is None:
-                            # Tek hesap ve dolu → kapat + yeniden ac
-                            await _close_account_position(sym, "a", "SINGLE_REOPEN")
-                            free = "a"
-
-                        if free == "b" and not has_account_b:
-                            free = None  # 2. hesap yoksa skip
-
-                        if free:
-                            await _open_account_position(sym, free, direction, engine, row_id)
+                            # Pozisyon ac
+                            st = _get_acc_state(sym)
+                            if st["a"]["side"] is None:
+                                await _open_account_position(sym, "a", direction, engine, row_id)
 
     except asyncio.CancelledError:
         await log.ainfo("ha_engine_loop_stopped")
