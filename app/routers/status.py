@@ -1703,10 +1703,11 @@ async def api_ha_chart_data(
     if not raw_klines:
         return {"candles": [], "signals": [], "position": None}
 
-    # Normal klines → HA mumlari
+    # Normal klines → HA mumlari (son mum haric — canli mum)
     ha_candles = convert_klines_to_ha(raw_klines)
+    ha_candles = ha_candles[:-1]  # canli mum cikar
 
-    # HA close'lardan RSI(10) — motor exit de HA close RSI kullanıyor
+    # HA close'lardan RSI(10)
     ha_closes = [c["close"] for c in ha_candles]
     rsi_values = calculate_rsi(ha_closes, 10)
 
