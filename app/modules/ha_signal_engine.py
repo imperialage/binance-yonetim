@@ -757,11 +757,17 @@ async def _ha_engine_loop() -> None:
                             eng.entry_buffer = s.get("entry_buffer", 0.1) / 100.0
                             # RSI exit: yon karsilastirmasi (sabit threshold yok)
                         elif s.get("active") and s.get("ha_enabled") and sym not in _ha_engines:
-                            new_eng = HeikinAshiEngine(sym, s)
-                            await new_eng.warmup()
-                            if new_eng.warmed_up:
-                                _ha_engines[sym] = new_eng
-                                await log.ainfo("ha_engine_new_symbol", symbol=sym)
+                            try:
+                                new_eng = HeikinAshiEngine(sym, s)
+                                await new_eng.warmup()
+                                if new_eng.warmed_up:
+                                    _ha_engines[sym] = new_eng
+                                    await log.ainfo("ha_engine_new_symbol", symbol=sym)
+                                else:
+                                    await log.awarning("ha_reload_warmup_failed", symbol=sym)
+                            except Exception as we:
+                                await log.aerror("ha_reload_warmup_error", symbol=sym, error=str(we))
+                            await asyncio.sleep(3)  # Rate limit
                     ha_syms = {s["symbol"] for s in fresh if s.get("active") and s.get("ha_enabled")}
                     for sym in list(_ha_engines.keys()):
                         if sym not in ha_syms:
