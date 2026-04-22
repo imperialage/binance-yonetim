@@ -115,7 +115,18 @@ class HeikinAshiEngine(SignalEngine):
             # Normal klines → HA
             ha_candles = convert_klines_to_ha(klines)
             ha_closes = [c["close"] for c in ha_candles]
-            rsi_values = calculate_rsi(ha_closes, self.rsi_len)
+
+            # RSI — simülasyonla ayni fonksiyon (calculate_rsi_with_state)
+            # Son mum haric (canli mum) hesapla → RMA state'i motor'a aktar
+            from app.modules.rsi_calculator import calculate_rsi_with_state
+            closed_ha_closes = ha_closes[:-1]  # son mum haric
+            rsi_values, rsi_state = calculate_rsi_with_state(closed_ha_closes, self.rsi_len)
+
+            # RMA state'i motor'a aktar (simülasyonla birebir ayni)
+            self.rsi_avg_gain = rsi_state["avg_gain"]
+            self.rsi_avg_loss = rsi_state["avg_loss"]
+            self.rsi_prev_close = rsi_state["prev_close"]
+            self.rsi_warmed_up = True
 
             # Kapanmis HA mumlari (son mum haric)
             self.closed_candles = []
@@ -124,23 +135,6 @@ class HeikinAshiEngine(SignalEngine):
                 hc["rsi"] = rsi_values[i] if i < len(rsi_values) else None
                 hc["prev_rsi"] = rsi_values[i - 1] if i > 0 and i - 1 < len(rsi_values) else None
                 self.closed_candles.append(hc)
-
-            # RSI state (HA close uzerinden — exit kontrolu icin aktif)
-            n = len(ha_closes) - 1
-            if n > self.rsi_len:
-                gains = [0.0] * n
-                losses = [0.0] * n
-                for i in range(1, n):
-                    d = ha_closes[i] - ha_closes[i - 1]
-                    gains[i] = max(d, 0.0)
-                    losses[i] = max(-d, 0.0)
-                self.rsi_avg_gain = sum(gains[1:self.rsi_len + 1]) / self.rsi_len
-                self.rsi_avg_loss = sum(losses[1:self.rsi_len + 1]) / self.rsi_len
-                for i in range(self.rsi_len + 1, n):
-                    self.rsi_avg_gain = (self.rsi_avg_gain * (self.rsi_len - 1) + gains[i]) / self.rsi_len
-                    self.rsi_avg_loss = (self.rsi_avg_loss * (self.rsi_len - 1) + losses[i]) / self.rsi_len
-                self.rsi_prev_close = ha_closes[n - 1]
-                self.rsi_warmed_up = True
 
             # HA state
             if self.closed_candles:
