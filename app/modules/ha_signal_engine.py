@@ -90,18 +90,11 @@ class HeikinAshiEngine(SignalEngine):
         self.ha_candle_low: float = 0.0
         self.ha_candle_close: float = 0.0
         # HA Reversal state
-        self.prev_bull_signal: bool = False  # onceki mumda bullSignal (haOpen==haLow)
-        self.prev_bear_signal: bool = False  # onceki mumda bearSignal (haOpen==haHigh)
-        # RSI exit esikleri — SABIT (Pine Script indikatorden)
-        self.rsi_exit_long: float = 65.0     # LONG kapat RSI>=65
-        self.rsi_exit_short: float = 35.0    # SHORT kapat RSI<=35
-        # RSI uzunluk — GERÇEK close üzerinden hesaplanacak (HA close DEĞİL)
-        self.rsi_real_len: int = 10          # RSI(10)
-        # Gerçek close RSI state (HA close'dan AYRI)
-        self.real_rsi_avg_gain: float = 0.0
-        self.real_rsi_avg_loss: float = 0.0
-        self.real_rsi_prev_close: float = 0.0
-        self.real_rsi_warmed_up: bool = False
+        self.prev_bull_signal: bool = False
+        self.prev_bear_signal: bool = False
+        # RSI yon filtresi — bekleyen emirler
+        self.pending_close_reason: str = ""    # "RSI_DOWN" veya "RSI_UP" — sonraki mum open'da kapat
+        self.pending_open_direction: str = ""  # "BUY" veya "SELL" — sonraki mum open'da ac
 
     # ── Override: Warmup ────────────────────────────────
     async def warmup(self) -> None:
@@ -217,40 +210,42 @@ class HeikinAshiEngine(SignalEngine):
         self.ha_candle_low = ha_l
         self.ha_candle_close = ha_c
 
-    # ── Override: on_price_tick — HA Reversal + RSI Exit ──
+    # ── Override: on_price_tick — HA Reversal + RSI Yon Filtresi v4 ──
     async def on_price_tick(self, price: float) -> dict | None:
-        """HA Reversal + RSI Exit mantigi:
-        - Giris: onceki mumda haOpen==haLow (LONG) veya haOpen==haHigh (SHORT)
-        - Cikis: RSI exit (LONG: RSI>=exit_long, SHORT: RSI<=exit_short)
-        - Ters sinyal: ters HA reversal gelirse kapat + yeni ac
+        """v4: Tum kararlar kapanmis mumlarin RSI degerleriyle yapilir.
+        Tick bazli RSI kontrolu YOK.
+
+        Mum kapanisinda:
+          1. HA hesapla → bull/bear signal tespit
+          2. RSI hesapla → rsi_current vs rsi_prev (yon)
+          3. CIKIS: LONG + RSI dustu → kapat emri (pending)
+                    SHORT + RSI yukseldi → kapat emri (pending)
+          4. GIRIS: bullSignal + RSI yukseliyor → ac emri (pending)
+                    bearSignal + RSI dususyor → ac emri (pending)
+
+        Sonraki mum ilk tick:
+          1. Bekleyen kapat emri → MARKET order
+          2. Bekleyen ac emri → sinyal dondur (loop trade acar)
         """
         if not self.warmed_up:
             return None
 
         now = int(time.time())
 
-        # 1. Normal canli mum guncelle
+        # 1. Canli mum guncelle
         self.candle_high = max(self.candle_high, price)
         self.candle_low = min(self.candle_low, price)
         self.candle_close = price
-
-        # 2. HA canli mum guncelle
         self._update_ha_candle()
 
-        # 3. Mum kapandi mi?
+        # 2. Mum kapandi mi?
         new_candle_start = (now // self.iv_sec) * self.iv_sec
         if new_candle_start > self.candle_start and now - new_candle_start > 2:
             # Binance'tan gercek OHLC cek
             real_o, real_h, real_l, real_c = self.candle_open, self.candle_high, self.candle_low, self.candle_close
             try:
                 import httpx
-                proxy_url = None
-                try:
-                    from app.config import settings as _s
-                    proxy_url = _s.binance_proxy_url or None
-                except Exception:
-                    pass
-                async with httpx.AsyncClient(timeout=5, proxy=proxy_url) as _client:
+                async with httpx.AsyncClient(timeout=10) as _client:
                     _resp = await _client.get(BINANCE_URL, params={
                         "symbol": self.symbol, "interval": self.interval, "limit": 2,
                     })
@@ -264,25 +259,16 @@ class HeikinAshiEngine(SignalEngine):
             except Exception:
                 pass
 
-            # Gercek OHLC'den HA hesapla
+            # HA hesapla
             ha_o, ha_h, ha_l, ha_c = _calc_ha(real_o, real_h, real_l, real_c,
                                                self.ha_prev_open, self.ha_prev_close)
 
-            # HA RSI — exit kontrolu icin kullaniliyor
+            # HA RSI hesapla
             closed_rsi = self._calc_live_rsi(ha_c)
             self._advance_candle(ha_c)
 
-            # GERÇEK close RSI — Pine Script: rsi = ta.rsi(close, 10)
-            real_closed_rsi = None
-            if self.real_rsi_warmed_up and self.real_rsi_prev_close > 0:
-                delta = real_c - self.real_rsi_prev_close
-                gain = max(delta, 0.0); loss = max(-delta, 0.0)
-                ag = (self.real_rsi_avg_gain * (self.rsi_real_len - 1) + gain) / self.rsi_real_len
-                al = (self.real_rsi_avg_loss * (self.rsi_real_len - 1) + loss) / self.rsi_real_len
-                real_closed_rsi = 100.0 if al == 0 else 100.0 - 100.0 / (1.0 + ag / al)
-                self.real_rsi_avg_gain = ag
-                self.real_rsi_avg_loss = al
-            self.real_rsi_prev_close = real_c
+            # Onceki mumun RSI'i (closed_candles'tan)
+            prev_rsi = self.closed_candles[-1]["rsi"] if self.closed_candles and self.closed_candles[-1].get("rsi") is not None else None
 
             # HA state guncelle
             self.ha_prev_open = ha_o
@@ -294,44 +280,67 @@ class HeikinAshiEngine(SignalEngine):
                 "open": ha_o, "high": ha_h, "low": ha_l, "close": ha_c,
                 "real_open": real_o, "real_high": real_h, "real_low": real_l, "real_close": real_c,
                 "rsi": closed_rsi,
+                "prev_rsi": prev_rsi,
             }
             self.closed_candles.append(closed)
             max_keep = max(self.max_gap + 20, 100)
             if len(self.closed_candles) > max_keep:
                 self.closed_candles = self.closed_candles[-max_keep:]
 
-            # ── HA Reversal sinyal tespiti (kapanan mum icin) ──
-            # bullSignal = haOpen == haLow (alt golge yok)
-            # bearSignal = haOpen == haHigh (ust golge yok)
-            tol = ha_l * 0.0001 if ha_l > 0 else 0.0001
+            # ── HA Reversal sinyal tespiti ──
+            tol = ha_o * 0.0005 if ha_o > 0 else 0.0005  # %0.05 tolerans
             self.prev_bull_signal = abs(ha_o - ha_l) <= tol
             self.prev_bear_signal = abs(ha_o - ha_h) <= tol
+
+            # ── RSI yon tespiti ──
+            rsi_up = False
+            rsi_down = False
+            if closed_rsi is not None and prev_rsi is not None:
+                rsi_up = closed_rsi > prev_rsi
+                rsi_down = closed_rsi < prev_rsi
 
             await log.ainfo("ha_candle_closed", symbol=self.symbol,
                             ha_o=round(ha_o, 4), ha_h=round(ha_h, 4),
                             ha_l=round(ha_l, 4), ha_c=round(ha_c, 4),
                             real_o=round(real_o, 4), real_c=round(real_c, 4),
                             rsi=round(closed_rsi, 2) if closed_rsi else None,
+                            prev_rsi=round(prev_rsi, 2) if prev_rsi else None,
+                            rsi_up=rsi_up, rsi_down=rsi_down,
                             tol=round(tol, 6),
                             bull=self.prev_bull_signal, bear=self.prev_bear_signal)
 
-            # ── RSI Exit — HA close RSI(10) ile mum kapanışında kontrol ──
-            if closed_rsi is not None:
-                st = _get_acc_state(self.symbol)
-                for acc in ["a", "b"]:
-                    acc_side = st[acc]["side"]
-                    if acc_side is None:
-                        continue
-                    if acc_side == "LONG" and closed_rsi >= self.rsi_exit_long:
-                        await log.ainfo("ha_rsi_exit", symbol=self.symbol, account=acc.upper(),
-                                        side="LONG", rsi=round(closed_rsi, 2))
-                        await _close_account_position(self.symbol, acc, "RSI_EXIT")
-                    elif acc_side == "SHORT" and closed_rsi <= self.rsi_exit_short:
-                        await log.ainfo("ha_rsi_exit", symbol=self.symbol, account=acc.upper(),
-                                        side="SHORT", rsi=round(closed_rsi, 2))
-                        await _close_account_position(self.symbol, acc, "RSI_EXIT")
+            # ── CIKIS karari (mum kapanisinda — emir sonraki mum open'da) ──
+            self.pending_close_reason = ""
+            st = _get_acc_state(self.symbol)
+            for acc in ["a", "b"]:
+                acc_side = st[acc]["side"]
+                if acc_side is None:
+                    continue
+                if acc_side == "LONG" and rsi_down:
+                    self.pending_close_reason = "RSI_DOWN"
+                    await log.ainfo("ha_pending_close", symbol=self.symbol,
+                                    side="LONG", reason="RSI_DOWN",
+                                    rsi=round(closed_rsi, 2) if closed_rsi else None,
+                                    prev_rsi=round(prev_rsi, 2) if prev_rsi else None)
+                elif acc_side == "SHORT" and rsi_up:
+                    self.pending_close_reason = "RSI_UP"
+                    await log.ainfo("ha_pending_close", symbol=self.symbol,
+                                    side="SHORT", reason="RSI_UP",
+                                    rsi=round(closed_rsi, 2) if closed_rsi else None,
+                                    prev_rsi=round(prev_rsi, 2) if prev_rsi else None)
 
-            # Yeni mum
+            # ── GIRIS karari (mum kapanisinda — emir sonraki mum open'da) ──
+            self.pending_open_direction = ""
+            if self.prev_bull_signal and rsi_up:
+                self.pending_open_direction = "BUY"
+                await log.ainfo("ha_pending_open", symbol=self.symbol, direction="BUY",
+                                rsi=round(closed_rsi, 2) if closed_rsi else None)
+            elif self.prev_bear_signal and rsi_down:
+                self.pending_open_direction = "SELL"
+                await log.ainfo("ha_pending_open", symbol=self.symbol, direction="SELL",
+                                rsi=round(closed_rsi, 2) if closed_rsi else None)
+
+            # Yeni mum baslat
             self.candle_start = new_candle_start
             self.candle_open = price
             self.candle_high = price
@@ -340,56 +349,36 @@ class HeikinAshiEngine(SignalEngine):
             self._update_ha_candle()
             self.signal_fired_this_bar = False
 
-        # 4. Canlı HA RSI exit — her tick'te kontrol
-        live_ha_rsi = self._calc_live_rsi(self.ha_candle_close)
-        if live_ha_rsi is not None:
+        # 3. Sonraki mum ilk tick — bekleyen emirleri calistir
+        if self.signal_fired_this_bar:
+            return None
+
+        # Once kapat — sadece uygun yonu kapat
+        if self.pending_close_reason:
+            reason = self.pending_close_reason
+            self.pending_close_reason = ""
             st = _get_acc_state(self.symbol)
             for acc in ["a", "b"]:
                 acc_side = st[acc]["side"]
                 if acc_side is None:
                     continue
-                if acc_side == "LONG" and live_ha_rsi >= self.rsi_exit_long:
-                    await log.ainfo("ha_live_rsi_exit", symbol=self.symbol, account=acc.upper(),
-                                    side="LONG", rsi=round(live_ha_rsi, 2))
-                    await _close_account_position(self.symbol, acc, "LIVE_RSI_EXIT")
-                elif acc_side == "SHORT" and live_ha_rsi <= self.rsi_exit_short:
-                    await log.ainfo("ha_live_rsi_exit", symbol=self.symbol, account=acc.upper(),
-                                    side="SHORT", rsi=round(live_ha_rsi, 2))
-                    await _close_account_position(self.symbol, acc, "LIVE_RSI_EXIT")
+                if acc_side == "LONG" and reason == "RSI_DOWN":
+                    await log.ainfo("ha_rsi_direction_exit", symbol=self.symbol,
+                                    account=acc.upper(), side="LONG", reason=reason)
+                    await _close_account_position(self.symbol, acc, reason)
+                elif acc_side == "SHORT" and reason == "RSI_UP":
+                    await log.ainfo("ha_rsi_direction_exit", symbol=self.symbol,
+                                    account=acc.upper(), side="SHORT", reason=reason)
+                    await _close_account_position(self.symbol, acc, reason)
 
-        # 5. Bu mumda sinyal verildi mi?
-        if self.signal_fired_this_bar:
-            return None
-
-        # 5. Sinyal SADECE MUM KAPANIŞINDA — prev_bull/bear_signal
-        # Pine Script: bullSignal[1] → onceki mumda tespit, bu mumun ilk tickinde gir
-        if not self.prev_bull_signal and not self.prev_bear_signal:
-            return None
-
-        if self.prev_bull_signal:
-            st = _get_acc_state(self.symbol)
-            if st["a"]["side"] == "LONG" and st["b"]["side"] == "LONG":
-                return None
-            entry_price = price
+        # Sonra ac
+        if self.pending_open_direction:
+            direction = self.pending_open_direction
+            self.pending_open_direction = ""
             self.signal_fired_this_bar = True
             self.last_signal_time = time.time()
             signal = {
-                "symbol": self.symbol, "direction": "BUY", "entry_price": entry_price,
-                "rsi_a": None, "rsi_b": None, "gap": None,
-                "candle_a_time": self.candle_start, "source": "ha_server",
-            }
-            self.last_signal = signal
-            return signal
-
-        if self.prev_bear_signal:
-            st = _get_acc_state(self.symbol)
-            if st["a"]["side"] == "SHORT" and st["b"]["side"] == "SHORT":
-                return None
-            entry_price = price
-            self.signal_fired_this_bar = True
-            self.last_signal_time = time.time()
-            signal = {
-                "symbol": self.symbol, "direction": "SELL", "entry_price": entry_price,
+                "symbol": self.symbol, "direction": direction, "entry_price": price,
                 "rsi_a": None, "rsi_b": None, "gap": None,
                 "candle_a_time": self.candle_start, "source": "ha_server",
             }
@@ -788,9 +777,7 @@ async def _ha_engine_loop() -> None:
                             eng.short_thresh = s.get("short_thresh", 70.0)
                             eng.max_gap = s.get("max_gap", 21)
                             eng.entry_buffer = s.get("entry_buffer", 0.1) / 100.0
-                            # RSI exit thresholds SABIT — Pine Script indikatorden
-                            # eng.rsi_exit_long = 65.0 (degistirilmez)
-                            # eng.rsi_exit_short = 35.0 (degistirilmez)
+                            # RSI exit: yon karsilastirmasi (sabit threshold yok)
                         elif s.get("active") and s.get("ha_enabled") and sym not in _ha_engines:
                             new_eng = HeikinAshiEngine(sym, s)
                             await new_eng.warmup()
