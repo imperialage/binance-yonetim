@@ -473,7 +473,7 @@ async def _close_account_position(sym: str, account: str, reason: str) -> None:
             from app.modules.st_signal_logger import log_st_signal
             from datetime import datetime, timezone, timedelta
             dt_str = datetime.now(timezone(timedelta(hours=3))).strftime("%Y-%m-%d %H:%M:%S")
-            close_dir = "SELL" if acc["side"] == "LONG" else "BUY"
+            close_dir = "LONG" if acc["side"] == "LONG" else "SHORT"
             await log_st_signal(
                 dt=dt_str, symbol=sym, direction=f"CLOSE_{close_dir}",
                 band="15M", price=exit_price,
