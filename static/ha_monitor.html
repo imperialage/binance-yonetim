@@ -439,7 +439,7 @@ function runReversalSim(candles){
     var rsiDown=(rsi!=null && prevRsi!=null && rsi<prevRsi);
 
     // Önceki mumun HA sinyali
-    var tol=prev.low*0.0001||0.0001;
+    var tol=(prev.open||0)*0.0005||0.0005;
     var prevBull=(prev.open!=null && prev.low!=null && Math.abs(prev.open-prev.low)<=tol);
     var prevBear=(prev.open!=null && prev.high!=null && Math.abs(prev.open-prev.high)<=tol);
 
