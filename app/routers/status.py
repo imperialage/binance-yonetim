@@ -1024,13 +1024,34 @@ async def api_live_rsi(symbol: str = "XAGUSDT", interval: str = "15m", rsi_len: 
 
 
 @router.get("/api/ha-crash")
-async def api_ha_crash() -> dict:
-    """HA motor crash bilgisi."""
-    from app.modules.ha_signal_engine import _last_crash_error, _ha_engine_task
-    return {
+async def api_ha_crash(symbol: str = "") -> dict:
+    """HA motor crash bilgisi + son mumlar."""
+    from app.modules.ha_signal_engine import _last_crash_error, _ha_engine_task, get_ha_engine
+    result = {
         "task_done": _ha_engine_task.done() if _ha_engine_task else True,
         "crash_error": _last_crash_error or "no crash",
     }
+    if symbol:
+        eng = get_ha_engine(symbol.upper())
+        if eng and eng.closed_candles:
+            last_candles = eng.closed_candles[-10:]
+            result["candles"] = [
+                {
+                    "time": c["time"],
+                    "ha_o": round(c["open"], 4),
+                    "ha_h": round(c["high"], 4),
+                    "ha_l": round(c["low"], 4),
+                    "ha_c": round(c["close"], 4),
+                    "rsi": round(c["rsi"], 2) if c.get("rsi") is not None else None,
+                    "prev_rsi": round(c["prev_rsi"], 2) if c.get("prev_rsi") is not None else None,
+                }
+                for c in last_candles
+            ]
+            result["prev_bull"] = eng.prev_bull_signal
+            result["prev_bear"] = eng.prev_bear_signal
+            result["pending_close"] = eng.pending_close_reason
+            result["pending_open"] = eng.pending_open_direction
+    return result
 
 
 @router.get("/api/ha-live-rsi")
