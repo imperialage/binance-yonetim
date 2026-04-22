@@ -141,22 +141,6 @@ class HeikinAshiEngine(SignalEngine):
                 self.rsi_prev_close = ha_closes[n - 1]
                 self.rsi_warmed_up = True
 
-            # GERÇEK close RSI state — Pine Script rsi = ta.rsi(close, 1)
-            real_closes = [float(k[4]) for k in klines[:-1]]  # gerçek close (son mum hariç)
-            rn = len(real_closes)
-            if rn >= self.rsi_real_len + 1:
-                rg = [0.0] * rn; rl = [0.0] * rn
-                for i in range(1, rn):
-                    d = real_closes[i] - real_closes[i - 1]
-                    rg[i] = max(d, 0.0); rl[i] = max(-d, 0.0)
-                self.real_rsi_avg_gain = sum(rg[1:self.rsi_real_len + 1]) / self.rsi_real_len
-                self.real_rsi_avg_loss = sum(rl[1:self.rsi_real_len + 1]) / self.rsi_real_len
-                for i in range(self.rsi_real_len + 1, rn):
-                    self.real_rsi_avg_gain = (self.real_rsi_avg_gain * (self.rsi_real_len - 1) + rg[i]) / self.rsi_real_len
-                    self.real_rsi_avg_loss = (self.real_rsi_avg_loss * (self.rsi_real_len - 1) + rl[i]) / self.rsi_real_len
-                self.real_rsi_prev_close = real_closes[-1]
-                self.real_rsi_warmed_up = True
-
             # HA state
             if self.closed_candles:
                 last_closed = self.closed_candles[-1]
