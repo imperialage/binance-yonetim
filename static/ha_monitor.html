@@ -23,7 +23,8 @@ body{font-size:13px}
 .cb-wrap{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted)}
 .tbl-wrap{overflow-x:auto;overflow-y:auto;max-height:500px;margin-bottom:20px;border:1px solid var(--border-primary);border-radius:var(--radius-lg)}
 .tbl-wrap thead{position:sticky;top:0;z-index:1}
-.tbl-wrap table{background:var(--bg-secondary)}
+.tbl-wrap table{background:var(--bg-secondary);width:100%;table-layout:auto;font-size:clamp(9px,2vw,12px)}
+.tbl-wrap th,.tbl-wrap td{padding:4px 3px;white-space:nowrap}
 tr.sig-row{background:var(--accent-gold-bg);border-left:3px solid var(--accent-gold)}
 tr.sig-row-skip{background:rgba(72,80,88,0.03);border-left:3px solid var(--text-faint)}
 tr.bn-entry{background:var(--color-info-bg);border-left:3px solid var(--color-info)}
@@ -289,7 +290,9 @@ function renderAll(binanceTrades){
   var fSig=$('fSig').checked;
   var fOSOB=$('fOSOB').checked;
 
-  var filtered=candles.filter(function(c){
+  // Son mumu cikar (canli mum — henuz kapanmamis)
+  var closedCandles=candles.slice(0,-1);
+  var filtered=closedCandles.filter(function(c){
     if(c.time<fStart||c.time>fEnd)return false;
     if(fSig&&!sigMap[c.time]&&!bnEntryMap[c.time]&&!bnExitMap[c.time])return false;
     if(fOSOB&&c.rsi!=null&&c.rsi>longTh&&c.rsi<shortTh)return false;
@@ -297,7 +300,7 @@ function renderAll(binanceTrades){
   });
 
   // ── HA Reversal simülasyonu ONCE calistir (mum tablosundan once)
-  runReversalSim(candles);
+  runReversalSim(closedCandles);
 
   // Orijinal index map (reversal sim eşleştirme için)
   var candleIdxMap={};
