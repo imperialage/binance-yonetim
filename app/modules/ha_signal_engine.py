@@ -302,12 +302,17 @@ class HeikinAshiEngine(SignalEngine):
                                     prev_rsi=round(prev_rsi, 2) if prev_rsi else None)
 
             # ── GIRIS karari (mum kapanisinda — emir sonraki mum open'da) ──
+            # Ayni yonde acik pozisyon varsa giris yapma (simülasyondaki state!=1/state!=-1)
+            # pending_close varsa pozisyon kapatilacak → effective_side = None
             self.pending_open_direction = ""
-            if self.prev_bull_signal and rsi_up:
+            effective_side = st["a"]["side"]
+            if self.pending_close_reason:
+                effective_side = None  # kapatilacak, sonraki mumda bos olacak
+            if self.prev_bull_signal and rsi_up and effective_side != "LONG":
                 self.pending_open_direction = "BUY"
                 await log.ainfo("ha_pending_open", symbol=self.symbol, direction="BUY",
                                 rsi=round(closed_rsi, 2) if closed_rsi else None)
-            elif self.prev_bear_signal and rsi_down:
+            elif self.prev_bear_signal and rsi_down and effective_side != "SHORT":
                 self.pending_open_direction = "SELL"
                 await log.ainfo("ha_pending_open", symbol=self.symbol, direction="SELL",
                                 rsi=round(closed_rsi, 2) if closed_rsi else None)
