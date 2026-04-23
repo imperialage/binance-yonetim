@@ -432,7 +432,9 @@ async def _close_account_position(sym: str, account: str, reason: str) -> None:
                 break
 
         if pos_amt == 0:
-            # Binance'ta zaten kapanmis
+            # Binance'ta zaten kapanmis (SL tetiklenmis olabilir)
+            await log.ainfo("ha_already_closed", symbol=sym, account=account,
+                            prev_side=acc["side"], reason=reason)
             acc["side"] = None
             acc["entry"] = 0.0
             acc["qty"] = 0.0
