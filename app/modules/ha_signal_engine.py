@@ -801,21 +801,8 @@ async def _ha_engine_loop() -> None:
                     )
 
                     if app_settings.trading_enabled:
-                        # Pre-trade sync — Binance'tan gercek pozisyon
-                        try:
-                            from app.modules.binance_client import get_position_risk
-                            st = _get_acc_state(sym)
-                            pos_a = await get_position_risk(sym)
-                            for p in pos_a:
-                                if p.get("symbol") == sym:
-                                    a_amt = float(p.get("positionAmt", 0))
-                                    if a_amt > 0: st["a"]["side"] = "LONG"; st["a"]["qty"] = abs(a_amt)
-                                    elif a_amt < 0: st["a"]["side"] = "SHORT"; st["a"]["qty"] = abs(a_amt)
-                                    else: st["a"]["side"] = None
-                                    break
-                        except Exception as _sync_err:
-                            await log.awarning("ha_pre_trade_sync_error", symbol=sym, error=str(_sync_err))
-
+                        # Motor state'i kullan — pre-trade sync KALDIRILDI
+                        # (fill gecikmesi yuzunden Binance eski pozisyonu gosteriyordu)
                         st = _get_acc_state(sym)
                         direction = signal["direction"]
                         new_side = "LONG" if direction == "BUY" else "SHORT"
