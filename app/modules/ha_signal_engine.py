@@ -221,16 +221,6 @@ class HeikinAshiEngine(SignalEngine):
                     klines = _resp.json()
 
                 if klines and len(klines) >= self.rsi_len + 2:
-                    # Son kapanan mumun zamani = candle_start olmali
-                    last_closed_time = int(klines[-2][0]) // 1000
-                    if last_closed_time != self.candle_start:
-                        # Binance henuz kapanan mumu donmuyor — bekle
-                        await log.awarning("ha_bar_close_time_mismatch",
-                                          symbol=self.symbol,
-                                          expected=self.candle_start,
-                                          got=last_closed_time)
-                        return None  # sonraki tick'te tekrar dene
-
                     ha_candles = convert_klines_to_ha(klines)
                     # Son mum haric (canli mum)
                     closed_ha = ha_candles[:-1]
