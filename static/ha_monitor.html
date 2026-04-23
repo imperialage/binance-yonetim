@@ -341,7 +341,8 @@ function renderAll(binanceTrades){
         // Giriş sinyali
         badge=(dir==='BUY'?'<span style="background:#0ECB8130;color:#0ECB81;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700">▲ MOTOR LONG</span>':'<span style="background:#F6465D30;color:#F6465D;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700">▼ MOTOR SHORT</span>');
       }
-      html+='<tr class="sig-row"><td colspan="9" class="sig-detail">'+badge+' <span class="yellow">'+fmt(ds.price,dec(ds.price))+'</span> <span style="color:#484f58;font-size:9px">'+src+'</span></td></tr>';
+      var dsTime=(ds.datetime||'').split(' ')[1]||'';
+      html+='<tr class="sig-row"><td colspan="9" class="sig-detail">'+badge+' <span class="yellow">'+fmt(ds.price,dec(ds.price))+'</span> <span style="color:#484f58;font-size:9px">'+dsTime+' '+src+'</span></td></tr>';
       if(!isClose) rowCls='sig-row';
     }
 
@@ -354,7 +355,8 @@ function renderAll(binanceTrades){
     // Reversal sim sinyalleri (giris)
     if(window._revSignals&&window._revSignals[origIdx]){
       var rs=window._revSignals[origIdx];
-      sigCell='<span style="background:'+(rs.dir==='BUY'?'#0ECB8130':'#F6465D30')+';color:'+(rs.dir==='BUY'?'#0ECB81':'#F6465D')+';font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700">'+(rs.dir==='BUY'?'▲ LONG':'▼ SHORT')+' '+fmt(rs.price,dec(rs.price))+'</span>';
+      var st=timeStr(c.time);
+      sigCell='<span style="background:'+(rs.dir==='BUY'?'#0ECB8130':'#F6465D30')+';color:'+(rs.dir==='BUY'?'#0ECB81':'#F6465D')+';font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700">'+(rs.dir==='BUY'?'▲ LONG':'▼ SHORT')+' '+fmt(rs.price,dec(rs.price))+' <span style="opacity:0.6;font-size:9px">'+st+'</span></span>';
     }
     // Reversal sim cikislar (PnL + cikis fiyati)
     if(window._revTrades&&window._revTrades[origIdx]){
