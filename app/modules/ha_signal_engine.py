@@ -322,7 +322,6 @@ class HeikinAshiEngine(SignalEngine):
 
                     # Giris sinyali dondur — loop hemen trade acar
                     if entry_signal:
-                        self.signal_fired_this_bar = True
                         self.last_signal_time = time.time()
                         signal = {
                             "symbol": self.symbol, "direction": entry_signal,
@@ -334,12 +333,20 @@ class HeikinAshiEngine(SignalEngine):
                         await log.ainfo("ha_entry_now", symbol=self.symbol,
                                         direction=entry_signal,
                                         rsi=round(closed_rsi, 2) if closed_rsi else None)
+                        # Yeni mum baslat (return'den ONCE)
+                        self.candle_start = new_candle_start
+                        self.candle_open = price
+                        self.candle_high = price
+                        self.candle_low = price
+                        self.candle_close = price
+                        self._update_ha_candle()
+                        self.signal_fired_this_bar = True
                         return signal
 
             except Exception as e:
                 await log.aerror("ha_bar_close_error", symbol=self.symbol, error=str(e))
 
-            # Yeni mum baslat
+            # Yeni mum baslat (giris sinyali yoksa)
             self.candle_start = new_candle_start
             self.candle_open = price
             self.candle_high = price
