@@ -264,12 +264,12 @@ class HeikinAshiEngine(SignalEngine):
                     if len(self.closed_candles) > max_keep:
                         self.closed_candles = self.closed_candles[-max_keep:]
 
-                    # ── HA Reversal sinyal tespiti ──
+                    # ── Bu mumun HA Reversal sinyali (sonraki mum icin) ──
                     tol = ha_o * 0.0005 if ha_o > 0 else 0.0005
-                    self.prev_bull_signal = abs(ha_o - ha_l) <= tol
-                    self.prev_bear_signal = abs(ha_o - ha_h) <= tol
+                    new_bull = abs(ha_o - ha_l) <= tol
+                    new_bear = abs(ha_o - ha_h) <= tol
 
-                    # ── RSI yon tespiti ──
+                    # ── RSI yon tespiti (bu mumun RSI vs onceki) ──
                     rsi_up = False
                     rsi_down = False
                     if closed_rsi is not None and prev_rsi is not None:
@@ -284,7 +284,8 @@ class HeikinAshiEngine(SignalEngine):
                                     prev_rsi=round(prev_rsi, 2) if prev_rsi else None,
                                     rsi_up=rsi_up, rsi_down=rsi_down,
                                     tol=round(tol, 6),
-                                    bull=self.prev_bull_signal, bear=self.prev_bear_signal)
+                                    prev_bull=self.prev_bull_signal, prev_bear=self.prev_bear_signal,
+                                    new_bull=new_bull, new_bear=new_bear)
 
                     # ── CIKIS karari ──
                     self.pending_close_reason = ""
@@ -307,6 +308,9 @@ class HeikinAshiEngine(SignalEngine):
                                             prev_rsi=round(prev_rsi, 2) if prev_rsi else None)
 
                     # ── GIRIS karari ──
+                    # prev_bull/bear = ONCEKI mumun sinyali (bullSignal[1])
+                    # rsi_up/down = BU mumun RSI kontrolu
+                    # Simülasyonla birebir: prevBull(i-1) + rsiUp(i)
                     self.pending_open_direction = ""
                     effective_side = st["a"]["side"]
                     if self.pending_close_reason:
@@ -319,6 +323,10 @@ class HeikinAshiEngine(SignalEngine):
                         self.pending_open_direction = "SELL"
                         await log.ainfo("ha_pending_open", symbol=self.symbol, direction="SELL",
                                         rsi=round(closed_rsi, 2) if closed_rsi else None)
+
+                    # Sinyali SONRA guncelle (sonraki mum kapanisinda kullanilacak)
+                    self.prev_bull_signal = new_bull
+                    self.prev_bear_signal = new_bear
 
             except Exception as e:
                 await log.aerror("ha_bar_close_error", symbol=self.symbol, error=str(e))
