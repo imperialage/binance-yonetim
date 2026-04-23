@@ -244,7 +244,7 @@ class HeikinAshiEngine(SignalEngine):
                             real_c = float(_kl[0][4])
             except Exception:
                 await log.awarning("ha_incremental_fetch_failed", symbol=self.symbol)
-                return None
+                # API fail → tick verisiyle devam et, mum kapanisini ATLAMA
 
             # HA bir adim ilerlet
             ha_o, ha_h, ha_l, ha_c = _calc_ha(real_o, real_h, real_l, real_c,
