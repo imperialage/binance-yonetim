@@ -150,8 +150,14 @@ class HeikinAshiEngine(SignalEngine):
             self._update_ha_candle()
 
             self._load_used_a()
-            # _sync_position ÇAĞIRMA — HA motor kendi _account_state
-            # yönetimini yapıyor, SignalEngine.has_position kullanmıyor
+
+            # prev_bull/bear_signal set et — deploy sonrasi ilk mum icin hazir
+            if closed_ha:
+                last_ha = closed_ha[-1]
+                tol = last_ha["open"] * 0.0005 if last_ha["open"] > 0 else 0.0005
+                self.prev_bull_signal = abs(last_ha["open"] - last_ha["low"]) <= tol
+                self.prev_bear_signal = abs(last_ha["open"] - last_ha["high"]) <= tol
+
             self.warmed_up = True
             await log.ainfo("ha_warmup_done", symbol=self.symbol, candles=len(self.closed_candles))
 
