@@ -344,23 +344,27 @@ class HeikinAshiEngine(SignalEngine):
         if self.signal_fired_this_bar:
             return None
 
-        # Once kapat — sadece uygun yonu kapat
+        # Once kapat — sadece uygun yonu kapat (exception korumalı)
         if self.pending_close_reason:
             reason = self.pending_close_reason
             self.pending_close_reason = ""
-            st = _get_acc_state(self.symbol)
-            for acc in ["a", "b"]:
-                acc_side = st[acc]["side"]
-                if acc_side is None:
-                    continue
-                if acc_side == "LONG" and reason == "RSI_DOWN":
-                    await log.ainfo("ha_rsi_direction_exit", symbol=self.symbol,
-                                    account=acc.upper(), side="LONG", reason=reason)
-                    await _close_account_position(self.symbol, acc, reason)
-                elif acc_side == "SHORT" and reason == "RSI_UP":
-                    await log.ainfo("ha_rsi_direction_exit", symbol=self.symbol,
-                                    account=acc.upper(), side="SHORT", reason=reason)
-                    await _close_account_position(self.symbol, acc, reason)
+            try:
+                st = _get_acc_state(self.symbol)
+                for acc in ["a", "b"]:
+                    acc_side = st[acc]["side"]
+                    if acc_side is None:
+                        continue
+                    if acc_side == "LONG" and reason == "RSI_DOWN":
+                        await log.ainfo("ha_rsi_direction_exit", symbol=self.symbol,
+                                        account=acc.upper(), side="LONG", reason=reason)
+                        await _close_account_position(self.symbol, acc, reason)
+                    elif acc_side == "SHORT" and reason == "RSI_UP":
+                        await log.ainfo("ha_rsi_direction_exit", symbol=self.symbol,
+                                        account=acc.upper(), side="SHORT", reason=reason)
+                        await _close_account_position(self.symbol, acc, reason)
+            except Exception as e:
+                await log.aerror("ha_pending_close_execution_error",
+                                symbol=self.symbol, error=str(e))
 
         # Sonra ac
         if self.pending_open_direction:
