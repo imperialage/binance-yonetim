@@ -92,7 +92,8 @@ class HeikinAshiEngine(SignalEngine):
         # HA Reversal state
         self.prev_bull_signal: bool = False
         self.prev_bear_signal: bool = False
-        # (pending mekanizmasi kaldirildi — giris/cikis hemen mum kapanisinda)
+        # Giris pending — sonraki mum open'inda (cikis hemen mum kapanisinda)
+        self.pending_open_direction: str = ""
 
     # ── Override: Warmup ────────────────────────────────
     async def warmup(self) -> None:
@@ -313,41 +314,22 @@ class HeikinAshiEngine(SignalEngine):
                     except Exception as e:
                         await log.aerror("ha_exit_now_error", symbol=self.symbol, error=str(e))
 
-                    # ── GIRIS — HEMEN (mum kapanisinda, cikis gibi) ──
+                    # ── GIRIS karari — PENDING (sonraki mum open'inda) ──
                     st = _get_acc_state(self.symbol)  # cikis sonrasi guncellenmis state
                     effective_side = st["a"]["side"]
-                    entry_signal = None
+                    self.pending_open_direction = ""
                     if self.prev_bull_signal and rsi_up and effective_side != "LONG":
-                        entry_signal = "BUY"
+                        self.pending_open_direction = "BUY"
+                        await log.ainfo("ha_pending_open", symbol=self.symbol, direction="BUY",
+                                        rsi=round(closed_rsi, 2) if closed_rsi else None)
                     elif self.prev_bear_signal and rsi_down and effective_side != "SHORT":
-                        entry_signal = "SELL"
+                        self.pending_open_direction = "SELL"
+                        await log.ainfo("ha_pending_open", symbol=self.symbol, direction="SELL",
+                                        rsi=round(closed_rsi, 2) if closed_rsi else None)
 
                     # Sinyali SONRA guncelle (sonraki mum kapanisinda kullanilacak)
                     self.prev_bull_signal = new_bull
                     self.prev_bear_signal = new_bear
-
-                    # Giris sinyali dondur — loop hemen trade acar
-                    if entry_signal:
-                        self.last_signal_time = time.time()
-                        signal = {
-                            "symbol": self.symbol, "direction": entry_signal,
-                            "entry_price": price,
-                            "rsi_a": None, "rsi_b": None, "gap": None,
-                            "candle_a_time": self.candle_start, "source": "ha_server",
-                        }
-                        self.last_signal = signal
-                        await log.ainfo("ha_entry_now", symbol=self.symbol,
-                                        direction=entry_signal,
-                                        rsi=round(closed_rsi, 2) if closed_rsi else None)
-                        # Yeni mum baslat (return'den ONCE)
-                        self.candle_start = new_candle_start
-                        self.candle_open = price
-                        self.candle_high = price
-                        self.candle_low = price
-                        self.candle_close = price
-                        self._update_ha_candle()
-                        self.signal_fired_this_bar = True
-                        return signal
 
             except Exception as e:
                 await log.aerror("ha_bar_close_error", symbol=self.symbol, error=str(e))
@@ -360,6 +342,25 @@ class HeikinAshiEngine(SignalEngine):
             self.candle_close = price
             self._update_ha_candle()
             self.signal_fired_this_bar = False
+
+        # 3. Sonraki mum ilk tick — pending giris
+        if self.signal_fired_this_bar:
+            return None
+
+        if self.pending_open_direction:
+            direction = self.pending_open_direction
+            self.pending_open_direction = ""
+            self.signal_fired_this_bar = True
+            self.last_signal_time = time.time()
+            signal = {
+                "symbol": self.symbol, "direction": direction, "entry_price": price,
+                "rsi_a": None, "rsi_b": None, "gap": None,
+                "candle_a_time": self.candle_start, "source": "ha_server",
+            }
+            self.last_signal = signal
+            await log.ainfo("ha_entry_open", symbol=self.symbol,
+                            direction=direction, price=price)
+            return signal
 
         return None
 
