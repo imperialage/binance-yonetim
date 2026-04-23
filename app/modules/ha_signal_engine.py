@@ -152,8 +152,8 @@ class HeikinAshiEngine(SignalEngine):
             self._load_used_a()
 
             # prev_bull/bear_signal set et — deploy sonrasi ilk mum icin hazir
-            if closed_ha:
-                last_ha = closed_ha[-1]
+            if self.closed_candles:
+                last_ha = self.closed_candles[-1]
                 tol = last_ha["open"] * 0.0005 if last_ha["open"] > 0 else 0.0005
                 self.prev_bull_signal = abs(last_ha["open"] - last_ha["low"]) <= tol
                 self.prev_bear_signal = abs(last_ha["open"] - last_ha["high"]) <= tol
