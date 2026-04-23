@@ -1049,8 +1049,6 @@ async def api_ha_crash(symbol: str = "") -> dict:
             ]
             result["prev_bull"] = eng.prev_bull_signal
             result["prev_bear"] = eng.prev_bear_signal
-            result["pending_close"] = eng.pending_close_reason
-            result["pending_open"] = eng.pending_open_direction
     return result
 
 
