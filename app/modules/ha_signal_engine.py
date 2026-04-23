@@ -92,8 +92,7 @@ class HeikinAshiEngine(SignalEngine):
         # HA Reversal state
         self.prev_bull_signal: bool = False
         self.prev_bear_signal: bool = False
-        # RSI yon filtresi — bekleyen emirler
-        self.pending_close_reason: str = ""    # "RSI_DOWN" veya "RSI_UP" — sonraki mum open'da kapat
+        # RSI yon filtresi — bekleyen giris emri
         self.pending_open_direction: str = ""  # "BUY" veya "SELL" — sonraki mum open'da ac
 
     # ── Override: Warmup ────────────────────────────────
@@ -287,34 +286,32 @@ class HeikinAshiEngine(SignalEngine):
                                     prev_bull=self.prev_bull_signal, prev_bear=self.prev_bear_signal,
                                     new_bull=new_bull, new_bear=new_bear)
 
-                    # ── CIKIS karari ──
-                    self.pending_close_reason = ""
+                    # ── CIKIS — HEMEN (mum kapanisinda, pending degil) ──
                     st = _get_acc_state(self.symbol)
-                    for acc in ["a", "b"]:
-                        acc_side = st[acc]["side"]
-                        if acc_side is None:
-                            continue
-                        if acc_side == "LONG" and rsi_down:
-                            self.pending_close_reason = "RSI_DOWN"
-                            await log.ainfo("ha_pending_close", symbol=self.symbol,
-                                            side="LONG", reason="RSI_DOWN",
-                                            rsi=round(closed_rsi, 2) if closed_rsi else None,
-                                            prev_rsi=round(prev_rsi, 2) if prev_rsi else None)
-                        elif acc_side == "SHORT" and rsi_up:
-                            self.pending_close_reason = "RSI_UP"
-                            await log.ainfo("ha_pending_close", symbol=self.symbol,
-                                            side="SHORT", reason="RSI_UP",
-                                            rsi=round(closed_rsi, 2) if closed_rsi else None,
-                                            prev_rsi=round(prev_rsi, 2) if prev_rsi else None)
+                    try:
+                        for acc in ["a", "b"]:
+                            acc_side = st[acc]["side"]
+                            if acc_side is None:
+                                continue
+                            if acc_side == "LONG" and rsi_down:
+                                await log.ainfo("ha_rsi_exit_now", symbol=self.symbol,
+                                                side="LONG", reason="RSI_DOWN",
+                                                rsi=round(closed_rsi, 2) if closed_rsi else None,
+                                                prev_rsi=round(prev_rsi, 2) if prev_rsi else None)
+                                await _close_account_position(self.symbol, acc, "RSI_DOWN")
+                            elif acc_side == "SHORT" and rsi_up:
+                                await log.ainfo("ha_rsi_exit_now", symbol=self.symbol,
+                                                side="SHORT", reason="RSI_UP",
+                                                rsi=round(closed_rsi, 2) if closed_rsi else None,
+                                                prev_rsi=round(prev_rsi, 2) if prev_rsi else None)
+                                await _close_account_position(self.symbol, acc, "RSI_UP")
+                    except Exception as e:
+                        await log.aerror("ha_exit_now_error", symbol=self.symbol, error=str(e))
 
-                    # ── GIRIS karari ──
-                    # prev_bull/bear = ONCEKI mumun sinyali (bullSignal[1])
-                    # rsi_up/down = BU mumun RSI kontrolu
-                    # Simülasyonla birebir: prevBull(i-1) + rsiUp(i)
+                    # ── GIRIS karari (pending — sonraki mum open'inda) ──
                     self.pending_open_direction = ""
+                    st = _get_acc_state(self.symbol)  # cikis sonrasi guncellenmis state
                     effective_side = st["a"]["side"]
-                    if self.pending_close_reason:
-                        effective_side = None
                     if self.prev_bull_signal and rsi_up and effective_side != "LONG":
                         self.pending_open_direction = "BUY"
                         await log.ainfo("ha_pending_open", symbol=self.symbol, direction="BUY",
@@ -344,29 +341,7 @@ class HeikinAshiEngine(SignalEngine):
         if self.signal_fired_this_bar:
             return None
 
-        # Once kapat — sadece uygun yonu kapat (exception korumalı)
-        if self.pending_close_reason:
-            reason = self.pending_close_reason
-            self.pending_close_reason = ""
-            try:
-                st = _get_acc_state(self.symbol)
-                for acc in ["a", "b"]:
-                    acc_side = st[acc]["side"]
-                    if acc_side is None:
-                        continue
-                    if acc_side == "LONG" and reason == "RSI_DOWN":
-                        await log.ainfo("ha_rsi_direction_exit", symbol=self.symbol,
-                                        account=acc.upper(), side="LONG", reason=reason)
-                        await _close_account_position(self.symbol, acc, reason)
-                    elif acc_side == "SHORT" and reason == "RSI_UP":
-                        await log.ainfo("ha_rsi_direction_exit", symbol=self.symbol,
-                                        account=acc.upper(), side="SHORT", reason=reason)
-                        await _close_account_position(self.symbol, acc, reason)
-            except Exception as e:
-                await log.aerror("ha_pending_close_execution_error",
-                                symbol=self.symbol, error=str(e))
-
-        # Sonra ac
+        # Sonra ac (giris — pending)
         if self.pending_open_direction:
             direction = self.pending_open_direction
             self.pending_open_direction = ""
