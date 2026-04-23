@@ -89,10 +89,7 @@ class HeikinAshiEngine(SignalEngine):
         self.ha_candle_high: float = 0.0
         self.ha_candle_low: float = 0.0
         self.ha_candle_close: float = 0.0
-        # HA Reversal state
-        self.prev_bull_signal: bool = False
-        self.prev_bear_signal: bool = False
-        # Giris ve cikis hemen mum kapanisinda (pending yok)
+        # Giris ve cikis hemen mum kapanisinda
 
     # ── Override: Warmup ────────────────────────────────
     async def warmup(self) -> None:
@@ -150,13 +147,6 @@ class HeikinAshiEngine(SignalEngine):
             self._update_ha_candle()
 
             self._load_used_a()
-
-            # prev_bull/bear_signal set et — deploy sonrasi ilk mum icin hazir
-            if self.closed_candles:
-                last_ha = self.closed_candles[-1]
-                tol = last_ha["open"] * 0.0005 if last_ha["open"] > 0 else 0.0005
-                self.prev_bull_signal = abs(last_ha["open"] - last_ha["low"]) <= tol
-                self.prev_bear_signal = abs(last_ha["open"] - last_ha["high"]) <= tol
 
             self.warmed_up = True
             await log.ainfo("ha_warmup_done", symbol=self.symbol, candles=len(self.closed_candles))
@@ -323,18 +313,14 @@ class HeikinAshiEngine(SignalEngine):
                     except Exception as e:
                         await log.aerror("ha_exit_now_error", symbol=self.symbol, error=str(e))
 
-                    # ── GIRIS — HEMEN (mum kapanisi = sonraki mum acilisi) ──
+                    # ── GIRIS — HEMEN (mum kapanisinda, ayni mumun sinyali) ──
                     st = _get_acc_state(self.symbol)  # cikis sonrasi guncellenmis state
                     effective_side = st["a"]["side"]
                     entry_signal = None
-                    if self.prev_bull_signal and rsi_up and effective_side != "LONG":
+                    if new_bull and rsi_up and effective_side != "LONG":
                         entry_signal = "BUY"
-                    elif self.prev_bear_signal and rsi_down and effective_side != "SHORT":
+                    elif new_bear and rsi_down and effective_side != "SHORT":
                         entry_signal = "SELL"
-
-                    # Sinyali SONRA guncelle (sonraki mum kapanisinda kullanilacak)
-                    self.prev_bull_signal = new_bull
-                    self.prev_bear_signal = new_bear
 
                     if entry_signal:
                         self.signal_fired_this_bar = True

@@ -1047,8 +1047,7 @@ async def api_ha_crash(symbol: str = "") -> dict:
                 }
                 for c in last_candles
             ]
-            result["prev_bull"] = eng.prev_bull_signal
-            result["prev_bear"] = eng.prev_bear_signal
+            result["engine_active"] = True
     return result
 
 
