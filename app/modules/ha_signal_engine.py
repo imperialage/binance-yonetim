@@ -745,13 +745,28 @@ async def _ha_engine_loop() -> None:
                         sym = s["symbol"]
                         if sym in _ha_engines:
                             eng = _ha_engines[sym]
+                            new_interval = s.get("interval", "15m")
+                            # Interval degistiyse → yeniden warmup
+                            if new_interval != eng.interval:
+                                await log.ainfo("ha_interval_changed", symbol=sym,
+                                                old=eng.interval, new=new_interval)
+                                try:
+                                    new_eng = HeikinAshiEngine(sym, s)
+                                    await new_eng.warmup()
+                                    if new_eng.warmed_up:
+                                        _ha_engines[sym] = new_eng
+                                        await log.ainfo("ha_engine_restarted", symbol=sym,
+                                                        interval=new_interval)
+                                except Exception as we:
+                                    await log.aerror("ha_interval_change_error",
+                                                     symbol=sym, error=str(we))
+                                await asyncio.sleep(3)
+                                continue
                             eng.settings = s
-                            # eng.rsi_len sabit 10 — settings'ten override etme
                             eng.long_thresh = s.get("long_thresh", 32.0)
                             eng.short_thresh = s.get("short_thresh", 70.0)
                             eng.max_gap = s.get("max_gap", 21)
                             eng.entry_buffer = s.get("entry_buffer", 0.1) / 100.0
-                            # RSI exit: yon karsilastirmasi (sabit threshold yok)
                         elif s.get("active") and s.get("ha_enabled") and not s.get("webhook_trade") and sym not in _ha_engines:
                             try:
                                 new_eng = HeikinAshiEngine(sym, s)
