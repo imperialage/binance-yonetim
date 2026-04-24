@@ -671,6 +671,11 @@ tr.clickable:hover{background:#1c212888}
     var newVal=!(cfg.ha_enabled!==false&&cfg.ha_enabled!==0);
     updateSymConfig(sym,'ha_enabled',newVal);
   };
+  window.toggleWebhook=function(sym){
+    var cfg=symConfigs[sym]||{};
+    var newVal=!(cfg.webhook_trade===true||cfg.webhook_trade===1);
+    updateSymConfig(sym,'webhook_trade',newVal);
+  };
 
   // ── Inline edit ──
   window.editField=function(sym,field,currentVal,label){
@@ -873,6 +878,10 @@ tr.clickable:hover{background:#1c212888}
       html+='<div class="toggle-wrap" onclick="toggleHA(\''+sym+'\')" title="HA Motor Acma/Kapatma">';
       html+='<div class="mini-toggle '+(haOn?'on':'off')+'"><div class="mini-toggle-dot"></div></div>';
       html+='<span class="toggle-label">'+(haOn?'Motor Aktif':'Motor Kapali')+'</span></div>';
+      var whOn=cfg.webhook_trade===true||cfg.webhook_trade===1;
+      html+='<div class="toggle-wrap" onclick="toggleWebhook(\''+sym+'\')" title="Webhook Trade Acma/Kapatma">';
+      html+='<div class="mini-toggle '+(whOn?'on':'off')+'" style="'+(whOn?'background:#F0B90B':'')+'"><div class="mini-toggle-dot"></div></div>';
+      html+='<span class="toggle-label">'+(whOn?'Webhook Aktif':'Webhook Kapali')+'</span></div>';
       html+='</div>';
 
       // Config tags — weight + TF gorunur

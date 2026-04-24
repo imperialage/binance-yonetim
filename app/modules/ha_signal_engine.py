@@ -609,7 +609,7 @@ async def _ha_engine_loop() -> None:
     global _last_crash_error
     try:
         all_settings = await get_all_settings()
-        ha_syms = [s for s in all_settings if s.get("active") and s.get("ha_enabled")]
+        ha_syms = [s for s in all_settings if s.get("active") and s.get("ha_enabled") and not s.get("webhook_trade")]
         await log.ainfo("ha_engine_loading", count=len(ha_syms),
                         symbols=[s["symbol"] for s in ha_syms])
         for s in ha_syms:
@@ -752,7 +752,7 @@ async def _ha_engine_loop() -> None:
                             eng.max_gap = s.get("max_gap", 21)
                             eng.entry_buffer = s.get("entry_buffer", 0.1) / 100.0
                             # RSI exit: yon karsilastirmasi (sabit threshold yok)
-                        elif s.get("active") and s.get("ha_enabled") and sym not in _ha_engines:
+                        elif s.get("active") and s.get("ha_enabled") and not s.get("webhook_trade") and sym not in _ha_engines:
                             try:
                                 new_eng = HeikinAshiEngine(sym, s)
                                 await new_eng.warmup()
@@ -764,7 +764,7 @@ async def _ha_engine_loop() -> None:
                             except Exception as we:
                                 await log.aerror("ha_reload_warmup_error", symbol=sym, error=str(we))
                             await asyncio.sleep(3)  # Rate limit
-                    ha_syms = {s["symbol"] for s in fresh if s.get("active") and s.get("ha_enabled")}
+                    ha_syms = {s["symbol"] for s in fresh if s.get("active") and s.get("ha_enabled") and not s.get("webhook_trade")}
                     for sym in list(_ha_engines.keys()):
                         if sym not in ha_syms:
                             del _ha_engines[sym]

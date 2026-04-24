@@ -1279,7 +1279,7 @@ async def _engine_loop() -> None:
         return
 
     # ha_enabled semboller HA motorunda calisir — normal motordan haric tut
-    active_symbols = [s for s in all_settings if s.get("active") and s.get("listening") and not s.get("ha_enabled")]
+    active_symbols = [s for s in all_settings if s.get("active") and s.get("listening") and not s.get("ha_enabled") and not s.get("webhook_trade")]
     await log.ainfo("signal_engine_active_symbols",
                      count=len(active_symbols),
                      symbols=[s.get("symbol") for s in active_symbols])
@@ -1377,7 +1377,7 @@ async def _engine_loop() -> None:
                             _engines[sym] = new_engine
                             await log.ainfo("signal_engine_new_symbol", symbol=sym)
                     # Silinen/deaktif/ha_enabled sembolleri kaldir
-                    active_syms = {s["symbol"] for s in fresh if s.get("active") and s.get("listening") and not s.get("ha_enabled")}
+                    active_syms = {s["symbol"] for s in fresh if s.get("active") and s.get("listening") and not s.get("ha_enabled") and not s.get("webhook_trade")}
                     for sym in list(_engines.keys()):
                         if sym not in active_syms:
                             del _engines[sym]

@@ -54,6 +54,7 @@ _MIGRATIONS = [
     "ALTER TABLE indicator_settings ADD COLUMN trailing_tp_rules TEXT NOT NULL DEFAULT '40:10,70:40,90:70,99:90'",
     "ALTER TABLE indicator_settings ADD COLUMN trailing_tp_flash_pct REAL NOT NULL DEFAULT 1.0",
     "ALTER TABLE indicator_settings ADD COLUMN market_entry INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE indicator_settings ADD COLUMN webhook_trade INTEGER NOT NULL DEFAULT 0",
 ]
 
 # Default ayarlar — yeni sembol eklendiginde kullanilir
@@ -79,6 +80,7 @@ DEFAULTS = {
     "trailing_tp_rules": "40:10,70:40,90:70,99:90",
     "trailing_tp_flash_pct": 1.0,
     "market_entry": 0,
+    "webhook_trade": 0,
 }
 
 

@@ -153,10 +153,10 @@ async def st_webhook(request: Request) -> JSONResponse:
     elif direction == "SHORT":
         direction = "SELL"
 
-    if direction not in ("BUY", "SELL"):
+    if direction not in ("BUY", "SELL", "CLOSE"):
         return JSONResponse(
             status_code=400,
-            content={"detail": f"Invalid signal/direction: {raw_direction}. Must be BUY or SELL."},
+            content={"detail": f"Invalid signal/direction: {raw_direction}. Must be BUY, SELL or CLOSE."},
         )
 
     price = _parse_price(payload.price)
@@ -239,59 +239,102 @@ async def st_webhook(request: Request) -> JSONResponse:
             "message": f"{symbol} haftasonu kapali (Cuma 20:00 - Pazar 24:00 TR)",
         })
 
-    # ── 6. Log signal ──────────────────────────────────
-    row_id = await log_st_signal(
-        dt=dt_str,
-        symbol=symbol,
-        direction=direction,
-        band=tf,
-        price=price,
-        entered=False,  # Webhook sadece loglar, trade ACMAZ (HA motor yapar)
-        source="webhook",
-        webhook_tp=webhook_tp,
-        webhook_sl=webhook_sl,
-    )
-
-    # ── 7. Webhook trade DEVRE DISI — tum islemler HA motordan acilir ──
-    # TradingView webhook artik sadece LOGLAMA yapar, trade ACMAZ.
-    # Islem acma: ha_signal_engine.py (HA Reversal + RSI Exit, 2 hesap ping-pong)
+    # ── 6. webhook_trade kontrolu ────────────────────────
+    webhook_trade_enabled = sym_cfg.get("webhook_trade", False)
     trade_dispatched = False
-    if False and settings.trading_enabled:  # DEVRE DISI
+
+    if webhook_trade_enabled and settings.trading_enabled:
+        # ── Webhook trade AKTIF — BUY/SELL/CLOSE islem ac/kapat ──
         import asyncio as _asyncio
-        from app.modules.trade_executor import execute_trade
-        from app.modules.binance_client import get_position_risk as _gpr, get_usdt_balance as _gub
-        from app.modules.signal_engine import get_engine as _get_engine
-        from app.modules.ha_signal_engine import get_ha_engine as _get_ha_engine
-
-        # Motoru trade_pending durumuna al — fill takibi icin gerekli
-        eng = _get_ha_engine(symbol) or _get_engine(symbol)
-        if eng:
-            eng.on_trade_pending()
-
-        # Pre-fetch: position + balance paralel cek (execute_trade beklemeden)
-        _prefetch = _asyncio.ensure_future(_asyncio.gather(_gpr(symbol), _gub()))
-        event_id = f"tv-{row_id}-{int(time.time())}"
-        _asyncio.create_task(execute_trade(
-            symbol=symbol,
-            signal=direction,
-            price=price,
-            event_id=event_id,
-            tf=tf,
-            prefetch=_prefetch,
-            webhook_tp=webhook_tp,
-            webhook_sl=webhook_sl,
-        ))
-        trade_dispatched = True
-        log.info(
-            "st_webhook_trade_dispatched",
-            symbol=symbol, direction=direction, price=price, tf=tf,
-            event_id=event_id, indicator=indicator,
+        from app.modules.binance_client import (
+            get_position_risk, place_market_order, cancel_all_open_orders,
+            get_total_wallet_balance, round_step_size,
         )
+        from app.modules.trade_executor import get_exchange_info_cached
+
+        row_id = await log_st_signal(
+            dt=dt_str, symbol=symbol, direction=direction, band=tf,
+            price=price, entered=True, source="webhook",
+            webhook_tp=webhook_tp, webhook_sl=webhook_sl,
+        )
+
+        try:
+            if direction == "CLOSE":
+                # Mevcut pozisyonu kapat
+                positions = await get_position_risk(symbol)
+                pos_amt = 0.0
+                for p in positions:
+                    if p.get("symbol") == symbol:
+                        pos_amt = float(p.get("positionAmt", 0))
+                        break
+                if pos_amt != 0:
+                    try:
+                        await cancel_all_open_orders(symbol)
+                    except Exception:
+                        pass
+                    close_side = "SELL" if pos_amt > 0 else "BUY"
+                    await place_market_order(symbol, close_side, abs(pos_amt), reduce_only=True)
+                    trade_dispatched = True
+                    log.info("webhook_close_executed", symbol=symbol, qty=abs(pos_amt))
+                else:
+                    log.info("webhook_close_no_position", symbol=symbol)
+
+            else:
+                # BUY veya SELL — pozisyon ac
+                # Ters pozisyon varsa once kapat
+                positions = await get_position_risk(symbol)
+                pos_amt = 0.0
+                for p in positions:
+                    if p.get("symbol") == symbol:
+                        pos_amt = float(p.get("positionAmt", 0))
+                        break
+
+                if pos_amt != 0:
+                    is_same = (pos_amt > 0 and direction == "BUY") or (pos_amt < 0 and direction == "SELL")
+                    if is_same:
+                        log.info("webhook_same_side_skip", symbol=symbol, direction=direction)
+                    else:
+                        # Ters pozisyon kapat
+                        try:
+                            await cancel_all_open_orders(symbol)
+                        except Exception:
+                            pass
+                        close_side = "SELL" if pos_amt > 0 else "BUY"
+                        await place_market_order(symbol, close_side, abs(pos_amt), reduce_only=True)
+                        log.info("webhook_reverse_closed", symbol=symbol, side=close_side)
+                        pos_amt = 0.0
+
+                if pos_amt == 0:
+                    # Yeni pozisyon ac
+                    balance = await get_total_wallet_balance()
+                    info = await get_exchange_info_cached(symbol)
+                    step_size = info["lotSize"]["stepSize"]
+                    min_qty = info["lotSize"]["minQty"]
+                    sym_weight = sym_cfg.get("weight", 0.10)
+                    usable = balance * sym_weight * 0.98
+                    raw_qty = usable / price
+                    quantity = round_step_size(raw_qty, step_size)
+
+                    if quantity >= min_qty:
+                        side = "BUY" if direction == "BUY" else "SELL"
+                        await place_market_order(symbol, side, quantity)
+                        trade_dispatched = True
+                        log.info("webhook_trade_opened", symbol=symbol, direction=direction,
+                                 price=price, qty=quantity)
+                    else:
+                        log.warning("webhook_qty_too_low", symbol=symbol, qty=quantity, min=min_qty)
+
+        except Exception as e:
+            log.error("webhook_trade_error", symbol=symbol, error=str(e))
+
     else:
-        log.info(
-            "st_webhook_trading_disabled",
-            symbol=symbol, direction=direction, price=price, tf=tf,
+        # Webhook trade devre disi — sadece logla
+        row_id = await log_st_signal(
+            dt=dt_str, symbol=symbol, direction=direction, band=tf,
+            price=price, entered=False, source="webhook",
+            webhook_tp=webhook_tp, webhook_sl=webhook_sl,
         )
+        log.info("st_webhook_logged_only", symbol=symbol, direction=direction, price=price)
 
     return JSONResponse(content={
         "status": "accepted",
