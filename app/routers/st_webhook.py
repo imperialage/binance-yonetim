@@ -305,22 +305,45 @@ async def st_webhook(request: Request) -> JSONResponse:
                         pos_amt = 0.0
 
                 if pos_amt == 0:
-                    # Yeni pozisyon ac
+                    # Yeni pozisyon ac (market order)
+                    from app.modules.binance_client import (
+                        place_stop_market_instant, round_price,
+                    )
+                    from app.modules.price_stream import get_live_price
+
                     balance = await get_total_wallet_balance()
                     info = await get_exchange_info_cached(symbol)
                     step_size = info["lotSize"]["stepSize"]
                     min_qty = info["lotSize"]["minQty"]
+                    tick_size = info["priceFilter"]["tickSize"]
                     sym_weight = sym_cfg.get("weight", 0.10)
+
+                    live_price = get_live_price(symbol) or price
                     usable = balance * sym_weight * 0.98
-                    raw_qty = usable / price
+                    raw_qty = usable / live_price
                     quantity = round_step_size(raw_qty, step_size)
 
                     if quantity >= min_qty:
                         side = "BUY" if direction == "BUY" else "SELL"
-                        await place_market_order(symbol, side, quantity)
+                        result = await place_market_order(symbol, side, quantity)
+                        fill_price = float(result.get("avgPrice", 0)) or live_price
                         trade_dispatched = True
                         log.info("webhook_trade_opened", symbol=symbol, direction=direction,
-                                 price=price, qty=quantity)
+                                 fill_price=fill_price, qty=quantity)
+
+                        # %3 Guvenlik SL
+                        sl_pct = sym_cfg.get("sl_pct", 3.0) / 100.0
+                        if direction == "BUY":
+                            sl_price = round_price(fill_price * (1 - sl_pct), tick_size)
+                            sl_side = "SELL"
+                        else:
+                            sl_price = round_price(fill_price * (1 + sl_pct), tick_size)
+                            sl_side = "BUY"
+                        try:
+                            await place_stop_market_instant(symbol, sl_side, quantity, sl_price)
+                            log.info("webhook_sl_placed", symbol=symbol, sl_price=sl_price)
+                        except Exception as sl_err:
+                            log.warning("webhook_sl_failed", symbol=symbol, error=str(sl_err))
                     else:
                         log.warning("webhook_qty_too_low", symbol=symbol, qty=quantity, min=min_qty)
 
