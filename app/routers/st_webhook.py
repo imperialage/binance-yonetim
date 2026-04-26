@@ -254,7 +254,7 @@ async def st_webhook(request: Request) -> JSONResponse:
 
         row_id = await log_st_signal(
             dt=dt_str, symbol=symbol, direction=direction, band=tf,
-            price=price, entered=True, source="webhook",
+            price=price, entered=False, source="webhook",
             webhook_tp=webhook_tp, webhook_sl=webhook_sl,
         )
 
@@ -348,7 +348,9 @@ async def st_webhook(request: Request) -> JSONResponse:
                         log.warning("webhook_qty_too_low", symbol=symbol, qty=quantity, min=min_qty)
 
         except Exception as e:
-            log.error("webhook_trade_error", symbol=symbol, error=str(e))
+            log.error("webhook_trade_error", symbol=symbol, direction=direction, error=str(e))
+            import traceback
+            log.error("webhook_trade_traceback", tb=traceback.format_exc())
 
     else:
         # Webhook trade devre disi — sadece logla
