@@ -311,25 +311,8 @@ async def _process_auto_signal(symbol: str, signal_row: dict, interval: str) -> 
         trading_enabled=settings.trading_enabled,
     )
 
-    # ── 4. İşlem tetikle (trading_enabled ise) ──
-    if settings.trading_enabled:
-        from app.config import get_symbol_config
-        sym_cfg = get_symbol_config(symbol)
-
-        event_id = f"auto-{row_id}-{candle_close_ts}"
-        tf = settings.trading_timeframes.split(",")[0].strip() or "5m"
-        asyncio.create_task(execute_trade(
-            symbol=symbol,
-            signal=direction,
-            price=price,
-            event_id=event_id,
-            tf=tf,
-            tp_pct=sym_cfg.get("tp_pct"),
-            sl_pct=sym_cfg.get("sl_pct"),
-        ))
-        await log.ainfo("auto_trade_dispatched", symbol=symbol, direction=direction, price=price)
-    else:
-        await log.ainfo("auto_trade_skipped_disabled", symbol=symbol, direction=direction)
+    # ── 4. İşlem tetikle — DEVRE DISI (HA motor veya webhook kullaniliyor) ──
+    pass
 
 
 def _find_latest_signal(rows: list[dict]) -> dict | None:
@@ -679,27 +662,8 @@ async def _check_divergence_signal(symbol: str, interval: str, cfg: dict) -> Non
         entry_price = signal.entry_price
         dt_str = signal.candle_b.get("date", "")
 
-        # 5. Sinyal logla
-        from app.modules.st_signal_logger import log_st_signal
-        row_id = await log_st_signal(
-            dt=dt_str,
-            symbol=symbol,
-            direction=direction,
-            band=f"DIV:A_RSI={signal.rsi_a:.0f}→B_RSI={signal.rsi_b:.0f}",
-            price=entry_price,
-            entered=True,
-        )
-
-        await log.ainfo(
-            "divergence_trade_signal",
-            symbol=symbol,
-            direction=direction,
-            entry_price=entry_price,
-            rsi_a=signal.rsi_a,
-            rsi_b=signal.rsi_b,
-            gap=signal.gap,
-            signal_id=row_id,
-        )
+        # Divergence trade DEVRE DISI — HA motor veya webhook kullaniliyor
+        return
 
         # 6. Limit order ile islem ac
         from app.modules.divergence_executor import execute_divergence_trade
