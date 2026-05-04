@@ -243,6 +243,11 @@ async def st_webhook(request: Request) -> JSONResponse:
     webhook_trade_enabled = sym_cfg.get("webhook_trade", False)
     trade_dispatched = False
 
+    log.info("webhook_trade_check", symbol=symbol, direction=direction,
+             webhook_trade=webhook_trade_enabled,
+             trading_enabled=settings.trading_enabled,
+             will_trade=bool(webhook_trade_enabled and settings.trading_enabled))
+
     if webhook_trade_enabled and settings.trading_enabled:
         # ── Webhook trade AKTIF — BUY/SELL/CLOSE islem ac/kapat ──
         import asyncio as _asyncio
