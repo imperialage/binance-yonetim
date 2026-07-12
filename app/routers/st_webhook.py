@@ -312,7 +312,9 @@ async def st_webhook(request: Request) -> JSONResponse:
                 if pos_amt == 0:
                     # Yeni pozisyon ac (market order)
                     from app.modules.binance_client import (
-                        place_stop_market_instant, round_price,
+                        place_stop_market_instant,
+                        place_take_profit_market_order,
+                        round_price,
                     )
                     from app.modules.price_stream import get_live_price
 
@@ -336,19 +338,34 @@ async def st_webhook(request: Request) -> JSONResponse:
                         log.info("webhook_trade_opened", symbol=symbol, direction=direction,
                                  fill_price=fill_price, qty=quantity)
 
-                        # %3 Guvenlik SL
-                        sl_pct = sym_cfg.get("sl_pct", 3.0) / 100.0
-                        if direction == "BUY":
-                            sl_price = round_price(fill_price * (1 - sl_pct), tick_size)
-                            sl_side = "SELL"
+                        # SL yerlestir — webhook'tan gelen mutlak fiyat oncelikli
+                        # (indikatorun label'da gosterdigi ideal seviye).
+                        # Yoksa config sl_pct fallback (fill_price'a gore hesap).
+                        sl_side = "SELL" if direction == "BUY" else "BUY"
+                        if webhook_sl is not None and webhook_sl > 0:
+                            sl_price = round_price(webhook_sl, tick_size)
+                            sl_source = "webhook"
                         else:
-                            sl_price = round_price(fill_price * (1 + sl_pct), tick_size)
-                            sl_side = "BUY"
+                            sl_pct = sym_cfg.get("sl_pct", 3.0) / 100.0
+                            raw_sl = fill_price * (1 - sl_pct) if direction == "BUY" else fill_price * (1 + sl_pct)
+                            sl_price = round_price(raw_sl, tick_size)
+                            sl_source = "config"
                         try:
                             await place_stop_market_instant(symbol, sl_side, quantity, sl_price)
-                            log.info("webhook_sl_placed", symbol=symbol, sl_price=sl_price)
+                            log.info("webhook_sl_placed", symbol=symbol, sl_price=sl_price, source=sl_source)
                         except Exception as sl_err:
                             log.warning("webhook_sl_failed", symbol=symbol, error=str(sl_err))
+
+                        # TP yerlestir — SADECE webhook'tan geldiyse (config'te
+                        # webhook TP yok, indikator alert'i ile gelmezse TP koyulmaz).
+                        if webhook_tp is not None and webhook_tp > 0:
+                            tp_side = "SELL" if direction == "BUY" else "BUY"
+                            tp_price = round_price(webhook_tp, tick_size)
+                            try:
+                                await place_take_profit_market_order(symbol, tp_side, quantity, tp_price)
+                                log.info("webhook_tp_placed", symbol=symbol, tp_price=tp_price, source="webhook")
+                            except Exception as tp_err:
+                                log.warning("webhook_tp_failed", symbol=symbol, error=str(tp_err))
                     else:
                         log.warning("webhook_qty_too_low", symbol=symbol, qty=quantity, min=min_qty)
 
