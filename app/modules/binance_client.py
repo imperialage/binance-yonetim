@@ -664,12 +664,19 @@ async def get_algo_orders_history(
     all_orders: list[dict] = []
 
     # Open algo orders
+    # NOT: Binance 2025-12'de algo endpoint'ini migrate etti; eski path
+    # `/fapi/v1/algoOrder/openOrders` artik 404 donuyor. Dogru path:
+    # `/fapi/v1/openAlgoOrders`. Response schema da list-of-orders direkt
+    # (data.orders sarmayan).
     try:
         params = _sign({"symbol": symbol})
-        resp = await client.get("/fapi/v1/algoOrder/openOrders", params=params)
+        resp = await client.get("/fapi/v1/openAlgoOrders", params=params)
         _raise_for_binance(resp)
         data = resp.json()
-        all_orders.extend(data.get("orders", []) if isinstance(data, dict) else [])
+        if isinstance(data, list):
+            all_orders.extend(data)
+        elif isinstance(data, dict):
+            all_orders.extend(data.get("orders", []))
     except Exception:
         pass
 
