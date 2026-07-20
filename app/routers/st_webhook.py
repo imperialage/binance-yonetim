@@ -32,12 +32,25 @@ _DEDUPE_WINDOW = 300  # 5 dakika icinde ayni sinyal tekrar gelirse reddet
 class STWebhookPayload(BaseModel):
     """TradingView AlgoAlpha SuperTrend webhook payload.
 
-    Hem eski format (signal/ts) hem yeni format (direction/time) kabul eder.
+    Uc format destekler:
+      1) Eski (signal/ts): BUY/SELL/CLOSE market — mevcut motorun kabul ettigi
+      2) Yeni (direction/time): aynı, alternatif alan isimleri
+      3) v3 (action=...): PLACE_LIMIT / CANCEL / PLACE_SL — LIMIT bazli akis
+
+    price alani sadece market ve LIMIT icin zorunlu. PLACE_SL / CANCEL i̇çin
+    opsiyonel — handler tarafinda action bazli validate edilir.
     """
 
     secret: str
     symbol: str = Field(examples=["ETHUSDT", "BINANCE:ETHUSDT"])
-    price: float | str
+    price: float | str | None = Field(default=None, description="LIMIT / MARKET emir fiyati. PLACE_SL i̇çin gerek yok.")
+
+    # v3 action tabanli akis (opsiyonel — yoksa signal/direction backward compat)
+    action: str | None = Field(default=None, description="PLACE_LIMIT / CANCEL / PLACE_SL (v3). Yoksa signal/direction eski akis.")
+    side: str | None = Field(default=None, description="PLACE_LIMIT: BUY/SELL. PLACE_SL: kapatma yonu (LONG poz i̇çin SELL, SHORT poz i̇çin BUY).")
+    stop_price: float | str | None = Field(default=None, description="PLACE_SL i̇çin SL tetik fiyati (mutlak).")
+    bar_id: str | None = Field(default=None, description="Pine barin acilis time (ms) — dedupe i̇çin.")
+    reason: str | None = Field(default=None, description="CANCEL nedeni (log/audit) — ornek: htf_flip, manual.")
 
     # Eski format (mevcut alert'ler)
     signal: str | None = Field(default=None, description="BUY or SELL (eski format)")
@@ -50,7 +63,7 @@ class STWebhookPayload(BaseModel):
 
     # Webhook TP/SL (Pine Script'ten gelen mutlak fiyat degerleri)
     tp: float | str | None = Field(default=None, description="Take profit price from Pine Script")
-    sl: float | str | None = Field(default=None, description="Stop loss price from Pine Script")
+    sl: float | str | None = Field(default=None, description="Stop loss price from Pine Script (eski BUY/SELL akisi i̇çin)")
 
     # Ortak
     tf: str | None = Field(default=None, description="Timeframe: 5, 5m, 15m, 1h, etc.")
@@ -143,6 +156,19 @@ async def st_webhook(request: Request) -> JSONResponse:
 
     # ── 2. Normalize ───────────────────────────────────
     symbol = normalize_symbol(payload.symbol)
+
+    # ── v3 action dispatch (PLACE_LIMIT / CANCEL / PLACE_SL) ───────────
+    # Pine v3 indikatoru action= alaniyla LIMIT bazli akis kullanir.
+    # Eski BUY/SELL/CLOSE market akisi bozulmadan altta devam eder.
+    action_v3 = (payload.action or "").strip().upper()
+    if action_v3 in ("PLACE_LIMIT", "CANCEL", "PLACE_SL"):
+        indicator_v3 = payload.indicator or "webhook_v3"
+        if action_v3 == "PLACE_LIMIT":
+            return await _handle_place_limit(payload, symbol, indicator_v3)
+        if action_v3 == "CANCEL":
+            return await _handle_cancel(payload, symbol, indicator_v3)
+        if action_v3 == "PLACE_SL":
+            return await _handle_place_sl(payload, symbol, indicator_v3)
 
     # direction: "signal" (eski) veya "direction" (yeni) alanini oku
     raw_direction = payload.signal or payload.direction or ""
@@ -394,3 +420,359 @@ async def st_webhook(request: Request) -> JSONResponse:
         "trade_dispatched": trade_dispatched,
         "trading_enabled": settings.trading_enabled,
     })
+
+
+# ════════════════════════════════════════════════════════════════════
+# v3 ACTION HANDLERS — PLACE_LIMIT / CANCEL / PLACE_SL
+# ════════════════════════════════════════════════════════════════════
+# Pine v3 indikatoru LIMIT bazli akis icin action= alanini kullanir.
+# Backend burada 3 action'u handler ile isler; eski BUY/SELL/CLOSE
+# market akisi yukaridaki ana handler'da devam eder (backward compat).
+#
+# Akis:
+#   PLACE_LIMIT (bar basinda) -> eski pending emri iptal + yeni LIMIT emir + TP fill-sonrasi konur
+#   CANCEL (HTF flip)         -> mevcut pending LIMIT emri iptal, Redis temizle
+#   PLACE_SL (fill+bar close) -> pozisyon dogrula + STOP_MARKET algo emri
+#
+# State: Redis (app.modules.webhook_order_tracker)
+# Fill tespiti: order_stream.py user-data WS -> webhook_order_tracker.handle_fill_event
+# ════════════════════════════════════════════════════════════════════
+
+
+async def _handle_place_limit(payload: STWebhookPayload, symbol: str, indicator: str) -> JSONResponse:
+    """PLACE_LIMIT: bar basinda gelen limit emir talebi.
+
+    Akis:
+      1. Sembol config kontrolu (listening, weekend_closed, webhook_trade)
+      2. Bar_id dedupe (Redis'te ayni bar_id varsa skip)
+      3. Mevcut pending order varsa iptal et
+      4. Pozisyon zaten varsa skip (poz kapanana kadar yeni LIMIT koyulmaz)
+      5. Balance * weight * 0.98 / price -> qty (step_size + min_notional)
+      6. place_limit_order + Redis'e pending kaydet (fill event'i bekle)
+    """
+    from app.modules import webhook_order_tracker as tracker
+    from app.modules.binance_client import (
+        cancel_order, get_position_risk, get_total_wallet_balance, place_limit_order,
+        round_price, round_step_size,
+    )
+    from app.modules.indicator_settings_store import get_settings_or_defaults
+    from app.modules.trade_executor import get_exchange_info_cached
+
+    side = (payload.side or "").strip().upper()
+    if side not in ("BUY", "SELL"):
+        return JSONResponse(status_code=400, content={"detail": f"PLACE_LIMIT side gecersiz: {side}"})
+
+    price = _parse_price(payload.price)
+    if price is None or price <= 0:
+        return JSONResponse(status_code=400, content={"detail": f"PLACE_LIMIT price gecersiz: {payload.price}"})
+
+    webhook_tp = _parse_price(payload.tp) if payload.tp else None
+    bar_id = payload.bar_id or str(int(time.time() * 1000))
+
+    # Config kontrolleri
+    sym_cfg = await get_settings_or_defaults(symbol)
+    if not sym_cfg.get("listening", True):
+        log.info("place_limit_listening_off", symbol=symbol)
+        return JSONResponse(content={"status": "listening_off", "symbol": symbol})
+    if not sym_cfg.get("webhook_trade", False):
+        log.info("place_limit_webhook_trade_off", symbol=symbol)
+        return JSONResponse(content={"status": "webhook_trade_off", "symbol": symbol})
+    if not settings.trading_enabled:
+        log.info("place_limit_trading_disabled", symbol=symbol)
+        return JSONResponse(content={"status": "trading_disabled", "symbol": symbol})
+
+    # Weekend kontrol
+    now_ist = datetime.now(_TZ_IST)
+    if sym_cfg.get("weekend_closed", False) and (
+        (now_ist.weekday() == 4 and now_ist.hour >= 20)
+        or now_ist.weekday() == 5
+        or now_ist.weekday() == 6
+    ):
+        return JSONResponse(content={"status": "weekend_closed", "symbol": symbol})
+
+    # Bar_id dedupe: ayni bar için 2. PLACE_LIMIT gelmisse skip
+    existing = await tracker.get_pending_limit(symbol)
+    if existing is not None and str(existing.get("bar_id")) == str(bar_id) and existing.get("side") == side:
+        # Ayni bar + ayni yon + ayni fiyat -> gerekmiyor, skip
+        if abs(float(existing.get("price", 0)) - price) < 1e-8:
+            log.info("place_limit_duplicate_bar", symbol=symbol, bar_id=bar_id)
+            return JSONResponse(content={"status": "duplicate_bar", "symbol": symbol, "bar_id": bar_id})
+
+    # Pozisyon zaten varsa yeni LIMIT koyma (fill sonrasi tekrar tekrar geliyorsa Pine state=1 -> skip beklenir)
+    positions = await get_position_risk(symbol)
+    pos_amt = 0.0
+    for p in positions:
+        if p.get("symbol") == symbol:
+            pos_amt = float(p.get("positionAmt", 0))
+            break
+    if pos_amt != 0:
+        log.info("place_limit_position_exists_skip", symbol=symbol, pos_amt=pos_amt)
+        return JSONResponse(content={"status": "position_exists", "symbol": symbol, "pos_amt": pos_amt})
+
+    # Mevcut pending order varsa iptal
+    if existing is not None:
+        old_order_id = existing.get("orderId")
+        if old_order_id:
+            try:
+                await cancel_order(symbol, int(old_order_id))
+                log.info("place_limit_cancelled_previous", symbol=symbol, order_id=old_order_id)
+            except Exception as e:
+                # -2011 (unknown order) benign — muhtemelen zaten fill/cancel oldu
+                msg = str(e).lower()
+                if "-2011" in msg or "unknown order" in msg or "does not exist" in msg:
+                    log.info("place_limit_previous_already_gone", symbol=symbol, order_id=old_order_id)
+                else:
+                    log.warning("place_limit_cancel_previous_failed", symbol=symbol, order_id=old_order_id, error=str(e))
+        await tracker.clear_pending_limit(symbol)
+
+    # Qty hesabi
+    balance = await get_total_wallet_balance()
+    info = await get_exchange_info_cached(symbol)
+    step_size = info["lotSize"]["stepSize"]
+    min_qty = float(info["lotSize"]["minQty"])
+    tick_size = info["priceFilter"]["tickSize"]
+    min_notional = float(info.get("minNotional", {}).get("notional", 5))
+    sym_weight = sym_cfg.get("weight", 0.10)
+
+    usable = balance * sym_weight * 0.98
+    raw_qty = usable / price if price > 0 else 0.0
+    quantity = round_step_size(raw_qty, step_size)
+
+    if quantity < min_qty:
+        log.warning("place_limit_qty_too_low", symbol=symbol, qty=quantity, min=min_qty)
+        return JSONResponse(status_code=400, content={"status": "qty_too_low", "qty": quantity, "min_qty": min_qty})
+    if float(quantity) * price < min_notional:
+        log.warning("place_limit_notional_too_low", symbol=symbol,
+                    notional=float(quantity) * price, min=min_notional)
+        return JSONResponse(status_code=400, content={
+            "status": "notional_too_low",
+            "notional": float(quantity) * price,
+            "min_notional": min_notional,
+        })
+
+    # Fiyat quantize (tick_size)
+    limit_price = round_price(price, tick_size)
+
+    # clientOrderId prefix "wh-" — fill event handler bu prefix'e bakarak webhook order oldugunu anlar
+    client_order_id = f"wh-{int(time.time() * 1000)}"[:36]
+
+    try:
+        result = await place_limit_order(symbol, side, float(quantity), float(limit_price))
+        order_id = result.get("orderId")
+        log.info("place_limit_placed", symbol=symbol, side=side, price=limit_price,
+                 qty=quantity, order_id=order_id, tp=webhook_tp)
+    except Exception as e:
+        log.error("place_limit_failed", symbol=symbol, side=side, error=str(e))
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
+
+    # Redis'e pending kaydet (fill event bekleyecek)
+    await tracker.set_pending_limit(
+        symbol,
+        order_id=order_id or 0,
+        client_order_id=client_order_id,
+        side=side,
+        price=float(limit_price),
+        tp=webhook_tp,
+        qty=float(quantity),
+        bar_id=bar_id,
+    )
+
+    return JSONResponse(content={
+        "status": "placed",
+        "action": "PLACE_LIMIT",
+        "symbol": symbol,
+        "side": side,
+        "price": float(limit_price),
+        "qty": float(quantity),
+        "tp": webhook_tp,
+        "order_id": order_id,
+        "bar_id": bar_id,
+    })
+
+
+async def _handle_cancel(payload: STWebhookPayload, symbol: str, indicator: str) -> JSONResponse:
+    """CANCEL: HTF flip'te bekleyen LIMIT emri iptal.
+
+    Redis'ten pending order al, Binance'ta iptal, Redis'i temizle.
+    """
+    from app.modules import webhook_order_tracker as tracker
+    from app.modules.binance_client import cancel_order
+
+    reason = (payload.reason or "unknown").strip()
+
+    existing = await tracker.get_pending_limit(symbol)
+    if existing is None:
+        log.info("cancel_no_pending", symbol=symbol)
+        return JSONResponse(content={"status": "no_pending", "symbol": symbol})
+
+    order_id = existing.get("orderId")
+    if not order_id:
+        await tracker.clear_pending_limit(symbol)
+        return JSONResponse(content={"status": "cleared_no_orderid", "symbol": symbol})
+
+    try:
+        await cancel_order(symbol, int(order_id))
+        log.info("cancel_ok", symbol=symbol, order_id=order_id, reason=reason)
+        result_status = "cancelled"
+    except Exception as e:
+        msg = str(e).lower()
+        if "-2011" in msg or "unknown order" in msg or "does not exist" in msg:
+            # Binance'ta yok — muhtemelen fill oldu ya da zaten iptal
+            log.info("cancel_already_gone", symbol=symbol, order_id=order_id, reason=reason)
+            result_status = "already_gone"
+        else:
+            log.warning("cancel_failed", symbol=symbol, order_id=order_id, error=str(e))
+            # Redis'i temizleme — sonraki PLACE_LIMIT tekrar deneyecek
+            return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
+
+    await tracker.clear_pending_limit(symbol)
+    return JSONResponse(content={
+        "status": result_status,
+        "action": "CANCEL",
+        "symbol": symbol,
+        "order_id": order_id,
+        "reason": reason,
+    })
+
+
+async def _handle_place_sl(payload: STWebhookPayload, symbol: str, indicator: str) -> JSONResponse:
+    """PLACE_SL: fill olan mumun kapanisinda backend'e SL koy.
+
+    Pine v3 fill'den sonra ilk bar kapanisinda bu alert'i atar.
+    Idempotency: Redis flag ile ayni poz i̇çin 2. PLACE_SL skip.
+    Poz varligini dogrular, sonra STOP_MARKET algo emri koyar.
+    """
+    from app.modules import webhook_order_tracker as tracker
+    from app.modules.binance_client import (
+        get_position_risk, place_stop_market_instant, round_price,
+    )
+    from app.modules.trade_executor import get_exchange_info_cached
+
+    side = (payload.side or "").strip().upper()
+    if side not in ("BUY", "SELL"):
+        return JSONResponse(status_code=400, content={"detail": f"PLACE_SL side gecersiz: {side}"})
+
+    stop_price = _parse_price(payload.stop_price)
+    if stop_price is None or stop_price <= 0:
+        return JSONResponse(status_code=400, content={"detail": f"PLACE_SL stop_price gecersiz: {payload.stop_price}"})
+
+    # Idempotency — ayni poz için ikinci PLACE_SL
+    if await tracker.is_sl_placed(symbol):
+        log.info("place_sl_already_placed", symbol=symbol)
+        return JSONResponse(content={"status": "already_placed", "symbol": symbol})
+
+    # Pozisyon var mi
+    positions = await get_position_risk(symbol)
+    pos_amt = 0.0
+    for p in positions:
+        if p.get("symbol") == symbol:
+            pos_amt = float(p.get("positionAmt", 0))
+            break
+    if pos_amt == 0:
+        log.warning("place_sl_no_position", symbol=symbol)
+        return JSONResponse(content={"status": "no_position", "symbol": symbol})
+
+    # Yon sanity check: LONG poz (positionAmt>0) i̇çin SL kapatma yonu SELL,
+    # SHORT poz (<0) i̇çin BUY olmali.
+    expected_side = "SELL" if pos_amt > 0 else "BUY"
+    if side != expected_side:
+        log.warning("place_sl_side_mismatch", symbol=symbol, pos_amt=pos_amt,
+                    got=side, expected=expected_side)
+        # Yine de expected_side ile devam et — Pine tarafi hatasi olabilir, poz gercektir
+        side = expected_side
+
+    # Tick round
+    info = await get_exchange_info_cached(symbol)
+    tick_size = info["priceFilter"]["tickSize"]
+    stop_px = round_price(stop_price, tick_size)
+    qty = abs(pos_amt)
+
+    try:
+        await place_stop_market_instant(symbol, side, qty, float(stop_px))
+        await tracker.mark_sl_placed(symbol)
+        log.info("place_sl_ok", symbol=symbol, side=side, stop_price=stop_px, qty=qty)
+        return JSONResponse(content={
+            "status": "placed",
+            "action": "PLACE_SL",
+            "symbol": symbol,
+            "side": side,
+            "stop_price": float(stop_px),
+            "qty": qty,
+        })
+    except Exception as e:
+        log.error("place_sl_failed", symbol=symbol, error=str(e))
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
+
+
+# ════════════════════════════════════════════════════════════════════
+# FILL EVENT HANDLER — order_stream.py cagirir
+# ════════════════════════════════════════════════════════════════════
+
+async def handle_fill_event(order: dict) -> None:
+    """LIMIT fill oldugunda backend TP algo emrini koyar.
+
+    order_stream.py ORDER_TRADE_UPDATE event'inde clientOrderId "wh-"
+    prefix'i ile filtreleyerek burayi cagirir.
+
+    Fill isleme:
+      1. clientOrderId "wh-" prefix mi? Degilse skip.
+      2. Redis'ten pending order al — orderId match mi?
+      3. TP fiyati varsa TAKE_PROFIT_MARKET algo emri koy.
+      4. Pending order'i sil (fill tamamlandi).
+      5. SL flag = FALSE (bar close'ta Pine PLACE_SL alert'i gelecek).
+
+    Pozisyon kapanisinda (reduceOnly veya positionAmt=0) tum state temizlenir.
+    """
+    from app.modules import webhook_order_tracker as tracker
+    from app.modules.binance_client import place_take_profit_market_order
+
+    client_order_id = str(order.get("c", ""))
+    symbol = order.get("s", "")
+    status = order.get("X", "")
+    order_type = order.get("ot", "")
+    reduce_only = bool(order.get("R", False))
+
+    if not symbol:
+        return
+
+    # Kapanış eventi (SL veya TP algo tetigi) — Redis state'i temizle
+    if reduce_only and status == "FILLED":
+        await tracker.clear_all_state(symbol)
+        log.info("webhook_fill_close_state_cleared", symbol=symbol, order_type=order_type)
+        return
+
+    # Sadece webhook LIMIT fill'lerini isle
+    if not client_order_id.startswith("wh-"):
+        return
+    if status != "FILLED":
+        return
+    if order_type not in ("LIMIT", ""):
+        return
+
+    pending = await tracker.get_pending_limit(symbol)
+    if pending is None:
+        log.warning("webhook_fill_no_pending_state", symbol=symbol, client_order_id=client_order_id)
+        return
+
+    # Fill bilgileri
+    filled_qty = float(order.get("z", 0) or order.get("q", 0))  # 'z' = cumulative filled qty
+    avg_price = float(order.get("ap", 0))
+    tp_price = pending.get("tp")
+    side = str(pending.get("side", "")).upper()
+    close_side = "SELL" if side == "BUY" else "BUY"
+
+    log.info("webhook_fill_detected", symbol=symbol, side=side, avg_price=avg_price,
+             qty=filled_qty, client_order_id=client_order_id)
+
+    # TP algo emri (varsa)
+    if tp_price is not None and tp_price > 0:
+        try:
+            await place_take_profit_market_order(symbol, close_side, filled_qty, float(tp_price))
+            log.info("webhook_tp_placed_on_fill", symbol=symbol, tp_price=tp_price, source="webhook_v3")
+        except Exception as e:
+            log.error("webhook_tp_place_failed_on_fill", symbol=symbol, error=str(e))
+    else:
+        log.info("webhook_no_tp_in_pending", symbol=symbol)
+
+    # Pending'i temizle (fill tamamlandi). SL flag DOKUNMA — bar close'ta Pine PLACE_SL gelecek.
+    await tracker.clear_pending_limit(symbol)

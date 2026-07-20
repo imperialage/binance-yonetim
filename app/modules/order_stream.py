@@ -119,6 +119,16 @@ async def _handle_event(data: dict[str, Any]) -> None:
             except Exception as e:
                 await log.aerror("fill_callback_error", symbol=symbol, error=str(e))
 
+        # v3 webhook fill hook — clientOrderId "wh-" prefix ise TP algo emri
+        # koy, pozisyon kapanisinda Redis state'i temizle. Silent-fail: hata
+        # varsa loglar ama mevcut engine akisini bozmaz.
+        if status == "FILLED":
+            try:
+                from app.routers.st_webhook import handle_fill_event as wh_fill
+                await wh_fill(order)
+            except Exception as e:
+                await log.awarning("webhook_fill_hook_error", symbol=symbol, error=str(e))
+
         # FILLED event → signal_engine'e bildir (pozisyon acildi/kapandi)
         # HA engine sembollerinde MUDAHALE ETME — HA motor kendi _account_state'ini yonetiyor
         if status == "FILLED":
