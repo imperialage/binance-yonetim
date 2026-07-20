@@ -727,6 +727,7 @@ async def handle_fill_event(order: dict) -> None:
     from app.modules.binance_client import place_take_profit_market_order
 
     client_order_id = str(order.get("c", ""))
+    order_id = str(order.get("i", ""))
     symbol = order.get("s", "")
     status = order.get("X", "")
     order_type = order.get("ot", "")
@@ -741,17 +742,24 @@ async def handle_fill_event(order: dict) -> None:
         log.info("webhook_fill_close_state_cleared", symbol=symbol, order_type=order_type)
         return
 
-    # Sadece webhook LIMIT fill'lerini isle
-    if not client_order_id.startswith("wh-"):
-        return
+    # Sadece FILLED LIMIT emirlerini isle
     if status != "FILLED":
         return
     if order_type not in ("LIMIT", ""):
         return
 
+    # Match via orderId: bizim koydugumuz emir Redis'te. clientOrderId prefix
+    # yerine orderId lookup — place_limit_order client_order_id kabul etmiyor,
+    # Binance kendi ID'sini uretir.
     pending = await tracker.get_pending_limit(symbol)
     if pending is None:
-        log.warning("webhook_fill_no_pending_state", symbol=symbol, client_order_id=client_order_id)
+        # Baska bir emir (motor, HA engine vb.) — bize ait degil
+        return
+    pending_order_id = str(pending.get("orderId", ""))
+    if pending_order_id != order_id:
+        # Redis'teki pending baska bir order — bu fill bize ait degil
+        log.debug("webhook_fill_orderid_mismatch", symbol=symbol,
+                  fill_order_id=order_id, pending_order_id=pending_order_id)
         return
 
     # Fill bilgileri
