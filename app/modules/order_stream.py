@@ -85,6 +85,10 @@ async def _handle_event(data: dict[str, Any]) -> None:
     """USER_DATA stream event isleme."""
     event_type = data.get("e", "")
 
+    # DEBUG: hangi event tipleri geliyor gormek icin (WS diagnosis)
+    await log.ainfo("ws_message_received", event_type=event_type,
+                    has_o=bool(data.get("o")), has_a=bool(data.get("a")))
+
     if event_type == "ORDER_TRADE_UPDATE":
         order = data.get("o", {})
         symbol = order.get("s", "")
@@ -204,7 +208,10 @@ async def _stream_loop() -> None:
 
                 last_renew = time.time()
 
-                async with websockets.connect(ws_url, ping_interval=60) as ws:
+                # ping_interval=20 (Binance user-data best practice — 60 idi ama
+                # Binance server 60sn timeout yapabildigi icin race olusuyordu,
+                # WS bagli goruyorduk ama session sunucuda expire olmustu).
+                async with websockets.connect(ws_url, ping_interval=20, ping_timeout=10) as ws:
                     while True:
                         # ListenKey yenileme kontrolu
                         if time.time() - last_renew > LISTEN_KEY_RENEW_INTERVAL:
