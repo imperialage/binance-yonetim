@@ -291,6 +291,13 @@ async def _poll_positions() -> None:
                     break
 
             if pos_amt == 0:
+                # Poz kapanmis — orphan algo emri (SL veya TP) varsa iptal et
+                try:
+                    from app.modules.binance_client import cancel_all_open_orders
+                    await cancel_all_open_orders(symbol)
+                except Exception as e:
+                    await log.awarning("poller_cancel_orphan_failed",
+                                       symbol=symbol, error=str(e))
                 await log.ainfo("poller_position_closed_cleanup", symbol=symbol)
                 await tracker.clear_all_state(symbol)
         except Exception as e:

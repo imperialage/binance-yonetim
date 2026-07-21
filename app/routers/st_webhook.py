@@ -737,8 +737,15 @@ async def handle_fill_event(order: dict) -> None:
     if not symbol:
         return
 
-    # Kapanış eventi (SL veya TP algo tetigi) — Redis state'i temizle
+    # Kapanış eventi (SL veya TP algo tetigi) — orphan algo temizle + Redis
     if reduce_only and status == "FILLED":
+        # KRITIK: SL tetiklenirse Binance'ta kalan TP algo emri (veya tersi)
+        # orphan kalir. cancel_all_open_orders hem klasik hem algo iptal eder.
+        try:
+            from app.modules.binance_client import cancel_all_open_orders
+            await cancel_all_open_orders(symbol)
+        except Exception as e:
+            log.warning("webhook_fill_cancel_orphan_failed", symbol=symbol, error=str(e))
         await tracker.clear_all_state(symbol)
         log.info("webhook_fill_close_state_cleared", symbol=symbol, order_type=order_type)
         return
