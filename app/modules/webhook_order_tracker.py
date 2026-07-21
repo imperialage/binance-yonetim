@@ -71,8 +71,14 @@ async def set_pending_limit(
     tp: float | None,
     qty: float,
     bar_id: str,
+    tf: str = "",
 ) -> None:
-    """Yeni bekleyen LIMIT emir bilgisini kaydet (fill event beklenene kadar)."""
+    """Yeni bekleyen LIMIT emir bilgisini kaydet (fill event beklenene kadar).
+
+    tf: Pine indikator TF (ornek: "15", "60", "5m", "1h"). Poller bar close
+    zamanini hesaplamak icin kullanir — TF'e gore bar close'a yaklastigi anda
+    Binance'a order status sorusu atar.
+    """
     payload = {
         "orderId": str(order_id),
         "clientOrderId": client_order_id,
@@ -81,6 +87,7 @@ async def set_pending_limit(
         "tp": float(tp) if tp is not None else None,
         "qty": float(qty),
         "bar_id": str(bar_id),
+        "tf": str(tf),
         "placed_at": int(time.time()),
     }
     try:

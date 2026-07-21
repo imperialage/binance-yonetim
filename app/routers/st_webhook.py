@@ -575,6 +575,7 @@ async def _handle_place_limit(payload: STWebhookPayload, symbol: str, indicator:
         tp=webhook_tp,
         qty=float(quantity),
         bar_id=bar_id,
+        tf=str(payload.tf or ""),
     )
 
     return JSONResponse(content={

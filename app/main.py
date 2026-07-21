@@ -31,6 +31,7 @@ from app.modules.pine_live_store import init_pine_live_db, close_pine_live_db
 from app.modules.pine_live_engine import start_pine_live_engine, stop_pine_live_engine
 from app.modules.order_stream import start_order_stream, stop_order_stream
 from app.modules.signal_engine import start_signal_engines, stop_signal_engines
+from app.modules.webhook_order_poller import start_webhook_poller, stop_webhook_poller
 from app.routers import admin, backtest, chart, data_collector, events, latest, status, webhook, ws
 from app.routers import st_webhook, indicator_settings, strategy_report
 from app.utils.logging import get_logger, setup_logging
@@ -55,6 +56,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     start_st_stats_updater()
     start_price_stream()
     start_order_stream()
+    try:
+        start_webhook_poller()
+    except Exception as _e:
+        log.error("startup_webhook_poller_failed", error=str(_e))
     try:
         start_signal_engines()
     except Exception as _e:
@@ -87,6 +92,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await stop_ha_engine_loop()
     await stop_signal_engines()
     await stop_order_stream()
+    try:
+        await stop_webhook_poller()
+    except Exception:
+        pass
     await stop_price_stream()
     await stop_all_collections()
     await stop_st_stats_updater()
