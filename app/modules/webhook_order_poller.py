@@ -1,19 +1,23 @@
-"""Webhook order poller — TF-aware bar close REST fallback.
+"""Webhook order fill watcher — PRICE-BASED + TF-aware fallback.
 
-Binance user-data WebSocket ORDER_TRADE_UPDATE event'leri sessizce dusunce
-webhook LIMIT emirlerin fill/cancel durumunu REST uzerinden kontrol eder.
+Binance user-data WebSocket ORDER_TRADE_UPDATE event'leri sessizce
+dusunce webhook LIMIT emirlerin fill durumunu REST uzerinden kontrol eder.
 
-TF-AWARE POLLING (kullanici tercihi):
-  Her sembol icin Pine'dan gelen TF'e bakariz. Bar close'una ~10 saniye kala
-  Binance'a GET /fapi/v1/order sorusu atariz. Boylece:
-    - Emir bar boyunca acik kalir (LIMIT fill bar icinde herhangi bir tick'te)
-    - Bar close'una yakin kesin sonucu ogreniriz
-    - Sonraki bar'da yeni PLACE_LIMIT gelirse zaten backend eski emri iptal
-      eder — polling sadece fill kacirmayi engeller
+STRATEJI (2 katmanli, ilk hangisi tetiklenirse):
 
-Ornek: ETHUSDT 15dk grafik icin bar close'lar UTC 00:15, 00:30, 00:45, 01:00.
-  Poller her 5sn'de tick, bar close'a 3-15 sn kaldiginda o sembol icin sorgu.
-  Ayni bar_id icin 2. sorgu skip (Redis flag).
+1. PRICE-BASED (birincil, ~1-2sn gecikme):
+   price_stream.get_live_price(symbol) canli fiyat verir. Her 1sn'de tick,
+   fiyat pending.price'a dokundu mu bak:
+     BUY  LIMIT: live_price <= pending.price → dokundu → sorgu at
+     SELL LIMIT: live_price >= pending.price → dokundu → sorgu at
+   Dedupe: aynı sembol icin 5sn TTL flag (ayni dokunmada 2. sorgu skip).
+
+2. TF-AWARE BAR CLOSE (fallback, price stream dususe kar):
+   Pine'dan gelen TF'e gore bar close'a <=15sn kala sorgu at.
+   Ornek: tf=15 → 15dk bar close'lari UTC 00:15, 00:30 vb.
+   Ayni bar_id icin 2. sorgu skip (Redis flag).
+
+FILL algilanirsa handle_fill_event tetiklenir (mevcut TP koyma logic'i).
 
 Pozisyon kapama tespit (SL/TP tetigi veya manuel close): 30sn'de bir
 webhook_sl_placed:* keys'i tara, positionRisk kontrol et. Poz yoksa
@@ -31,18 +35,21 @@ from app.utils.logging import get_logger
 
 log = get_logger(__name__)
 
-# Ana loop tick araligi. Kucuk = daha responsive ama daha cok Redis scan.
-POLL_INTERVAL = 5
+# Ana loop tick araligi. 1sn — price stream ile ayni cozunurlukte.
+POLL_INTERVAL = 1
 
-# Bar close'a bu kadar saniye kaldiginda Binance'a sorgu at.
-# Ornek: WINDOW=15 → bar close'a 0-15sn kaldi ise poll et.
+# Bar close'a bu kadar saniye kaldiginda Binance'a sorgu at (fallback).
 BAR_CLOSE_WINDOW = 15
 
-# Pozisyon kapanma kontrol araligi (POLL_INTERVAL katı).
+# Pozisyon kapanma kontrol araligi (POLL_INTERVAL katı — 30sn).
 POSITION_CHECK_INTERVAL = 30
 
 # Ayni bar icin ikinci poll'u engelleyen flag TTL (bar_id her bar unique).
 POLLED_FLAG_TTL = 2 * 3600  # 2 saat
+
+# Price-based tetik icin dedupe TTL — fiyat 5sn icinde tekrar dokunursa
+# ikinci sorgu skip (Binance'ta status daha degismedi, gereksiz weight).
+PRICE_CHECK_DEDUPE_TTL = 5
 
 # Ana loop stop signal
 _task: asyncio.Task[None] | None = None
@@ -122,31 +129,72 @@ async def _polled_this_bar(symbol: str, bar_key: int) -> bool:
         return False  # fail-open: sorgu at
 
 
+async def _price_check_debounced(symbol: str) -> bool:
+    """Price-based tetik icin dedupe — ayni sembol PRICE_CHECK_DEDUPE_TTL
+    icinde tekrar tetiklendiyse skip et.
+    """
+    try:
+        r = await get_redis()
+        key = f"webhook_price_flag:{symbol}"
+        ok = await r.set(key, "1", nx=True, ex=PRICE_CHECK_DEDUPE_TTL)
+        return not bool(ok)
+    except Exception:
+        return False  # fail-open
+
+
 async def _process_one_pending(symbol: str) -> None:
-    """Bir sembol icin bar close yakinsa order status kontrol."""
+    """Bir sembol icin PRICE-BASED veya BAR-CLOSE tetigi ile order status kontrol.
+
+    Oncelik:
+      1. Canli fiyat pending.price'a dokundu mu (price_stream cache'inden)
+         → hemen sorgu at (dedupe: 5sn)
+      2. Bar close'a <=BAR_CLOSE_WINDOW kaldi ise sorgu (dedupe: bar_id)
+      3. Hicbir tetik yoksa skip
+    """
     from app.modules import webhook_order_tracker as tracker
     from app.modules.binance_client import get_order_status
+    from app.modules.price_stream import get_live_price
     from app.routers.st_webhook import handle_fill_event
 
     pending = await tracker.get_pending_limit(symbol)
     if pending is None:
         return
 
+    should_check = False
+    check_reason = ""
+
+    # ── 1. PRICE-BASED tetik (birincil, ~1sn gecikme) ──────────────
+    live_price = get_live_price(symbol)
+    if live_price is not None:
+        try:
+            side = str(pending.get("side", "")).upper()
+            limit_price = float(pending.get("price", 0))
+            if side == "BUY" and live_price <= limit_price:
+                # BUY LIMIT: fiyat limit'e dustu ya da altina → dokundu
+                if not await _price_check_debounced(symbol):
+                    should_check = True
+                    check_reason = f"price_touched_buy live={live_price} limit={limit_price}"
+            elif side == "SELL" and live_price >= limit_price:
+                # SELL LIMIT: fiyat limit'e cikti ya da ustune → dokundu
+                if not await _price_check_debounced(symbol):
+                    should_check = True
+                    check_reason = f"price_touched_sell live={live_price} limit={limit_price}"
+        except (ValueError, TypeError):
+            pass
+
+    # ── 2. TF-AWARE BAR CLOSE fallback (price stream dususe kar) ───
     tf = pending.get("tf", "")
     tf_sec = _tf_to_seconds(tf)
-    if tf_sec <= 0:
-        # TF yoksa (eski format?) — her tick sorgu at (fallback davranis)
-        remaining = 0
-    else:
+    remaining = -1
+    if not should_check and tf_sec > 0:
         remaining = _seconds_until_bar_close(tf_sec)
+        if remaining <= BAR_CLOSE_WINDOW:
+            bar_key = _current_bar_id(tf_sec)
+            if not await _polled_this_bar(symbol, bar_key):
+                should_check = True
+                check_reason = f"bar_close remaining_s={remaining}"
 
-    # Bar close'a BAR_CLOSE_WINDOW saniyeden fazla varsa skip
-    if tf_sec > 0 and remaining > BAR_CLOSE_WINDOW:
-        return
-
-    # Dedupe: bu bar icin zaten sorgu attıysa skip
-    bar_key = _current_bar_id(tf_sec)
-    if tf_sec > 0 and await _polled_this_bar(symbol, bar_key):
+    if not should_check:
         return
 
     order_id = pending.get("orderId")
@@ -169,7 +217,8 @@ async def _process_one_pending(symbol: str) -> None:
 
     status = rest_order.get("status", "")
     await log.ainfo("poller_checked", symbol=symbol, order_id=order_id,
-                    status=status, tf=tf, remaining_s=remaining)
+                    status=status, reason=check_reason,
+                    live_price=live_price, tf=tf, remaining_s=remaining)
 
     if status == "FILLED":
         # WS format'ina cevir + handle_fill_event tetikle
@@ -255,7 +304,9 @@ async def _poller_loop() -> None:
     await log.ainfo("webhook_poller_starting",
                     poll_interval=POLL_INTERVAL,
                     bar_close_window=BAR_CLOSE_WINDOW,
-                    pos_check_interval=POSITION_CHECK_INTERVAL)
+                    pos_check_interval=POSITION_CHECK_INTERVAL,
+                    price_dedupe_ttl=PRICE_CHECK_DEDUPE_TTL,
+                    mode="price_based_primary+bar_close_fallback")
 
     tick = 0
     pos_check_every = max(1, POSITION_CHECK_INTERVAL // POLL_INTERVAL)
