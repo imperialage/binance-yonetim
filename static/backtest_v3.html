@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Backtest v3 — HA + PrevHL Grid</title>
+<style>
+  :root {
+    --bg: #0B0E11;
+    --bg2: #1E2329;
+    --border: #2B3139;
+    --text: #EAECEF;
+    --muted: #848E9C;
+    --green: #0ECB81;
+    --red: #F6465D;
+    --yellow: #F0B90B;
+    --accent: #F0B90B;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg); color: var(--text); margin: 0; padding: 20px;
+  }
+  h1 { color: var(--accent); font-size: 20px; margin: 0 0 20px; }
+  h2 { color: var(--text); font-size: 15px; margin: 20px 0 10px; }
+  .panel {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 16px; margin-bottom: 16px;
+  }
+  form { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 12px; }
+  label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); }
+  label b { color: var(--text); font-size: 13px; margin-bottom: 4px; }
+  input, select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 8px; border-radius: 4px; font-size: 13px;
+  }
+  input[type=checkbox] { width: 16px; height: 16px; margin-top: 6px; }
+  button {
+    background: var(--accent); color: #000; border: 0; padding: 8px 20px;
+    border-radius: 4px; font-weight: 600; cursor: pointer; font-size: 13px;
+  }
+  button:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-row { grid-column: 1/-1; display: flex; gap: 12px; align-items: center; }
+  .status { color: var(--muted); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--border); }
+  th { background: var(--bg); color: var(--muted); text-align: center; font-weight: 500; }
+  td.corner, th.corner { background: var(--bg); color: var(--muted); text-align: center; }
+  .best {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+  }
+  .best-card {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 12px;
+  }
+  .best-card h3 { margin: 0 0 8px; font-size: 12px; color: var(--muted); font-weight: 500; }
+  .best-card .val { font-size: 20px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+  .best-card .sub { font-size: 11px; color: var(--muted); }
+  .green { color: var(--green); }
+  .red { color: var(--red); }
+  .yellow { color: var(--yellow); }
+  .heatmap-wrap { overflow-x: auto; }
+  .cell-tooltip {
+    cursor: help; font-family: 'Menlo', monospace; font-size: 11px;
+  }
+  .legend { display: flex; gap: 12px; font-size: 11px; color: var(--muted); margin-top: 8px; }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .swatch { width: 12px; height: 12px; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<h1>🎯 Backtest v3 — HA Renk + PrevBar High/Low Limit Grid</h1>
+
+<div class="panel">
+  <form id="grid-form" onsubmit="return runGrid(event)">
+    <label><b>Sembol</b>
+      <input type="text" id="symbol" value="MYXUSDT" required />
+    </label>
+    <label><b>Chart TF</b>
+      <select id="chart_tf">
+        <option>1m</option>
+        <option>5m</option>
+        <option selected>15m</option>
+        <option>30m</option>
+        <option>1h</option>
+        <option>4h</option>
+      </select>
+    </label>
+    <label><b>HTF (renk kaynağı)</b>
+      <select id="htf">
+        <option>15m</option>
+        <option>30m</option>
+        <option selected>1h</option>
+        <option>4h</option>
+        <option>1d</option>
+      </select>
+    </label>
+    <label><b>Başlangıç</b>
+      <input type="date" id="start_date" required />
+    </label>
+    <label><b>Bitiş</b>
+      <input type="date" id="end_date" required />
+    </label>
+    <label><b>TP min %</b>
+      <input type="number" id="tp_min" value="0.3" min="0.05" step="0.05" />
+    </label>
+    <label><b>TP max %</b>
+      <input type="number" id="tp_max" value="2.0" min="0.05" step="0.05" />
+    </label>
+    <label><b>TP step %</b>
+      <input type="number" id="tp_step" value="0.1" min="0.01" step="0.05" />
+    </label>
+    <label><b>SL min %</b>
+      <input type="number" id="sl_min" value="0.2" min="0.05" step="0.05" />
+    </label>
+    <label><b>SL max %</b>
+      <input type="number" id="sl_max" value="2.0" min="0.05" step="0.05" />
+    </label>
+    <label><b>SL step %</b>
+      <input type="number" id="sl_step" value="0.1" min="0.01" step="0.05" />
+    </label>
+    <label><b>Komisyon (round-trip %)</b>
+      <input type="number" id="commission_pct" value="0.08" min="0" step="0.01" />
+    </label>
+    <label><b>İyi Fiyat Tolerans</b>
+      <input type="checkbox" id="use_good" />
+    </label>
+    <label><b>İyi Fiyat %</b>
+      <input type="number" id="good_pct" value="0.5" min="0" step="0.05" />
+    </label>
+    <label><b>1-Önceki HTF Teyidi</b>
+      <input type="checkbox" id="require_prev_htf" />
+    </label>
+    <div class="btn-row">
+      <button type="submit" id="run-btn">Grid Çalıştır</button>
+      <span class="status" id="status"></span>
+    </div>
+  </form>
+</div>
+
+<div id="result" style="display:none">
+  <h2>🏆 En İyi Kombinasyonlar</h2>
+  <div class="best" id="best-cards"></div>
+
+  <h2>🗺 Heatmap (satır=TP%, sütun=SL%)</h2>
+  <div class="panel">
+    <div style="margin-bottom:8px">
+      <label style="display:inline-block; margin-right:12px">
+        <b style="display:inline">Metrik: </b>
+        <select id="metric" onchange="renderHeatmap()">
+          <option value="net_pnl_pct">Net PnL %</option>
+          <option value="wr_pct">Win Rate %</option>
+          <option value="pf">Profit Factor</option>
+          <option value="expectancy_pct">Expectancy %</option>
+          <option value="n_trades">Trade Sayısı</option>
+          <option value="max_dd_pct">Max DD %</option>
+        </select>
+      </label>
+    </div>
+    <div class="heatmap-wrap">
+      <table id="heatmap"></table>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="swatch" style="background:#0ECB81"></div>Yüksek (iyi)</div>
+      <div class="legend-item"><div class="swatch" style="background:#F0B90B"></div>Orta</div>
+      <div class="legend-item"><div class="swatch" style="background:#F6465D"></div>Düşük (kötü)</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Default tarihler: son 30 gün
+(function initDates() {
+  const now = new Date();
+  const end = now.toISOString().slice(0, 10);
+  const start = new Date(now.getTime() - 30*86400*1000).toISOString().slice(0, 10);
+  document.getElementById("start_date").value = start;
+  document.getElementById("end_date").value = end;
+})();
+
+let gridResult = null;
+
+async function runGrid(e) {
+  e.preventDefault();
+  const btn = document.getElementById("run-btn");
+  const statusEl = document.getElementById("status");
+  btn.disabled = true;
+  statusEl.textContent = "Çalışıyor... (grid boyutuna göre 10sn-2dk)";
+  document.getElementById("result").style.display = "none";
+
+  const body = {
+    symbol: document.getElementById("symbol").value.trim().toUpperCase(),
+    chart_tf: document.getElementById("chart_tf").value,
+    htf: document.getElementById("htf").value,
+    start_date: document.getElementById("start_date").value,
+    end_date: document.getElementById("end_date").value,
+    tp_min: parseFloat(document.getElementById("tp_min").value),
+    tp_max: parseFloat(document.getElementById("tp_max").value),
+    tp_step: parseFloat(document.getElementById("tp_step").value),
+    sl_min: parseFloat(document.getElementById("sl_min").value),
+    sl_max: parseFloat(document.getElementById("sl_max").value),
+    sl_step: parseFloat(document.getElementById("sl_step").value),
+    commission_pct: parseFloat(document.getElementById("commission_pct").value),
+    use_good: document.getElementById("use_good").checked,
+    good_pct: parseFloat(document.getElementById("good_pct").value),
+    require_prev_htf: document.getElementById("require_prev_htf").checked,
+  };
+
+  try {
+    const t0 = Date.now();
+    const r = await fetch("/api/backtest/v3/grid", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({detail: r.statusText}));
+      throw new Error(err.detail || `HTTP ${r.status}`);
+    }
+    gridResult = await r.json();
+    const elapsed = ((Date.now() - t0)/1000).toFixed(1);
+    statusEl.textContent = `Tamam. ${gridResult.n_cells} kombinasyon (${elapsed}sn).`;
+    renderResult();
+  } catch (err) {
+    statusEl.textContent = "Hata: " + err.message;
+    statusEl.style.color = "var(--red)";
+  } finally {
+    btn.disabled = false;
+  }
+  return false;
+}
+
+function renderResult() {
+  document.getElementById("result").style.display = "block";
+  renderBestCards();
+  renderHeatmap();
+}
+
+function renderBestCards() {
+  const container = document.getElementById("best-cards");
+  const cards = [
+    ["Net PnL %", gridResult.best_by_net_pnl, "net_pnl_pct"],
+    ["Profit Factor", gridResult.best_by_pf, "pf"],
+    ["Expectancy %", gridResult.best_by_expectancy, "expectancy_pct"],
+  ];
+  container.innerHTML = cards.map(([title, r, key]) => {
+    if (!r) return `<div class="best-card"><h3>${title}</h3><div class="val">-</div></div>`;
+    const s = r.summary;
+    const val = s[key];
+    const cls = key === "net_pnl_pct" || key === "expectancy_pct"
+      ? (val > 0 ? "green" : "red") : "yellow";
+    return `
+      <div class="best-card">
+        <h3>${title}</h3>
+        <div class="val ${cls}">${val}${key === "pf" ? "" : "%"}</div>
+        <div class="sub">TP: ${r.tp_pct}% · SL: ${r.sl_pct}%</div>
+        <div class="sub">${s.n_trades} trade · WR ${s.wr_pct}% · DD ${s.max_dd_pct}%</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderHeatmap() {
+  if (!gridResult) return;
+  const metric = document.getElementById("metric").value;
+  const tps = gridResult.tp_range_pct;
+  const sls = gridResult.sl_range_pct;
+
+  // Grid -> map (tp, sl) -> summary[metric]
+  const cellMap = {};
+  gridResult.grid.forEach(c => {
+    cellMap[`${c.tp_pct}_${c.sl_pct}`] = c.summary;
+  });
+
+  // Min/max degerler renk skalasi icin
+  const values = gridResult.grid.map(c => c.summary[metric]).filter(v => v != null);
+  const mn = Math.min(...values);
+  const mx = Math.max(...values);
+
+  // Header row (SL degerleri)
+  let html = "<tr><th class='corner'>TP↓ / SL→</th>";
+  sls.forEach(sl => { html += `<th>${sl.toFixed(2)}%</th>`; });
+  html += "</tr>";
+
+  tps.forEach(tp => {
+    html += `<tr><th>${tp.toFixed(2)}%</th>`;
+    sls.forEach(sl => {
+      const s = cellMap[`${tp}_${sl}`];
+      if (!s) { html += "<td>-</td>"; return; }
+      const v = s[metric];
+      const bg = colorFor(v, mn, mx, metric);
+      const tip = `TP ${tp}% / SL ${sl}%\n` +
+                  `PnL: ${s.net_pnl_pct}%\nWR: ${s.wr_pct}%\nPF: ${s.pf}\n` +
+                  `Trade: ${s.n_trades} (TP:${s.n_tp} SL:${s.n_sl})\nDD: ${s.max_dd_pct}%`;
+      html += `<td class="cell-tooltip" style="background:${bg}" title="${tip}">${formatVal(v, metric)}</td>`;
+    });
+    html += "</tr>";
+  });
+
+  document.getElementById("heatmap").innerHTML = html;
+}
+
+function formatVal(v, metric) {
+  if (v == null) return "-";
+  if (metric === "n_trades") return v.toString();
+  if (metric === "pf") return v.toFixed(2);
+  return v.toFixed(2);
+}
+
+function colorFor(v, mn, mx, metric) {
+  // max_dd icin ters skala (dusuk = iyi)
+  const invert = metric === "max_dd_pct";
+  if (mx === mn) return "rgba(240,185,11,0.3)";
+  let ratio = (v - mn) / (mx - mn);
+  if (invert) ratio = 1 - ratio;
+  // 0 = red, 0.5 = yellow, 1 = green
+  const r = ratio < 0.5 ? 246 : Math.round(14 + (246-14) * (1-ratio) * 2);
+  const g = ratio < 0.5 ? Math.round(70 + (203-70) * ratio * 2) : 203;
+  const b = ratio < 0.5 ? Math.round(93 + (129-93) * ratio * 2) : Math.round(129 - 129 * (ratio-0.5) * 2 + 129 * (ratio-0.5) * 2);
+  return `rgba(${r},${g},${b},0.45)`;
+}
+</script>
+
+</body>
+</html>

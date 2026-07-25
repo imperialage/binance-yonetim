@@ -135,6 +135,8 @@ from app.routers import pine_sim  # noqa: E402
 app.include_router(pine_sim.router, tags=["pine-sim"])
 from app.routers import nw_sim  # noqa: E402
 app.include_router(nw_sim.router, tags=["nw-sim"])
+from app.routers import backtest_v3  # noqa: E402
+app.include_router(backtest_v3.router, tags=["backtest-v3"])
 
 # ── Static files & page routes ────────────────────────
 _static_dir = Path(__file__).resolve().parent.parent / "static"
@@ -156,6 +158,14 @@ async def trading_page() -> FileResponse:
 @app.get("/backtest")
 async def backtest_page() -> FileResponse:
     return FileResponse(str(_static_dir / "backtest.html"))
+
+
+@app.get("/backtest-v3")
+async def backtest_v3_page() -> FileResponse:
+    return FileResponse(
+        str(_static_dir / "backtest_v3.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/chart")
