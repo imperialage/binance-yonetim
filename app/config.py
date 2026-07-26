@@ -196,6 +196,14 @@ class Settings(BaseSettings):
     binance_proxy_url: str = ""       # SOCKS5 proxy for static IP
     trading_symbols: str = "XRPUSDT,BTCUSDT,AVAXUSDT,DOGEUSDT,ETHUSDT,SOLUSDT,XAGUSDT,MYXUSDT,ZECUSDT,1000PEPEUSDT,DOTUSDT,NEARUSDT"  # Comma-separated whitelist
 
+    # ── Flip Watcher (HTF ters donus tespiti) ─────────
+    # Fill sonrasi Pine PLACE_SL beklenir. Bar close + margin sure icinde SL gelmezse
+    # HTF renk donmus demektir — backend mini-TP (flip_exit_pct) + SL (flip_sl_pct) koyar.
+    flip_mode_enabled: bool = True
+    flip_exit_pct: float = 0.0018       # %0.18 mini-kar cikisi (Pine v3.5 default)
+    flip_sl_pct: float = 0.005          # %0.5 SL (Pine default)
+    flip_check_margin_ms: int = 30_000  # bar_close + 30sn buffer (alert gecikmesi)
+
     # Per-timeframe strategy overrides
     trading_timeframes: str = "5m"      # Active TFs: "5m" or "1m" or "1m,5m"
     strategy_1m_sl_pct: float = 0.0035  # 1m: %0.35 stop-loss

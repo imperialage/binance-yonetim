@@ -35,11 +35,13 @@ log = get_logger(__name__)
 KEY_LIMIT = "webhook_limit:{sym}"
 KEY_SL_PLACED = "webhook_sl_placed:{sym}"
 KEY_POS_META = "webhook_pos_meta:{sym}"
+KEY_FLIP_WATCH = "webhook_flip_watch:{sym}"
 
 # TTL değerleri (saniye)
 TTL_LIMIT = 6 * 60 * 60      # 6 saat — dolmayan pending emri unut
 TTL_SL_FLAG = 24 * 60 * 60   # 24 saat — poz kapanisinda silinir zaten
 TTL_POS_META = 24 * 60 * 60  # 24 saat
+TTL_FLIP_WATCH = 6 * 60 * 60 # 6 saat — bar close + margin cok gecmeden temizlenir
 
 
 def _key(pattern: str, symbol: str) -> str:
@@ -168,13 +170,63 @@ async def clear_pos_meta(symbol: str) -> None:
         await log.awarning("webhook_tracker_clear_meta_failed", symbol=symbol, error=str(e))
 
 
+# ── Flip watch state (fill sonrasi SL bekle, gelmezse mini-TP + SL koy) ─
+
+async def set_flip_watch(symbol: str, meta: dict[str, Any]) -> None:
+    """Fill sonrasi flip check meta kaydet.
+
+    Beklenen alanlar: fill_bar_id_ms, tf, entry, side, qty, armed_at.
+    """
+    try:
+        r = await get_redis()
+        await r.set(_key(KEY_FLIP_WATCH, symbol), json.dumps(meta), ex=TTL_FLIP_WATCH)
+    except Exception as e:
+        await log.awarning("webhook_tracker_set_flipwatch_failed", symbol=symbol, error=str(e))
+
+
+async def get_flip_watch(symbol: str) -> dict[str, Any] | None:
+    try:
+        r = await get_redis()
+        raw = await r.get(_key(KEY_FLIP_WATCH, symbol))
+        if raw is None:
+            return None
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+async def clear_flip_watch(symbol: str) -> None:
+    try:
+        r = await get_redis()
+        await r.delete(_key(KEY_FLIP_WATCH, symbol))
+    except Exception as e:
+        await log.awarning("webhook_tracker_clear_flipwatch_failed", symbol=symbol, error=str(e))
+
+
+async def list_flip_watches() -> list[str]:
+    """Redis'teki tum flip watch key'lerinden sembol listesi (restart resilience)."""
+    try:
+        r = await get_redis()
+        pattern = KEY_FLIP_WATCH.format(sym="*")
+        symbols: list[str] = []
+        async for k in r.scan_iter(match=pattern, count=100):
+            key = k.decode() if isinstance(k, bytes) else k
+            if ":" in key:
+                symbols.append(key.split(":", 1)[1])
+        return symbols
+    except Exception as e:
+        await log.awarning("webhook_tracker_list_flipwatches_failed", error=str(e))
+        return []
+
+
 # ── Bulk cleanup (poz tamamen kapandiginda) ─────────────────────────────
 
 async def clear_all_state(symbol: str) -> None:
     """Poz kapanis eventinde tum webhook state'ini temizle:
-    pending limit, SL flag, poz meta.
+    pending limit, SL flag, poz meta, flip watch.
     """
     await clear_pending_limit(symbol)
     await clear_sl_flag(symbol)
     await clear_pos_meta(symbol)
+    await clear_flip_watch(symbol)
     await log.ainfo("webhook_tracker_cleared_all", symbol=symbol)

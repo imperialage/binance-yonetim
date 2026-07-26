@@ -691,6 +691,12 @@ async def _handle_place_sl(payload: STWebhookPayload, symbol: str, indicator: st
     try:
         await place_stop_market_instant(symbol, side, qty, float(stop_px))
         await tracker.mark_sl_placed(symbol)
+        # SL basariyla koyuldu — flip watcher'i iptal et (HTF ters donmedi, normal akis)
+        try:
+            from app.modules import webhook_flip_watcher as flipw
+            await flipw.disarm(symbol)
+        except Exception as _e:
+            log.warning("flip_watcher_disarm_failed", symbol=symbol, error=str(_e))
         log.info("place_sl_ok", symbol=symbol, side=side, stop_price=stop_px, qty=qty)
         return JSONResponse(content={
             "status": "placed",
@@ -789,6 +795,23 @@ async def handle_fill_event(order: dict) -> None:
             log.error("webhook_tp_place_failed_on_fill", symbol=symbol, error=str(e))
     else:
         log.info("webhook_no_tp_in_pending", symbol=symbol)
+
+    # Flip watcher arm — bar close + margin sonrasi SL kontrol
+    # SL gelmezse HTF ters dondu demektir; backend mini-TP + SL koyar.
+    try:
+        from app.modules import webhook_flip_watcher as flipw
+        fill_bar_id_ms = int(str(pending.get("bar_id") or "0") or "0")
+        tf_str = str(pending.get("tf") or "")
+        await flipw.arm(
+            symbol,
+            fill_bar_id_ms=fill_bar_id_ms,
+            tf=tf_str,
+            entry=avg_price,
+            side=side,
+            qty=filled_qty,
+        )
+    except Exception as e:
+        log.warning("flip_watcher_arm_failed", symbol=symbol, error=str(e))
 
     # Pending'i temizle (fill tamamlandi). SL flag DOKUNMA — bar close'ta Pine PLACE_SL gelecek.
     await tracker.clear_pending_limit(symbol)
