@@ -202,7 +202,7 @@ class Settings(BaseSettings):
     flip_mode_enabled: bool = True
     flip_exit_pct: float = 0.0018       # %0.18 mini-kar cikisi (Pine v3.5 default)
     flip_sl_pct: float = 0.005          # %0.5 SL (Pine default)
-    flip_check_margin_ms: int = 30_000  # bar_close + 30sn buffer (alert gecikmesi)
+    flip_check_margin_ms: int = 5_000   # bar_close + 5sn buffer (TV alert delivery min)
 
     # Per-timeframe strategy overrides
     trading_timeframes: str = "5m"      # Active TFs: "5m" or "1m" or "1m,5m"
