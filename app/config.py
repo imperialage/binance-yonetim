@@ -199,10 +199,12 @@ class Settings(BaseSettings):
     # ── Flip Watcher (HTF ters donus tespiti) ─────────
     # Fill sonrasi Pine PLACE_SL beklenir. Bar close + margin sure icinde SL gelmezse
     # HTF renk donmus demektir — backend mini-TP (flip_exit_pct) + SL (flip_sl_pct) koyar.
-    flip_mode_enabled: bool = True
-    flip_exit_pct: float = 0.0018       # %0.18 mini-kar cikisi (Pine v3.5 default)
-    flip_sl_pct: float = 0.005          # %0.5 SL (Pine default)
-    flip_check_margin_ms: int = 5_000   # bar_close + 5sn buffer (TV alert delivery min)
+    # DEPRECATED: flip_watcher timer-based sistem devre disi. Yerine event-driven
+    # HTF_STATUS action + _handle_htf_status kullanilir (Pine HTF Status Monitor v1).
+    flip_mode_enabled: bool = False
+    flip_exit_pct: float = 0.0018       # %0.18 mini-kar cikisi (HTF_STATUS fallback default)
+    flip_sl_pct: float = 0.005          # %0.5 SL (HTF_STATUS fallback default)
+    flip_check_margin_ms: int = 5_000   # (flip_watcher devre disi — kullanilmaz)
 
     # Per-timeframe strategy overrides
     trading_timeframes: str = "5m"      # Active TFs: "5m" or "1m" or "1m,5m"

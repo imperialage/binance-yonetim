@@ -1,0 +1,72 @@
+//@version=6
+indicator("HTF Status Monitor v1", overlay=true)
+
+// ════════════════════════════════════════════════════════════════════
+//  AMAC: Trading indikatorunden BAGIMSIZ HTF renk monitorler.
+//  Her chart bar KAPANISINDA backend'e HTF_STATUS alert atar.
+//  Backend aktif pozunu HTF rengi ile karsilastirir; ters ise
+//  filip exit uygular (mini-TP + SL).
+//
+//  KULLANIM:
+//    - Chart TF = trading indikatorunun chart TF'i (ornek 15m)
+//    - HTF = trading indikatorunun HTF'i (ornek 60)
+//    - "Any alert() function call" ile alert olustur
+//    - Her sembol icin ayri kurulmali
+//
+//  BIAS: HTF veri lookahead_off, sadece KAPANMIS HA rengi bildirilir.
+//  Chart bar close'ta (barstate.isconfirmed) fire eder — repaint YOK.
+// ════════════════════════════════════════════════════════════════════
+
+// ----- PARAMETRELER -----
+htfTF         = input.timeframe("60", "Ust Grafik TF", tooltip="Trading indikatorundeki HTF ile AYNI. Ornek: 60, 240, D.")
+
+grpFlip       = "Flip Exit Yuzde (Backend'e gonderilir)"
+slPct         = input.float(0.5, "SL %", minval=0.05, step=0.05, group=grpFlip, tooltip="Backend flip exit'te bu SL yuzdesini kullanir. Pine trading indikatorundeki slPct ile AYNI olmali.") / 100
+flipExitPct   = input.float(0.18, "Flip Exit %", minval=0.01, step=0.01, group=grpFlip, tooltip="Backend flip exit'te mini-TP icin kullanilir. Pine trading indikatorundeki flipExitPct ile AYNI olmali.") / 100
+
+grpWH         = "Webhook Alert"
+enableWebhook = input.bool(true, "Webhook Alert Aktif", group=grpWH, tooltip="Kapali: sadece grafikte gorsel. Acik: her chart bar kapanisinda backend'e HTF_STATUS alert atar.")
+webhookSecret = input.string("test_secret_2025", "Webhook Secret", group=grpWH)
+indicatorName = input.string("HTF_Status_v1", "Indikator Adi", group=grpWH)
+symbolOverride= input.string("", "Symbol Override (bos = otomatik)", group=grpWH, tooltip="Bos birakirsan syminfo.ticker kullanir.")
+
+// ----- HTF HA renk (son KAPANMIS, lookahead_off) -----
+f_htf_ha_green() =>
+    c = (open + high + low + close) / 4
+    o = float(na)
+    o := na(o[1]) ? (open + close) / 2 : (nz(o[1]) + nz(c[1])) / 2
+    c >= o
+
+htfGreen = request.security(syminfo.tickerid, htfTF, f_htf_ha_green(), barmerge.gaps_off, barmerge.lookahead_off)
+
+// ----- WEBHOOK ALERT — her chart bar kapanisinda -----
+string effectiveSymbol = symbolOverride == "" ? syminfo.ticker : symbolOverride
+
+if enableWebhook and barstate.isconfirmed
+    string msg = '{"secret":"' + webhookSecret + '","symbol":"' + effectiveSymbol + '","action":"HTF_STATUS","htf_green":' + (htfGreen ? "true" : "false") + ',"sl_pct":' + str.tostring(slPct, "#.######") + ',"flip_pct":' + str.tostring(flipExitPct, "#.######") + ',"tf":"' + timeframe.period + '","indicator":"' + indicatorName + '","bar_id":"' + str.tostring(time) + '"}'
+    alert(msg, alert.freq_once_per_bar)
+
+// ----- GORSEL -----
+plotshape(htfGreen,     "HTF YESIL",   shape.circle, location.belowbar, color.new(#0ECB81, 0), size=size.tiny)
+plotshape(not htfGreen, "HTF KIRMIZI", shape.circle, location.abovebar, color.new(#F6465D, 0), size=size.tiny)
+bgcolor(htfGreen ? color.new(#0ECB81, 95) : color.new(#F6465D, 95))
+
+// Legacy alert (yedek — "Any alert() function call" onerilen)
+alertcondition(htfGreen and not htfGreen[1], "HTF -> YESIL", "HTF flipped GREEN {{ticker}}")
+alertcondition(not htfGreen and htfGreen[1], "HTF -> KIRMIZI", "HTF flipped RED {{ticker}}")
+
+// ----- BILGI TABLOSU -----
+var table tbl = table.new(position.top_right, 2, 5, bgcolor=color.new(#0B0E11, 5), border_width=1, border_color=color.new(#2B3139, 0))
+if barstate.islast
+    color cBg = color.new(#111827, 0)
+    color cL  = color.new(#848E9C, 0)
+    table.cell(tbl, 0, 0, "HTF STATUS " + htfTF, text_color=#F0B90B, text_size=size.large, bgcolor=color.new(#1E2329, 0))
+    table.cell(tbl, 1, 0, syminfo.ticker, text_color=cL, text_size=size.normal, bgcolor=color.new(#1E2329, 0))
+    table.cell(tbl, 0, 1, "HTF Renk", text_color=cL, text_size=size.normal, bgcolor=cBg)
+    table.cell(tbl, 1, 1, htfGreen ? "YESIL -> LONG" : "KIRMIZI -> SHORT", text_color=htfGreen ? #0ECB81 : #F6465D, text_size=size.normal, bgcolor=cBg)
+    table.cell(tbl, 0, 2, "Chart TF", text_color=cL, text_size=size.normal, bgcolor=cBg)
+    table.cell(tbl, 1, 2, timeframe.period, text_color=color.white, text_size=size.normal, bgcolor=cBg)
+    table.cell(tbl, 0, 3, "SL %  /  Flip %", text_color=cL, text_size=size.normal, bgcolor=cBg)
+    table.cell(tbl, 1, 3, str.tostring(slPct*100, "#.##") + "  /  " + str.tostring(flipExitPct*100, "#.##"), text_color=color.white, text_size=size.normal, bgcolor=cBg)
+    table.cell(tbl, 0, 4, "Alert Aktif", text_color=cL, text_size=size.normal, bgcolor=cBg)
+    table.cell(tbl, 1, 4, enableWebhook ? "EVET" : "HAYIR", text_color=enableWebhook ? #0ECB81 : #F6465D, text_size=size.normal, bgcolor=cBg)

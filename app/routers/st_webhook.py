@@ -46,11 +46,14 @@ class STWebhookPayload(BaseModel):
     price: float | str | None = Field(default=None, description="LIMIT / MARKET emir fiyati. PLACE_SL i̇çin gerek yok.")
 
     # v3 action tabanli akis (opsiyonel — yoksa signal/direction backward compat)
-    action: str | None = Field(default=None, description="PLACE_LIMIT / CANCEL / PLACE_SL (v3). Yoksa signal/direction eski akis.")
+    action: str | None = Field(default=None, description="PLACE_LIMIT / CANCEL / PLACE_SL / HTF_STATUS (v3.6).")
     side: str | None = Field(default=None, description="PLACE_LIMIT: BUY/SELL. PLACE_SL: kapatma yonu (LONG poz i̇çin SELL, SHORT poz i̇çin BUY).")
     stop_price: float | str | None = Field(default=None, description="PLACE_SL i̇çin SL tetik fiyati (mutlak).")
     bar_id: str | None = Field(default=None, description="Pine barin acilis time (ms) — dedupe i̇çin.")
     reason: str | None = Field(default=None, description="CANCEL nedeni (log/audit) — ornek: htf_flip, manual.")
+    htf_green: bool | None = Field(default=None, description="HTF_STATUS: kapanmis HTF HA mumun rengi (True=yesil, False=kirmizi).")
+    sl_pct: float | str | None = Field(default=None, description="Pine SL yuzdesi (0.005 = %0.5). HTF_STATUS flip exit'te kullanilir.")
+    flip_pct: float | str | None = Field(default=None, description="Pine flip exit yuzdesi (0.0018 = %0.18).")
 
     # Eski format (mevcut alert'ler)
     signal: str | None = Field(default=None, description="BUY or SELL (eski format)")
@@ -161,7 +164,7 @@ async def st_webhook(request: Request) -> JSONResponse:
     # Pine v3 indikatoru action= alaniyla LIMIT bazli akis kullanir.
     # Eski BUY/SELL/CLOSE market akisi bozulmadan altta devam eder.
     action_v3 = (payload.action or "").strip().upper()
-    if action_v3 in ("PLACE_LIMIT", "CANCEL", "PLACE_SL"):
+    if action_v3 in ("PLACE_LIMIT", "CANCEL", "PLACE_SL", "HTF_STATUS"):
         indicator_v3 = payload.indicator or "webhook_v3"
         if action_v3 == "PLACE_LIMIT":
             return await _handle_place_limit(payload, symbol, indicator_v3)
@@ -169,6 +172,8 @@ async def st_webhook(request: Request) -> JSONResponse:
             return await _handle_cancel(payload, symbol, indicator_v3)
         if action_v3 == "PLACE_SL":
             return await _handle_place_sl(payload, symbol, indicator_v3)
+        if action_v3 == "HTF_STATUS":
+            return await _handle_htf_status(payload, symbol, indicator_v3)
 
     # direction: "signal" (eski) veya "direction" (yeni) alanini oku
     raw_direction = payload.signal or payload.direction or ""
@@ -709,6 +714,159 @@ async def _handle_place_sl(payload: STWebhookPayload, symbol: str, indicator: st
     except Exception as e:
         log.error("place_sl_failed", symbol=symbol, error=str(e))
         return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
+
+
+# ════════════════════════════════════════════════════════════════════
+# HTF_STATUS HANDLER (v3.6 YENI) — event-driven flip exit
+# ════════════════════════════════════════════════════════════════════
+# Pine her chart bar barstate.isconfirmed'de bu alert'i atar:
+#   {"secret":..., "symbol":..., "action":"HTF_STATUS",
+#    "htf_green": true/false, "sl_pct": 0.005, "flip_pct": 0.0018, "bar_id":...}
+#
+# Backend:
+#   1. Aktif poz yoksa: sadece logla, cik
+#   2. Poz yonu ile HTF ters mi?
+#      LONG (positionAmt>0)  + htf_green=false -> FLIP
+#      SHORT (positionAmt<0) + htf_green=true  -> FLIP
+#   3. Flip ise: mevcut algo emirleri iptal + mini-TP (flip_pct) + SL (sl_pct)
+#      Payload'daki yuzdeler Pine ile senkron (flip_watcher'in "kendi hesabi" sorunu yok).
+# Idempotency: Redis key `webhook_htf_flip:{sym}:{bar_id}` TTL=1h -> ayni bar 2. HTF_STATUS skip.
+
+
+async def _handle_htf_status(payload: STWebhookPayload, symbol: str, indicator: str) -> JSONResponse:
+    """HTF_STATUS: Pine'dan gelen HTF renk bildirimi. Poz varsa ters mi kontrol et."""
+    from app.modules import webhook_order_tracker as tracker
+    from app.modules.binance_client import (
+        cancel_all_open_orders,
+        get_position_risk,
+        place_stop_market_instant,
+        place_take_profit_market_order,
+        round_price,
+    )
+    from app.modules.redis_client import get_redis
+    from app.modules.trade_executor import get_exchange_info_cached
+
+    if payload.htf_green is None:
+        return JSONResponse(status_code=400, content={"detail": "htf_green gerekli"})
+    htf_green = bool(payload.htf_green)
+
+    # sl_pct / flip_pct payload'tan; yoksa settings default
+    try:
+        sl_pct = float(payload.sl_pct) if payload.sl_pct is not None else settings.flip_sl_pct
+    except (ValueError, TypeError):
+        sl_pct = settings.flip_sl_pct
+    try:
+        flip_pct = float(payload.flip_pct) if payload.flip_pct is not None else settings.flip_exit_pct
+    except (ValueError, TypeError):
+        flip_pct = settings.flip_exit_pct
+
+    bar_id = payload.bar_id or str(int(time.time() * 1000))
+
+    # 1) Aktif poz var mi?
+    positions = await get_position_risk(symbol)
+    pos_amt = 0.0
+    for p in positions:
+        if p.get("symbol") == symbol:
+            pos_amt = float(p.get("positionAmt", 0))
+            break
+
+    if pos_amt == 0:
+        return JSONResponse(content={
+            "status": "no_position", "symbol": symbol, "htf_green": htf_green,
+        })
+
+    # 2) Ters mi?
+    #   LONG (pos_amt > 0) + htf_green=False -> ters
+    #   SHORT (pos_amt < 0) + htf_green=True -> ters
+    is_flip = (pos_amt > 0 and not htf_green) or (pos_amt < 0 and htf_green)
+    if not is_flip:
+        return JSONResponse(content={
+            "status": "aligned", "symbol": symbol, "htf_green": htf_green, "pos_amt": pos_amt,
+        })
+
+    # 3) Idempotency: ayni bar_id icin ayni yonde tekrar tetiklenmesin
+    r = await get_redis()
+    dedupe_key = f"webhook_htf_flip:{symbol}:{bar_id}"
+    if await r.get(dedupe_key):
+        return JSONResponse(content={
+            "status": "dup_bar", "symbol": symbol, "bar_id": bar_id,
+        })
+    await r.set(dedupe_key, "1", ex=3600)  # 1 saat
+
+    # Meta poz bilgisi — entry Binance'tan
+    entry = 0.0
+    for p in positions:
+        if p.get("symbol") == symbol:
+            entry = float(p.get("entryPrice", 0))
+            break
+    if entry <= 0:
+        log.warning("htf_status_no_entry_price", symbol=symbol)
+        return JSONResponse(content={"status": "no_entry_price", "symbol": symbol})
+
+    qty = abs(pos_amt)
+    is_long = pos_amt > 0
+    close_side = "SELL" if is_long else "BUY"
+
+    # 4) Mevcut algo emirleri iptal (eski TP dahil, eski SL varsa da)
+    try:
+        await cancel_all_open_orders(symbol)
+    except Exception as e:
+        log.warning("htf_flip_cancel_failed", symbol=symbol, error=str(e))
+
+    # 5) Fiyatlari hesapla + tick round
+    info = await get_exchange_info_cached(symbol)
+    tick_size = info["priceFilter"]["tickSize"]
+
+    if is_long:
+        mini_tp_raw = entry * (1 + flip_pct)
+        sl_raw = entry * (1 - sl_pct)
+    else:
+        mini_tp_raw = entry * (1 - flip_pct)
+        sl_raw = entry * (1 + sl_pct)
+
+    mini_tp = round_price(mini_tp_raw, tick_size)
+    sl_px = round_price(sl_raw, tick_size)
+
+    # 6) Mini-TP
+    tp_ok = False
+    tp_err = None
+    try:
+        await place_take_profit_market_order(symbol, close_side, qty, float(mini_tp))
+        tp_ok = True
+    except Exception as e:
+        tp_err = str(e)
+        log.error("htf_flip_mini_tp_failed", symbol=symbol, error=tp_err,
+                  mini_tp=float(mini_tp), entry=entry)
+
+    # 7) SL
+    sl_ok = False
+    sl_err = None
+    try:
+        await place_stop_market_instant(symbol, close_side, qty, float(sl_px))
+        await tracker.mark_sl_placed(symbol)  # gec gelen Pine PLACE_SL alert'i skip olsun
+        sl_ok = True
+    except Exception as e:
+        sl_err = str(e)
+        log.error("htf_flip_sl_failed", symbol=symbol, error=sl_err,
+                  sl=float(sl_px), entry=entry)
+
+    log.warning("htf_flip_activated", symbol=symbol, entry=entry, is_long=is_long, qty=qty,
+                mini_tp=float(mini_tp), sl=float(sl_px), tp_ok=tp_ok, sl_ok=sl_ok,
+                sl_pct=sl_pct, flip_pct=flip_pct)
+
+    return JSONResponse(content={
+        "status": "flip_activated",
+        "symbol": symbol,
+        "entry": entry,
+        "is_long": is_long,
+        "qty": qty,
+        "mini_tp": float(mini_tp),
+        "sl": float(sl_px),
+        "tp_ok": tp_ok,
+        "sl_ok": sl_ok,
+        "tp_err": tp_err,
+        "sl_err": sl_err,
+    })
 
 
 # ════════════════════════════════════════════════════════════════════
