@@ -350,6 +350,27 @@ class SymbolConfigUpdate(BaseModel):
     reverse_signal: bool | None = None
 
 
+@router.post("/admin/reset-webhook-state")
+async def reset_webhook_state(
+    symbol: str = Query(..., description="Sembol (ETHUSDT vb)"),
+    x_admin_token: str = Header(...),
+) -> dict:
+    """Belirtilen sembol icin tum webhook Redis state'ini temizle.
+
+    WS close event gelmedigi durumlarda eski poz'un state kalintilari
+    (flip_decided, sl_placed vb) yeni poz'u bloklayabilir. Bu endpoint
+    tum state'i temizler — bir sonraki HTF_STATUS ya da PLACE_SL alerti
+    normal davranisa doner.
+    """
+    if x_admin_token != settings.admin_token:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+    from app.modules import webhook_order_tracker as tracker
+    sym = symbol.strip().upper()
+    await tracker.clear_all_state(sym)
+    log.info("admin_webhook_state_reset", symbol=sym)
+    return {"status": "cleared", "symbol": sym}
+
+
 @router.get("/api/symbol-config")
 async def get_all_configs() -> dict:
     """Return all symbol configs (with runtime overrides)."""

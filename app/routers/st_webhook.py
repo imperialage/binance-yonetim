@@ -1000,6 +1000,13 @@ async def handle_fill_event(order: dict) -> None:
         log.info("webhook_no_tp_in_pending", symbol=symbol)
 
     # v3.7: Fill bar close karari HTF_STATUS'a birak — fill_bar_id_ms kaydet
+    # v3.8: Yeni poz basliyor — onceki poz'un state kalintilarini temizle
+    # (WS close event gelmediyse Redis flag'leri devam eder, yeni poz'u bloklar)
+    try:
+        await tracker.clear_flip_decided(symbol)
+        await tracker.clear_sl_flag(symbol)
+    except Exception as e:
+        log.warning("fill_state_precleanup_failed", symbol=symbol, error=str(e))
     try:
         fill_bar_id_ms = int(str(pending.get("bar_id") or "0") or "0")
         if fill_bar_id_ms > 0:
