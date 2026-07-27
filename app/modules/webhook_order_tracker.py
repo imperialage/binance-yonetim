@@ -36,12 +36,16 @@ KEY_LIMIT = "webhook_limit:{sym}"
 KEY_SL_PLACED = "webhook_sl_placed:{sym}"
 KEY_POS_META = "webhook_pos_meta:{sym}"
 KEY_FLIP_WATCH = "webhook_flip_watch:{sym}"
+KEY_FILL_BAR_CHECK = "webhook_fill_bar_check:{sym}"  # fill bar close HTF karari icin bekle
+KEY_FLIP_DECIDED = "webhook_flip_decided:{sym}"      # bar close karari verildi (sonraki HTF_STATUS ignore)
 
 # TTL değerleri (saniye)
 TTL_LIMIT = 6 * 60 * 60      # 6 saat — dolmayan pending emri unut
 TTL_SL_FLAG = 24 * 60 * 60   # 24 saat — poz kapanisinda silinir zaten
 TTL_POS_META = 24 * 60 * 60  # 24 saat
 TTL_FLIP_WATCH = 6 * 60 * 60 # 6 saat — bar close + margin cok gecmeden temizlenir
+TTL_FILL_BAR_CHECK = 6 * 60 * 60  # 6 saat — poz suresince
+TTL_FLIP_DECIDED = 24 * 60 * 60  # 24 saat — poz kapanisinda silinir
 
 
 def _key(pattern: str, symbol: str) -> str:
@@ -219,14 +223,76 @@ async def list_flip_watches() -> list[str]:
         return []
 
 
+# ── Fill bar close karar bekleme state (v3.7 yeni) ───────────────────────
+# Fill event handler bunu set eder: "fill oldu, fill_bar_id sonrasi HTF_STATUS bekle,
+# bir kere karar ver, sonra sil". HTF_STATUS handler flag'i sil, boylece sonraki
+# HTF_STATUS'lar ignore edilir.
+
+async def set_fill_bar_check(symbol: str, fill_bar_id_ms: int) -> None:
+    """Fill oldu — fill_bar_id_ms sonrasi ilk HTF_STATUS'ta karar verilecek."""
+    try:
+        r = await get_redis()
+        await r.set(_key(KEY_FILL_BAR_CHECK, symbol), str(fill_bar_id_ms), ex=TTL_FILL_BAR_CHECK)
+    except Exception as e:
+        await log.awarning("webhook_tracker_set_fillbarcheck_failed", symbol=symbol, error=str(e))
+
+
+async def get_fill_bar_check(symbol: str) -> int | None:
+    """Fill_bar_id_ms doner ya da None (karar zaten verildi/poz yok)."""
+    try:
+        r = await get_redis()
+        v = await r.get(_key(KEY_FILL_BAR_CHECK, symbol))
+        return int(v) if v is not None else None
+    except Exception:
+        return None
+
+
+async def clear_fill_bar_check(symbol: str) -> None:
+    try:
+        r = await get_redis()
+        await r.delete(_key(KEY_FILL_BAR_CHECK, symbol))
+    except Exception as e:
+        await log.awarning("webhook_tracker_clear_fillbarcheck_failed", symbol=symbol, error=str(e))
+
+
+# ── Flip decided flag — sonraki HTF_STATUS'lar icin ignore ───────────────
+
+async def mark_flip_decided(symbol: str) -> None:
+    """Bar close karari verildi — sonraki HTF_STATUS'lari ignore."""
+    try:
+        r = await get_redis()
+        await r.set(_key(KEY_FLIP_DECIDED, symbol), "1", ex=TTL_FLIP_DECIDED)
+    except Exception as e:
+        await log.awarning("webhook_tracker_mark_decided_failed", symbol=symbol, error=str(e))
+
+
+async def is_flip_decided(symbol: str) -> bool:
+    try:
+        r = await get_redis()
+        v = await r.get(_key(KEY_FLIP_DECIDED, symbol))
+        return v is not None
+    except Exception:
+        return False
+
+
+async def clear_flip_decided(symbol: str) -> None:
+    try:
+        r = await get_redis()
+        await r.delete(_key(KEY_FLIP_DECIDED, symbol))
+    except Exception as e:
+        await log.awarning("webhook_tracker_clear_decided_failed", symbol=symbol, error=str(e))
+
+
 # ── Bulk cleanup (poz tamamen kapandiginda) ─────────────────────────────
 
 async def clear_all_state(symbol: str) -> None:
     """Poz kapanis eventinde tum webhook state'ini temizle:
-    pending limit, SL flag, poz meta, flip watch.
+    pending limit, SL flag, poz meta, flip watch, fill bar check, flip decided.
     """
     await clear_pending_limit(symbol)
     await clear_sl_flag(symbol)
     await clear_pos_meta(symbol)
     await clear_flip_watch(symbol)
+    await clear_fill_bar_check(symbol)
+    await clear_flip_decided(symbol)
     await log.ainfo("webhook_tracker_cleared_all", symbol=symbol)

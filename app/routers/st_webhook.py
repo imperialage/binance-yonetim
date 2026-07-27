@@ -599,12 +599,34 @@ async def _handle_place_limit(payload: STWebhookPayload, symbol: str, indicator:
 async def _handle_cancel(payload: STWebhookPayload, symbol: str, indicator: str) -> JSONResponse:
     """CANCEL: HTF flip'te bekleyen LIMIT emri iptal.
 
-    Redis'ten pending order al, Binance'ta iptal, Redis'i temizle.
+    v3.7 degisiklik: Poz varsa (fill oldu) CANCEL BLOKLANIR. Fill bar close
+    kararini HTF_STATUS handler verecek (Pine 1 protokolu ya Pine 2 protokolu).
     """
     from app.modules import webhook_order_tracker as tracker
-    from app.modules.binance_client import cancel_order
+    from app.modules.binance_client import cancel_order, get_position_risk
 
     reason = (payload.reason or "unknown").strip()
+
+    # v3.7: Poz varsa CANCEL'i uygulama — fill bar close karari HTF_STATUS'un
+    try:
+        positions = await get_position_risk(symbol)
+        pos_amt = 0.0
+        for p in positions:
+            if p.get("symbol") == symbol:
+                pos_amt = float(p.get("positionAmt", 0))
+                break
+        if pos_amt != 0:
+            log.info("cancel_blocked_position_open", symbol=symbol, pos_amt=pos_amt, reason=reason)
+            return JSONResponse(content={
+                "status": "blocked_position_open",
+                "symbol": symbol,
+                "pos_amt": pos_amt,
+                "reason": reason,
+                "message": "Fill bar close bekleniyor, HTF_STATUS karar verecek",
+            })
+    except Exception as e:
+        log.warning("cancel_position_check_failed", symbol=symbol, error=str(e))
+        # position check hata verirse yine de eski davranisa dus (guvenli taraf: iptal)
 
     existing = await tracker.get_pending_limit(symbol)
     if existing is None:
@@ -696,12 +718,10 @@ async def _handle_place_sl(payload: STWebhookPayload, symbol: str, indicator: st
     try:
         await place_stop_market_instant(symbol, side, qty, float(stop_px))
         await tracker.mark_sl_placed(symbol)
-        # SL basariyla koyuldu — flip watcher'i iptal et (HTF ters donmedi, normal akis)
-        try:
-            from app.modules import webhook_flip_watcher as flipw
-            await flipw.disarm(symbol)
-        except Exception as _e:
-            log.warning("flip_watcher_disarm_failed", symbol=symbol, error=str(_e))
+        # v3.7: Pine 1 protokolu tamamlandi — karar verildi olarak isaretle.
+        # Sonraki HTF_STATUS'lar (fill bar sonrasi flip) ignore edilecek.
+        await tracker.mark_flip_decided(symbol)
+        await tracker.clear_fill_bar_check(symbol)
         log.info("place_sl_ok", symbol=symbol, side=side, stop_price=stop_px, qty=qty)
         return JSONResponse(content={
             "status": "placed",
@@ -760,7 +780,11 @@ async def _handle_htf_status(payload: STWebhookPayload, symbol: str, indicator: 
     except (ValueError, TypeError):
         flip_pct = settings.flip_exit_pct
 
-    bar_id = payload.bar_id or str(int(time.time() * 1000))
+    bar_id_str = payload.bar_id or str(int(time.time() * 1000))
+    try:
+        bar_id_ms = int(bar_id_str)
+    except (ValueError, TypeError):
+        bar_id_ms = int(time.time() * 1000)
 
     # 1) Aktif poz var mi?
     positions = await get_position_risk(symbol)
@@ -775,23 +799,40 @@ async def _handle_htf_status(payload: STWebhookPayload, symbol: str, indicator: 
             "status": "no_position", "symbol": symbol, "htf_green": htf_green,
         })
 
-    # 2) Ters mi?
+    # 2) v3.7: Karar zaten verilmis mi? (sonraki HTF_STATUS'lar ignore)
+    if await tracker.is_flip_decided(symbol):
+        return JSONResponse(content={
+            "status": "decided_earlier", "symbol": symbol,
+        })
+
+    # 3) v3.7: Fill bar close geldi mi? Set edilmediyse (fill event kaydetmemis)
+    #    veya bar_id fill_bar_id'den kucukse — henuz fill bar kapanmadi, bekle.
+    fill_bar_id = await tracker.get_fill_bar_check(symbol)
+    if fill_bar_id is None:
+        return JSONResponse(content={
+            "status": "no_fill_check_pending", "symbol": symbol,
+            "message": "Fill event henuz gorulmedi ya da karar zaten verilmis",
+        })
+    if bar_id_ms < fill_bar_id:
+        return JSONResponse(content={
+            "status": "waiting_fill_bar_close", "symbol": symbol,
+            "htf_bar_id": bar_id_ms, "fill_bar_id": fill_bar_id,
+        })
+
+    # 4) Ters mi?
     #   LONG (pos_amt > 0) + htf_green=False -> ters
     #   SHORT (pos_amt < 0) + htf_green=True -> ters
     is_flip = (pos_amt > 0 and not htf_green) or (pos_amt < 0 and htf_green)
+
     if not is_flip:
+        # Pine 1 protokolu — PLACE_SL kendi isini yapsin. Karar verildi, sonraki
+        # HTF_STATUS'lar ignore edilsin.
+        await tracker.mark_flip_decided(symbol)
+        await tracker.clear_fill_bar_check(symbol)
+        log.info("htf_status_aligned", symbol=symbol, htf_green=htf_green, pos_amt=pos_amt)
         return JSONResponse(content={
             "status": "aligned", "symbol": symbol, "htf_green": htf_green, "pos_amt": pos_amt,
         })
-
-    # 3) Idempotency: ayni bar_id icin ayni yonde tekrar tetiklenmesin
-    r = await get_redis()
-    dedupe_key = f"webhook_htf_flip:{symbol}:{bar_id}"
-    if await r.get(dedupe_key):
-        return JSONResponse(content={
-            "status": "dup_bar", "symbol": symbol, "bar_id": bar_id,
-        })
-    await r.set(dedupe_key, "1", ex=3600)  # 1 saat
 
     # Meta poz bilgisi — entry Binance'tan
     entry = 0.0
@@ -849,6 +890,10 @@ async def _handle_htf_status(payload: STWebhookPayload, symbol: str, indicator: 
         sl_err = str(e)
         log.error("htf_flip_sl_failed", symbol=symbol, error=sl_err,
                   sl=float(sl_px), entry=entry)
+
+    # Karar verildi — sonraki HTF_STATUS'lar ignore, fill_bar_check temizle
+    await tracker.mark_flip_decided(symbol)
+    await tracker.clear_fill_bar_check(symbol)
 
     log.warning("htf_flip_activated", symbol=symbol, entry=entry, is_long=is_long, qty=qty,
                 mini_tp=float(mini_tp), sl=float(sl_px), tp_ok=tp_ok, sl_ok=sl_ok,
@@ -954,22 +999,15 @@ async def handle_fill_event(order: dict) -> None:
     else:
         log.info("webhook_no_tp_in_pending", symbol=symbol)
 
-    # Flip watcher arm — bar close + margin sonrasi SL kontrol
-    # SL gelmezse HTF ters dondu demektir; backend mini-TP + SL koyar.
+    # v3.7: Fill bar close karari HTF_STATUS'a birak — fill_bar_id_ms kaydet
     try:
-        from app.modules import webhook_flip_watcher as flipw
         fill_bar_id_ms = int(str(pending.get("bar_id") or "0") or "0")
-        tf_str = str(pending.get("tf") or "")
-        await flipw.arm(
-            symbol,
-            fill_bar_id_ms=fill_bar_id_ms,
-            tf=tf_str,
-            entry=avg_price,
-            side=side,
-            qty=filled_qty,
-        )
+        if fill_bar_id_ms > 0:
+            await tracker.set_fill_bar_check(symbol, fill_bar_id_ms)
+            log.info("fill_bar_check_armed", symbol=symbol, fill_bar_id_ms=fill_bar_id_ms)
     except Exception as e:
-        log.warning("flip_watcher_arm_failed", symbol=symbol, error=str(e))
+        log.warning("fill_bar_check_set_failed", symbol=symbol, error=str(e))
 
-    # Pending'i temizle (fill tamamlandi). SL flag DOKUNMA — bar close'ta Pine PLACE_SL gelecek.
+    # Pending'i temizle (fill tamamlandi). SL flag DOKUNMA — bar close'ta HTF_STATUS
+    # ya da Pine 1 PLACE_SL alerti gelecek.
     await tracker.clear_pending_limit(symbol)
