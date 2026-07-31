@@ -54,6 +54,11 @@ class STWebhookPayload(BaseModel):
     htf_green: bool | None = Field(default=None, description="HTF_STATUS: kapanmis HTF HA mumun rengi (True=yesil, False=kirmizi).")
     sl_pct: float | str | None = Field(default=None, description="Pine SL yuzdesi (0.005 = %0.5). HTF_STATUS flip exit'te kullanilir.")
     flip_pct: float | str | None = Field(default=None, description="Pine flip exit yuzdesi (0.0018 = %0.18).")
+    # v3.8 POSITION_STATUS
+    entry: float | str | None = Field(default=None, description="POSITION_STATUS: Pine'in poz entry fiyati.")
+    tp_price: float | str | None = Field(default=None, description="POSITION_STATUS: mutlak TP fiyati (backend olduğu gibi kullanır).")
+    sl_price: float | str | None = Field(default=None, description="POSITION_STATUS: mutlak SL fiyati (backend olduğu gibi kullanır).")
+    tp_pct: float | str | None = Field(default=None, description="Pine TP yuzdesi (0.01 = %1.0).")
 
     # Eski format (mevcut alert'ler)
     signal: str | None = Field(default=None, description="BUY or SELL (eski format)")
@@ -164,7 +169,7 @@ async def st_webhook(request: Request) -> JSONResponse:
     # Pine v3 indikatoru action= alaniyla LIMIT bazli akis kullanir.
     # Eski BUY/SELL/CLOSE market akisi bozulmadan altta devam eder.
     action_v3 = (payload.action or "").strip().upper()
-    if action_v3 in ("PLACE_LIMIT", "CANCEL", "PLACE_SL", "HTF_STATUS"):
+    if action_v3 in ("PLACE_LIMIT", "CANCEL", "PLACE_SL", "HTF_STATUS", "POSITION_STATUS", "PINE_EXIT"):
         indicator_v3 = payload.indicator or "webhook_v3"
         if action_v3 == "PLACE_LIMIT":
             return await _handle_place_limit(payload, symbol, indicator_v3)
@@ -174,6 +179,10 @@ async def st_webhook(request: Request) -> JSONResponse:
             return await _handle_place_sl(payload, symbol, indicator_v3)
         if action_v3 == "HTF_STATUS":
             return await _handle_htf_status(payload, symbol, indicator_v3)
+        if action_v3 == "POSITION_STATUS":
+            return await _handle_position_status(payload, symbol, indicator_v3)
+        if action_v3 == "PINE_EXIT":
+            return await _handle_pine_exit(payload, symbol, indicator_v3)
 
     # direction: "signal" (eski) veya "direction" (yeni) alanini oku
     raw_direction = payload.signal or payload.direction or ""
@@ -514,6 +523,24 @@ async def _handle_place_limit(payload: STWebhookPayload, symbol: str, indicator:
         log.info("place_limit_position_exists_skip", symbol=symbol, pos_amt=pos_amt)
         return JSONResponse(content={"status": "position_exists", "symbol": symbol, "pos_amt": pos_amt})
 
+    # v3.8: Deferred entry varsa iptal (yeni Pine 1 sinyali eskisini gecersiz kilar)
+    deferred = await tracker.get_deferred_entry(symbol)
+    if deferred is not None:
+        deferred_order_id = deferred.get("order_id")
+        if deferred_order_id:
+            try:
+                await cancel_order(symbol, int(deferred_order_id))
+                log.info("place_limit_cancelled_deferred", symbol=symbol,
+                         order_id=deferred_order_id, reason="new_pine_signal")
+            except Exception as e:
+                msg = str(e).lower()
+                if "-2011" in msg or "unknown order" in msg or "does not exist" in msg:
+                    log.info("place_limit_deferred_already_gone", symbol=symbol, order_id=deferred_order_id)
+                else:
+                    log.warning("place_limit_cancel_deferred_failed", symbol=symbol,
+                                order_id=deferred_order_id, error=str(e))
+        await tracker.clear_deferred_entry(symbol)
+
     # Mevcut pending order varsa iptal
     if existing is not None:
         old_order_id = existing.get("orderId")
@@ -846,72 +873,346 @@ async def _handle_htf_status(payload: STWebhookPayload, symbol: str, indicator: 
 
     qty = abs(pos_amt)
     is_long = pos_amt > 0
-    close_side = "SELL" if is_long else "BUY"
 
-    # 4) Mevcut algo emirleri iptal (eski TP dahil, eski SL varsa da)
-    try:
-        await cancel_all_open_orders(symbol)
-    except Exception as e:
-        log.warning("htf_flip_cancel_failed", symbol=symbol, error=str(e))
-
-    # 5) Fiyatlari hesapla + tick round
-    info = await get_exchange_info_cached(symbol)
-    tick_size = info["priceFilter"]["tickSize"]
-
-    if is_long:
-        mini_tp_raw = entry * (1 + flip_pct)
-        sl_raw = entry * (1 - sl_pct)
-    else:
-        mini_tp_raw = entry * (1 - flip_pct)
-        sl_raw = entry * (1 + sl_pct)
-
-    mini_tp = round_price(mini_tp_raw, tick_size)
-    sl_px = round_price(sl_raw, tick_size)
-
-    # 6) Mini-TP
-    tp_ok = False
-    tp_err = None
-    try:
-        await place_take_profit_market_order(symbol, close_side, qty, float(mini_tp))
-        tp_ok = True
-    except Exception as e:
-        tp_err = str(e)
-        log.error("htf_flip_mini_tp_failed", symbol=symbol, error=tp_err,
-                  mini_tp=float(mini_tp), entry=entry)
-
-    # 7) SL
-    sl_ok = False
-    sl_err = None
-    try:
-        await place_stop_market_instant(symbol, close_side, qty, float(sl_px))
-        await tracker.mark_sl_placed(symbol)  # gec gelen Pine PLACE_SL alert'i skip olsun
-        sl_ok = True
-    except Exception as e:
-        sl_err = str(e)
-        log.error("htf_flip_sl_failed", symbol=symbol, error=sl_err,
-                  sl=float(sl_px), entry=entry)
+    # v3.8: Pine 2 protokolu + deferred entry — ortak fonksiyon
+    result = await _activate_pine2_and_deferred(
+        symbol=symbol,
+        binance_entry=entry,
+        binance_is_long=is_long,
+        qty=qty,
+        sl_pct=sl_pct,
+        flip_pct=flip_pct,
+        source_bar_id=bar_id_str,
+        indicator=indicator,
+    )
 
     # Karar verildi — sonraki HTF_STATUS'lar ignore, fill_bar_check temizle
     await tracker.mark_flip_decided(symbol)
     await tracker.clear_fill_bar_check(symbol)
 
-    log.warning("htf_flip_activated", symbol=symbol, entry=entry, is_long=is_long, qty=qty,
-                mini_tp=float(mini_tp), sl=float(sl_px), tp_ok=tp_ok, sl_ok=sl_ok,
-                sl_pct=sl_pct, flip_pct=flip_pct)
+    return JSONResponse(content={"status": "flip_activated", "symbol": symbol, **result})
+
+
+# ════════════════════════════════════════════════════════════════════
+# POSITION_STATUS HANDLER (v3.8) — event-driven flip + self-heal
+# ════════════════════════════════════════════════════════════════════
+# Pine 1 her mum kapanisinda poz varsa POSITION_STATUS gonderir:
+#   {action:POSITION_STATUS, side:LONG/SHORT, entry, tp_price, sl_price,
+#    htf_green, sl_pct, tp_pct, tf, bar_id}
+#
+# Backend 2 senaryo:
+#   A) Yon uyumsuz (Pine 1 istedigi yön ≠ Binance'taki yön) → Pine 2 protokolu +
+#      dogru yon icin deferred LIMIT emri koy
+#   B) Yon uyumlu → Binance TP/SL yerinde mi kontrol et. Eksikse Pine'in bildirdigi
+#      MUTLAK tp_price/sl_price ile yerlestir (self-heal).
+
+async def _handle_position_status(payload: STWebhookPayload, symbol: str, indicator: str) -> JSONResponse:
+    from app.modules import webhook_order_tracker as tracker
+    from app.modules.binance_client import (
+        cancel_all_open_orders,
+        get_open_algo_orders,
+        get_position_risk,
+        place_stop_market_instant,
+        place_take_profit_market_order,
+        round_price,
+    )
+    from app.modules.trade_executor import get_exchange_info_cached
+
+    pine_side_raw = (payload.side or "").strip().upper()
+    if pine_side_raw not in ("LONG", "SHORT"):
+        return JSONResponse(status_code=400, content={"detail": f"POSITION_STATUS side gecersiz: {pine_side_raw}"})
+    pine_wants_long = pine_side_raw == "LONG"
+
+    pine_entry = _parse_price(payload.entry)
+    pine_tp_price = _parse_price(payload.tp_price)
+    pine_sl_price = _parse_price(payload.sl_price)
+    try:
+        sl_pct = float(payload.sl_pct) if payload.sl_pct is not None else settings.flip_sl_pct
+    except (ValueError, TypeError):
+        sl_pct = settings.flip_sl_pct
+    try:
+        flip_pct = float(payload.flip_pct) if payload.flip_pct is not None else settings.flip_exit_pct
+    except (ValueError, TypeError):
+        flip_pct = settings.flip_exit_pct
+
+    bar_id = payload.bar_id or str(int(time.time() * 1000))
+
+    # Binance pozunu al
+    positions = await get_position_risk(symbol)
+    binance_pos_amt = 0.0
+    binance_entry = 0.0
+    for p in positions:
+        if p.get("symbol") == symbol:
+            binance_pos_amt = float(p.get("positionAmt", 0))
+            binance_entry = float(p.get("entryPrice", 0))
+            break
+
+    if binance_pos_amt == 0:
+        # Pine poz var sanıyor ama Binance boş — muhtemelen deferred bekleniyor veya poz kapandı.
+        # Bu ihtimalde eski state kalıntısı temizle, cevap ver.
+        log.info("position_status_no_binance_pos", symbol=symbol, pine_side=pine_side_raw)
+        return JSONResponse(content={"status": "no_binance_pos", "symbol": symbol})
+
+    binance_is_long = binance_pos_amt > 0
+    qty = abs(binance_pos_amt)
+
+    # Yon uyumsuz mu? (Pine LONG istedi + Binance SHORT'ta, veya tersi)
+    is_mismatch = pine_wants_long != binance_is_long
+
+    if is_mismatch:
+        # A) FLIP — Pine 2 protokolu + deferred entry
+        log.warning("position_status_mismatch", symbol=symbol,
+                    pine_side=pine_side_raw, binance_pos_amt=binance_pos_amt)
+        result = await _activate_pine2_and_deferred(
+            symbol=symbol,
+            binance_entry=binance_entry,
+            binance_is_long=binance_is_long,
+            qty=qty,
+            sl_pct=sl_pct,
+            flip_pct=flip_pct,
+            source_bar_id=bar_id,
+            indicator=indicator,
+        )
+        await tracker.mark_flip_decided(symbol)
+        await tracker.clear_fill_bar_check(symbol)
+        return JSONResponse(content={"status": "flip_activated", "symbol": symbol, **result})
+
+    # B) UYUMLU — self-heal: Binance algo emirleri (TP/SL) yerinde mi?
+    open_algos = []
+    try:
+        open_algos = await get_open_algo_orders(symbol)
+    except Exception as e:
+        log.warning("position_status_open_orders_failed", symbol=symbol, error=str(e))
+
+    has_tp = False
+    has_sl = False
+    tp_algo_price = None
+    sl_algo_price = None
+    expected_close_side = "SELL" if binance_is_long else "BUY"
+    for o in open_algos:
+        otype = str(o.get("orderType") or o.get("type", ""))
+        oside = str(o.get("side", ""))
+        if oside != expected_close_side:
+            continue
+        trig = o.get("triggerPrice") or o.get("stopPrice")
+        if otype == "TAKE_PROFIT_MARKET":
+            has_tp = True
+            tp_algo_price = float(trig) if trig else None
+        elif otype == "STOP_MARKET":
+            has_sl = True
+            sl_algo_price = float(trig) if trig else None
+
+    info = await get_exchange_info_cached(symbol)
+    tick_size = info["priceFilter"]["tickSize"]
+    close_side = "SELL" if binance_is_long else "BUY"
+
+    healed = {}
+
+    # TP self-heal — Pine'in MUTLAK tp_price'ini kullan
+    if pine_tp_price and pine_tp_price > 0:
+        pine_tp_rounded = round_price(pine_tp_price, tick_size)
+        if not has_tp:
+            try:
+                await place_take_profit_market_order(symbol, close_side, qty, float(pine_tp_rounded))
+                healed["tp_placed"] = float(pine_tp_rounded)
+                log.info("position_status_tp_healed", symbol=symbol, tp=float(pine_tp_rounded))
+            except Exception as e:
+                log.warning("position_status_tp_heal_failed", symbol=symbol, error=str(e))
+                healed["tp_error"] = str(e)
+        elif tp_algo_price and abs(tp_algo_price - float(pine_tp_rounded)) > float(tick_size) / 2:
+            # Fiyat sapmasi var → mevcut TP'yi iptal, yenisini koy
+            try:
+                await cancel_all_open_orders(symbol)  # basit yol: tumu iptal
+                await place_take_profit_market_order(symbol, close_side, qty, float(pine_tp_rounded))
+                healed["tp_updated"] = float(pine_tp_rounded)
+                has_sl = False  # cancel_all sildi, SL'yi de yeniden koymalıyız
+                log.info("position_status_tp_updated", symbol=symbol,
+                         old=tp_algo_price, new=float(pine_tp_rounded))
+            except Exception as e:
+                log.warning("position_status_tp_update_failed", symbol=symbol, error=str(e))
+
+    # SL self-heal
+    if pine_sl_price and pine_sl_price > 0:
+        pine_sl_rounded = round_price(pine_sl_price, tick_size)
+        if not has_sl:
+            try:
+                await place_stop_market_instant(symbol, close_side, qty, float(pine_sl_rounded))
+                await tracker.mark_sl_placed(symbol)
+                healed["sl_placed"] = float(pine_sl_rounded)
+                log.info("position_status_sl_healed", symbol=symbol, sl=float(pine_sl_rounded))
+            except Exception as e:
+                log.warning("position_status_sl_heal_failed", symbol=symbol, error=str(e))
+                healed["sl_error"] = str(e)
+        elif sl_algo_price and abs(sl_algo_price - float(pine_sl_rounded)) > float(tick_size) / 2:
+            try:
+                await place_stop_market_instant(symbol, close_side, qty, float(pine_sl_rounded))
+                healed["sl_updated"] = float(pine_sl_rounded)
+                log.info("position_status_sl_updated", symbol=symbol,
+                         old=sl_algo_price, new=float(pine_sl_rounded))
+            except Exception as e:
+                log.warning("position_status_sl_update_failed", symbol=symbol, error=str(e))
 
     return JSONResponse(content={
-        "status": "flip_activated",
+        "status": "aligned",
         "symbol": symbol,
-        "entry": entry,
-        "is_long": is_long,
-        "qty": qty,
-        "mini_tp": float(mini_tp),
-        "sl": float(sl_px),
-        "tp_ok": tp_ok,
-        "sl_ok": sl_ok,
-        "tp_err": tp_err,
-        "sl_err": sl_err,
+        "binance_pos_amt": binance_pos_amt,
+        "pine_side": pine_side_raw,
+        "has_tp": has_tp,
+        "has_sl": has_sl,
+        "healed": healed,
     })
+
+
+async def _activate_pine2_and_deferred(
+    *,
+    symbol: str,
+    binance_entry: float,
+    binance_is_long: bool,
+    qty: float,
+    sl_pct: float,
+    flip_pct: float,
+    source_bar_id: str,
+    indicator: str,
+) -> dict:
+    """Pine 2 protokolu (mini-TP + SL) + dogru yon icin deferred LIMIT emri.
+
+    Ters pozdan cikmak icin mini-TP yerlestirilir. Fiyat oraya deger degmez ters
+    poz kapanir. Ayni anda dogru yon icin LIMIT emri konur (deferred), fiyat
+    tetigi mini-TP fiyatinin %0.1 uygun tarafinda.
+    """
+    from app.modules import webhook_order_tracker as tracker
+    from app.modules.binance_client import (
+        cancel_all_open_orders, get_total_wallet_balance,
+        place_limit_order, place_stop_market_instant, place_take_profit_market_order,
+        round_price, round_step_size,
+    )
+    from app.modules.indicator_settings_store import get_settings_or_defaults
+    from app.modules.trade_executor import get_exchange_info_cached
+
+    result = {"binance_entry": binance_entry, "binance_is_long": binance_is_long, "qty": qty}
+
+    # 1) Mevcut algo emirleri iptal
+    try:
+        await cancel_all_open_orders(symbol)
+    except Exception as e:
+        log.warning("pine2_cancel_failed", symbol=symbol, error=str(e))
+
+    info = await get_exchange_info_cached(symbol)
+    tick_size = info["priceFilter"]["tickSize"]
+
+    if binance_is_long:
+        mini_tp_raw = binance_entry * (1 + flip_pct)
+        sl_raw = binance_entry * (1 - sl_pct)
+        close_side = "SELL"
+    else:
+        mini_tp_raw = binance_entry * (1 - flip_pct)
+        sl_raw = binance_entry * (1 + sl_pct)
+        close_side = "BUY"
+
+    mini_tp = round_price(mini_tp_raw, tick_size)
+    sl_px = round_price(sl_raw, tick_size)
+
+    # 2) Mini-TP
+    try:
+        await place_take_profit_market_order(symbol, close_side, qty, float(mini_tp))
+        result["mini_tp"] = float(mini_tp)
+    except Exception as e:
+        result["mini_tp_err"] = str(e)
+        log.error("pine2_mini_tp_failed", symbol=symbol, error=str(e))
+
+    # 3) SL
+    try:
+        await place_stop_market_instant(symbol, close_side, qty, float(sl_px))
+        await tracker.mark_sl_placed(symbol)
+        result["sl"] = float(sl_px)
+    except Exception as e:
+        result["sl_err"] = str(e)
+        log.error("pine2_sl_failed", symbol=symbol, error=str(e))
+
+    # 4) DEFERRED LIMIT — dogru yon icin
+    #    Yeni poz yonu = mevcut yonun tersi (Pine 2 mini-TP ters pozu kapatiyor,
+    #    sonra dogru yon poz aciyoruz)
+    new_is_long = not binance_is_long
+    new_side = "BUY" if new_is_long else "SELL"
+    # Fiyat: mini-TP × (LONG ise 0.999, SHORT ise 1.001)
+    deferred_price_raw = mini_tp * (0.999 if new_is_long else 1.001)
+    deferred_price = round_price(deferred_price_raw, tick_size)
+
+    # Qty hesabi (yeni poz icin)
+    try:
+        balance = await get_total_wallet_balance()
+        sym_cfg = await get_settings_or_defaults(symbol)
+        sym_weight = sym_cfg.get("weight", 0.10)
+        step_size = info["lotSize"]["stepSize"]
+        min_qty = float(info["lotSize"]["minQty"])
+        min_notional = float(info.get("minNotional", {}).get("notional", 5))
+
+        usable = balance * sym_weight * 0.98
+        raw_qty = usable / float(deferred_price) if float(deferred_price) > 0 else 0.0
+        new_qty = round_step_size(raw_qty, step_size)
+
+        if new_qty < min_qty or float(new_qty) * float(deferred_price) < min_notional:
+            result["deferred_err"] = f"qty_too_low {new_qty}"
+            log.warning("pine2_deferred_qty_too_low", symbol=symbol, qty=new_qty)
+        else:
+            deferred_order = await place_limit_order(symbol, new_side, float(new_qty), float(deferred_price))
+            deferred_order_id = deferred_order.get("orderId")
+            await tracker.set_deferred_entry(symbol, {
+                "side": new_side,
+                "price": float(deferred_price),
+                "qty": float(new_qty),
+                "order_id": deferred_order_id,
+                "source_bar_id": str(source_bar_id),
+                "indicator": indicator,
+                "saved_at": int(time.time()),
+            })
+            result["deferred"] = {
+                "side": new_side,
+                "price": float(deferred_price),
+                "qty": float(new_qty),
+                "order_id": deferred_order_id,
+            }
+            log.warning("pine2_deferred_placed", symbol=symbol, side=new_side,
+                        price=float(deferred_price), qty=float(new_qty),
+                        order_id=deferred_order_id)
+    except Exception as e:
+        result["deferred_err"] = str(e)
+        log.error("pine2_deferred_failed", symbol=symbol, error=str(e))
+
+    log.warning("pine2_protocol_activated", symbol=symbol, **{
+        k: v for k, v in result.items() if not isinstance(v, dict)
+    })
+    return result
+
+
+# ════════════════════════════════════════════════════════════════════
+# PINE_EXIT HANDLER (v3.8) — Pine backtest TP/SL vurdu → deferred iptal
+# ════════════════════════════════════════════════════════════════════
+
+async def _handle_pine_exit(payload: STWebhookPayload, symbol: str, indicator: str) -> JSONResponse:
+    from app.modules import webhook_order_tracker as tracker
+    from app.modules.binance_client import cancel_order
+
+    reason = (payload.reason or "").strip().upper()
+    deferred = await tracker.get_deferred_entry(symbol)
+    if deferred is None:
+        return JSONResponse(content={"status": "no_deferred", "symbol": symbol, "reason": reason})
+
+    order_id = deferred.get("order_id")
+    if order_id:
+        try:
+            await cancel_order(symbol, int(order_id))
+            log.info("pine_exit_deferred_cancelled", symbol=symbol,
+                     order_id=order_id, reason=reason)
+        except Exception as e:
+            msg = str(e).lower()
+            if "-2011" in msg or "unknown order" in msg or "does not exist" in msg:
+                log.info("pine_exit_deferred_already_gone", symbol=symbol, order_id=order_id)
+            else:
+                log.warning("pine_exit_deferred_cancel_failed", symbol=symbol,
+                            order_id=order_id, error=str(e))
+    await tracker.clear_deferred_entry(symbol)
+    return JSONResponse(content={"status": "deferred_cancelled", "symbol": symbol, "reason": reason})
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -969,14 +1270,47 @@ async def handle_fill_event(order: dict) -> None:
     # yerine orderId lookup — place_limit_order client_order_id kabul etmiyor,
     # Binance kendi ID'sini uretir.
     pending = await tracker.get_pending_limit(symbol)
-    if pending is None:
-        # Baska bir emir (motor, HA engine vb.) — bize ait degil
-        return
-    pending_order_id = str(pending.get("orderId", ""))
-    if pending_order_id != order_id:
-        # Redis'teki pending baska bir order — bu fill bize ait degil
+    pending_order_id = str(pending.get("orderId", "")) if pending else ""
+
+    # v3.8: Bir de DEFERRED entry order match — Pine 2 sonrasi konulan LIMIT
+    deferred = await tracker.get_deferred_entry(symbol)
+    deferred_order_id = str(deferred.get("order_id", "")) if deferred else ""
+
+    if pending is None and deferred is None:
+        return  # Bize ait degil
+
+    if pending_order_id == order_id:
+        is_deferred_fill = False
+    elif deferred_order_id == order_id:
+        is_deferred_fill = True
+    else:
         log.debug("webhook_fill_orderid_mismatch", symbol=symbol,
-                  fill_order_id=order_id, pending_order_id=pending_order_id)
+                  fill_order_id=order_id,
+                  pending_order_id=pending_order_id,
+                  deferred_order_id=deferred_order_id)
+        return
+
+    if is_deferred_fill:
+        # Deferred LIMIT doldu — yeni doğru yön poz açıldı. TP/SL Pine POSITION_STATUS
+        # ile bir sonraki mum kapanışında koyulacak. Şimdi sadece log + state.
+        await tracker.clear_deferred_entry(symbol)
+        # Fill bar check baştan tetiklensin — POSITION_STATUS bu yeni poz için karar versin
+        try:
+            fill_bar_id_ms = int(order.get("T", 0) or int(time.time() * 1000))
+            await tracker.set_fill_bar_check(symbol, fill_bar_id_ms)
+        except Exception as _e:
+            log.warning("deferred_fill_bar_check_failed", symbol=symbol, error=str(_e))
+        # Onceki poz kalintisi temizle — yeni poz baslıyor
+        try:
+            await tracker.clear_flip_decided(symbol)
+            await tracker.clear_sl_flag(symbol)
+        except Exception:
+            pass
+        avg_price_def = float(order.get("ap", 0))
+        filled_qty_def = float(order.get("z", 0) or order.get("q", 0))
+        side_def = str(deferred.get("side", "")).upper() if deferred else ""
+        log.warning("deferred_fill_detected", symbol=symbol, side=side_def,
+                    avg_price=avg_price_def, qty=filled_qty_def)
         return
 
     # Fill bilgileri

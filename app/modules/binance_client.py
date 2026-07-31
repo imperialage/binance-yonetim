@@ -656,6 +656,28 @@ async def get_all_orders(
     return all_orders
 
 
+async def get_open_algo_orders(symbol: str) -> list[dict]:
+    """Sadece OPEN (WORKING) algo orders (TP/SL) — /fapi/v1/openAlgoOrders.
+
+    Return schema (per order):
+      algoId, symbol, orderType (TAKE_PROFIT_MARKET/STOP_MARKET),
+      side, triggerPrice, positionSide, algoStatus (WORKING/TRIGGERED/...)
+    """
+    client = await get_client()
+    try:
+        params = _sign({"symbol": symbol})
+        resp = await client.get("/fapi/v1/openAlgoOrders", params=params)
+        _raise_for_binance(resp)
+        data = resp.json()
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return data.get("orders", []) or []
+    except Exception as e:
+        await log.awarning("get_open_algo_orders_failed", symbol=symbol, error=str(e))
+    return []
+
+
 async def get_algo_orders_history(
     symbol: str = "ETHUSDT",
 ) -> list[dict]:

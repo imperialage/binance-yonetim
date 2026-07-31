@@ -38,6 +38,7 @@ KEY_POS_META = "webhook_pos_meta:{sym}"
 KEY_FLIP_WATCH = "webhook_flip_watch:{sym}"
 KEY_FILL_BAR_CHECK = "webhook_fill_bar_check:{sym}"  # fill bar close HTF karari icin bekle
 KEY_FLIP_DECIDED = "webhook_flip_decided:{sym}"      # bar close karari verildi (sonraki HTF_STATUS ignore)
+KEY_DEFERRED = "webhook_deferred:{sym}"              # v3.8: Pine 2 sonrasi dogru yon LIMIT emri
 
 # TTL değerleri (saniye)
 TTL_LIMIT = 6 * 60 * 60      # 6 saat — dolmayan pending emri unut
@@ -46,6 +47,7 @@ TTL_POS_META = 24 * 60 * 60  # 24 saat
 TTL_FLIP_WATCH = 6 * 60 * 60 # 6 saat — bar close + margin cok gecmeden temizlenir
 TTL_FILL_BAR_CHECK = 6 * 60 * 60  # 6 saat — poz suresince
 TTL_FLIP_DECIDED = 24 * 60 * 60  # 24 saat — poz kapanisinda silinir
+TTL_DEFERRED = 30 * 60       # 30 dakika — 2 bar 15m TF, eski deferred gecersiz
 
 
 def _key(pattern: str, symbol: str) -> str:
@@ -283,11 +285,48 @@ async def clear_flip_decided(symbol: str) -> None:
         await log.awarning("webhook_tracker_clear_decided_failed", symbol=symbol, error=str(e))
 
 
+# ── Deferred Entry Queue (v3.8) ──────────────────────────────────────────
+# Pine 2 protokolu uygulandiginda ters pozdan cikmak icin mini-TP + SL yaninda
+# dogru yon LIMIT emri koyariz. Fiyat mini-TP fiyatinin %0.1 yakininda.
+# Fill oldugunda POSITION_STATUS ile Pine'in TP/SL fiyatlari uygulanir.
+
+async def set_deferred_entry(symbol: str, meta: dict[str, Any]) -> None:
+    """Deferred entry meta kaydet.
+    Beklenen alanlar: side, price, tp_price, sl_price, source_bar_id,
+                     order_id (Binance LIMIT emir ID'si), saved_at.
+    """
+    try:
+        r = await get_redis()
+        await r.set(_key(KEY_DEFERRED, symbol), json.dumps(meta), ex=TTL_DEFERRED)
+    except Exception as e:
+        await log.awarning("webhook_tracker_set_deferred_failed", symbol=symbol, error=str(e))
+
+
+async def get_deferred_entry(symbol: str) -> dict[str, Any] | None:
+    try:
+        r = await get_redis()
+        raw = await r.get(_key(KEY_DEFERRED, symbol))
+        if raw is None:
+            return None
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+async def clear_deferred_entry(symbol: str) -> None:
+    try:
+        r = await get_redis()
+        await r.delete(_key(KEY_DEFERRED, symbol))
+    except Exception as e:
+        await log.awarning("webhook_tracker_clear_deferred_failed", symbol=symbol, error=str(e))
+
+
 # ── Bulk cleanup (poz tamamen kapandiginda) ─────────────────────────────
 
 async def clear_all_state(symbol: str) -> None:
     """Poz kapanis eventinde tum webhook state'ini temizle:
-    pending limit, SL flag, poz meta, flip watch, fill bar check, flip decided.
+    pending limit, SL flag, poz meta, flip watch, fill bar check, flip decided,
+    deferred entry.
     """
     await clear_pending_limit(symbol)
     await clear_sl_flag(symbol)
@@ -295,4 +334,5 @@ async def clear_all_state(symbol: str) -> None:
     await clear_flip_watch(symbol)
     await clear_fill_bar_check(symbol)
     await clear_flip_decided(symbol)
+    await clear_deferred_entry(symbol)
     await log.ainfo("webhook_tracker_cleared_all", symbol=symbol)
