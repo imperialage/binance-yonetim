@@ -277,6 +277,23 @@ async def get_total_wallet_balance() -> float:
     return 0.0
 
 
+async def get_available_balance() -> float:
+    """AVAILABLE (kullanilabilir) USDT — acik pozlarin margin'i haric.
+
+    /fapi/v2/balance response'ta 'availableBalance' field'i. Yeni LIMIT emri
+    icin bu miktar kritik: total_wallet_balance overestimate eder cunku
+    acik pozlarin locked margin'ini de icerir → -2019 Margin insufficient.
+    """
+    client = await get_client()
+    params = _sign({})
+    resp = await client.get("/fapi/v2/balance", params=params)
+    _raise_for_binance(resp)
+    for asset in resp.json():
+        if asset.get("asset") == "USDT":
+            return float(asset.get("availableBalance", 0))
+    return 0.0
+
+
 # ── Algo order ID tracking — persistent JSON file ──
 # algoOrder/openOrders endpoint 404 verdigi icin, koyduklarimizi takip ediyoruz
 # Dosyada sakliyoruz ki deploy/restart sonrasi kaybolmasin.

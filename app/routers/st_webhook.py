@@ -466,8 +466,8 @@ async def _handle_place_limit(payload: STWebhookPayload, symbol: str, indicator:
     """
     from app.modules import webhook_order_tracker as tracker
     from app.modules.binance_client import (
-        cancel_order, get_position_risk, get_total_wallet_balance, place_limit_order,
-        round_price, round_step_size,
+        cancel_order, get_available_balance, get_position_risk, get_total_wallet_balance,
+        place_limit_order, round_price, round_step_size,
     )
     from app.modules.indicator_settings_store import get_settings_or_defaults
     from app.modules.trade_executor import get_exchange_info_cached
@@ -559,6 +559,9 @@ async def _handle_place_limit(payload: STWebhookPayload, symbol: str, indicator:
 
     # Qty hesabi
     balance = await get_total_wallet_balance()
+    # v3.8: Multi-symbol margin fix — available balance ile sınırla
+    # (baska pozlar aciksa toplam wallet available'dan fazla olur, -2019 hata)
+    available = await get_available_balance()
     info = await get_exchange_info_cached(symbol)
     step_size = info["lotSize"]["stepSize"]
     min_qty = float(info["lotSize"]["minQty"])
@@ -566,7 +569,8 @@ async def _handle_place_limit(payload: STWebhookPayload, symbol: str, indicator:
     min_notional = float(info.get("minNotional", {}).get("notional", 5))
     sym_weight = sym_cfg.get("weight", 0.10)
 
-    usable = balance * sym_weight * 0.98
+    target = balance * sym_weight * 0.98
+    usable = min(target, available * 0.95)  # available'in %95'i guvenli
     raw_qty = usable / price if price > 0 else 0.0
     quantity = round_step_size(raw_qty, step_size)
 
@@ -1082,7 +1086,7 @@ async def _activate_pine2_and_deferred(
     """
     from app.modules import webhook_order_tracker as tracker
     from app.modules.binance_client import (
-        cancel_all_open_orders, get_total_wallet_balance,
+        cancel_all_open_orders, get_available_balance, get_total_wallet_balance,
         place_limit_order, place_stop_market_instant, place_take_profit_market_order,
         round_price, round_step_size,
     )
@@ -1138,16 +1142,18 @@ async def _activate_pine2_and_deferred(
     deferred_price_raw = mini_tp * (0.999 if new_is_long else 1.001)
     deferred_price = round_price(deferred_price_raw, tick_size)
 
-    # Qty hesabi (yeni poz icin)
+    # Qty hesabi (yeni poz icin) — available balance ile sınırla
     try:
         balance = await get_total_wallet_balance()
+        available = await get_available_balance()
         sym_cfg = await get_settings_or_defaults(symbol)
         sym_weight = sym_cfg.get("weight", 0.10)
         step_size = info["lotSize"]["stepSize"]
         min_qty = float(info["lotSize"]["minQty"])
         min_notional = float(info.get("minNotional", {}).get("notional", 5))
 
-        usable = balance * sym_weight * 0.98
+        target = balance * sym_weight * 0.98
+        usable = min(target, available * 0.95)
         raw_qty = usable / float(deferred_price) if float(deferred_price) > 0 else 0.0
         new_qty = round_step_size(raw_qty, step_size)
 
