@@ -735,7 +735,7 @@ async def _handle_place_sl(payload: STWebhookPayload, symbol: str, indicator: st
     """
     from app.modules import webhook_order_tracker as tracker
     from app.modules.binance_client import (
-        get_position_risk, place_stop_market_instant, round_price,
+        get_open_algo_orders, get_position_risk, place_stop_market_instant, round_price,
     )
     from app.modules.trade_executor import get_exchange_info_cached
 
@@ -747,7 +747,7 @@ async def _handle_place_sl(payload: STWebhookPayload, symbol: str, indicator: st
     if stop_price is None or stop_price <= 0:
         return JSONResponse(status_code=400, content={"detail": f"PLACE_SL stop_price gecersiz: {payload.stop_price}"})
 
-    # Idempotency — ayni poz için ikinci PLACE_SL
+    # Idempotency — ayni poz için ikinci PLACE_SL (Redis flag)
     if await tracker.is_sl_placed(symbol):
         log.info("place_sl_already_placed", symbol=symbol)
         return JSONResponse(content={"status": "already_placed", "symbol": symbol})
@@ -762,6 +762,30 @@ async def _handle_place_sl(payload: STWebhookPayload, symbol: str, indicator: st
     if pos_amt == 0:
         log.warning("place_sl_no_position", symbol=symbol)
         return JSONResponse(content={"status": "no_position", "symbol": symbol})
+
+    # v3.9: DUPLICATE SL KORUMASI — Binance'ta ZATEN STOP_MARKET algo var mi?
+    # POSITION_STATUS handler ile PLACE_SL race'inde ikisi de "SL yok" gorup
+    # ikili koyuyor idi. 2026-08-04 MYX bug'i bu yuzden. Simdi Binance sor.
+    try:
+        expected_close_side = "SELL" if pos_amt > 0 else "BUY"
+        open_algos = await get_open_algo_orders(symbol)
+        for o in open_algos:
+            otype = str(o.get("orderType") or o.get("type", ""))
+            oside = str(o.get("side", ""))
+            if otype == "STOP_MARKET" and oside == expected_close_side:
+                log.info("place_sl_binance_already_has", symbol=symbol,
+                         existing_algo=o.get("algoId"))
+                await tracker.mark_sl_placed(symbol)  # flag'i doldur
+                await tracker.mark_flip_decided(symbol)
+                await tracker.clear_fill_bar_check(symbol)
+                return JSONResponse(content={
+                    "status": "already_placed_on_binance",
+                    "symbol": symbol,
+                    "existing_algo": o.get("algoId"),
+                })
+    except Exception as e:
+        log.warning("place_sl_duplicate_check_failed", symbol=symbol, error=str(e))
+        # Kontrol basarisiz olsa bile devam et — mevcut Redis flag zaten var
 
     # Yon sanity check: LONG poz (positionAmt>0) i̇çin SL kapatma yonu SELL,
     # SHORT poz (<0) i̇çin BUY olmali.
@@ -1070,7 +1094,12 @@ async def _handle_position_status(payload: STWebhookPayload, symbol: str, indica
     # SL self-heal
     if pine_sl_price and pine_sl_price > 0:
         pine_sl_rounded = round_price(pine_sl_price, tick_size)
-        if not has_sl:
+        # v3.9: Redis flag DUPLICATE koruma — race'de PLACE_SL zaten koyduysa skip
+        if not has_sl and await tracker.is_sl_placed(symbol):
+            healed["sl_skipped_by_flag"] = True
+            log.info("position_status_sl_skipped_flag", symbol=symbol,
+                     reason="Redis flag: PLACE_SL zaten SL koydu")
+        elif not has_sl:
             try:
                 await place_stop_market_instant(symbol, close_side, qty, float(pine_sl_rounded))
                 await tracker.mark_sl_placed(symbol)

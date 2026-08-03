@@ -509,7 +509,10 @@ async def place_stop_market_instant(
 ) -> dict:
     """Place STOP_MARKET order — giris emriyle ayni anda konur.
 
-    reduceOnly YOK — pozisyon olmadan da konabilir.
+    reduceOnly=TRUE (kritik!). Duplicate SL algo fire ettiginde ikinci
+    emrin poz FLAT oldugunda ters yön acmasi engellenir.
+    Onceki versiyonda reduceOnly YOK'tu — bu bug 2026-08-04'te MYX
+    duplicate SL sonucu istem disi SHORT acilmasina yol acti (fix c05eda6).
     algoOrder API kullanir (normal order API STOP_MARKET desteklemiyor).
     """
     client = await get_client()
@@ -520,6 +523,7 @@ async def place_stop_market_instant(
         "algoType": "CONDITIONAL",
         "quantity": quantity,
         "triggerPrice": stop_price,
+        "reduceOnly": "true",  # KRITIK — duplicate fire icin
     })
     resp = await client.post("/fapi/v1/algoOrder", params=params)
     _raise_for_binance(resp)
