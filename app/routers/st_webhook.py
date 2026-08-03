@@ -634,7 +634,7 @@ async def _handle_cancel(payload: STWebhookPayload, symbol: str, indicator: str)
     kararini HTF_STATUS handler verecek (Pine 1 protokolu ya Pine 2 protokolu).
     """
     from app.modules import webhook_order_tracker as tracker
-    from app.modules.binance_client import cancel_order, get_position_risk
+    from app.modules.binance_client import cancel_order, get_open_orders, get_position_risk
 
     reason = (payload.reason or "unknown").strip()
 
@@ -661,8 +661,40 @@ async def _handle_cancel(payload: STWebhookPayload, symbol: str, indicator: str)
 
     existing = await tracker.get_pending_limit(symbol)
     if existing is None:
-        log.info("cancel_no_pending", symbol=symbol)
-        return JSONResponse(content={"status": "no_pending", "symbol": symbol})
+        # v3.9: Redis pending yok ama Binance'ta gercekte acik LIMIT olabilir
+        # (Redis desync, restart sonrasi vb.). Direkt sor + iptal.
+        try:
+            open_orders = await get_open_orders(symbol)
+            limit_orders = [o for o in open_orders if o.get("type") == "LIMIT"]
+            if not limit_orders:
+                log.info("cancel_no_pending", symbol=symbol)
+                return JSONResponse(content={"status": "no_pending", "symbol": symbol})
+            # Binance'ta acik LIMIT var — hepsini iptal
+            cancelled_ids = []
+            for o in limit_orders:
+                oid = o.get("orderId")
+                try:
+                    await cancel_order(symbol, int(oid))
+                    cancelled_ids.append(oid)
+                except Exception as ce:
+                    msg = str(ce).lower()
+                    if "-2011" in msg or "unknown order" in msg or "does not exist" in msg:
+                        cancelled_ids.append(oid)  # zaten gitmis, ok
+                    else:
+                        log.warning("cancel_orphan_failed", symbol=symbol,
+                                    order_id=oid, error=str(ce))
+            log.info("cancel_orphan_cleaned", symbol=symbol,
+                     order_ids=cancelled_ids, reason=reason)
+            return JSONResponse(content={
+                "status": "cancelled_orphan",
+                "symbol": symbol,
+                "order_ids": cancelled_ids,
+                "reason": reason,
+                "message": "Redis'te pending yoktu ama Binance'ta acik LIMIT vardi",
+            })
+        except Exception as e:
+            log.warning("cancel_open_orders_check_failed", symbol=symbol, error=str(e))
+            return JSONResponse(content={"status": "no_pending", "symbol": symbol})
 
     order_id = existing.get("orderId")
     if not order_id:

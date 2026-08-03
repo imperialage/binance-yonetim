@@ -468,6 +468,17 @@ async def cancel_order(symbol: str, order_id: int) -> dict:
     return resp.json()
 
 
+async def get_open_orders(symbol: str) -> list[dict]:
+    """Belirli sembol icin acik LIMIT/MARKET emirleri.
+    /fapi/v1/openOrders — sadece regular emirler (algo değil)."""
+    client = await get_client()
+    params = _sign({"symbol": symbol})
+    resp = await client.get("/fapi/v1/openOrders", params=params)
+    _raise_for_binance(resp)
+    data = resp.json()
+    return data if isinstance(data, list) else []
+
+
 async def place_market_order(
     symbol: str,
     side: str,
