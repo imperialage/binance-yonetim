@@ -707,15 +707,22 @@ async def _handle_cancel(payload: STWebhookPayload, symbol: str, indicator: str)
             except Exception as e:
                 log.warning("cancel_protocol_list_algos_failed", symbol=symbol, error=str(e))
 
-            # 2) Yeni muhafazakar TP + SL — v3.14 SL lock
+            # 2) Yeni muhafazakar TP + SL — v3.15 algo lock (TP + SL ayni lock)
             tp_ok = sl_ok = False
             tp_err = sl_err = None
-            try:
-                await place_take_profit_market_order(symbol, close_side, qty, new_tp)
-                tp_ok = True
-            except Exception as e:
-                tp_err = str(e)
-                log.error("cancel_protocol_tp_failed", symbol=symbol, error=tp_err)
+            cancel_tp_lock = await tracker.try_acquire_sl_lock(symbol)
+            if not cancel_tp_lock:
+                tp_err = "tp_lock_busy"
+                log.info("cancel_protocol_tp_lock_busy", symbol=symbol)
+            else:
+                try:
+                    await place_take_profit_market_order(symbol, close_side, qty, new_tp)
+                    tp_ok = True
+                except Exception as e:
+                    tp_err = str(e)
+                    log.error("cancel_protocol_tp_failed", symbol=symbol, error=tp_err)
+                finally:
+                    await tracker.release_sl_lock(symbol)
             # SL — atomic lock
             cancel_sl_lock = await tracker.try_acquire_sl_lock(symbol)
             if not cancel_sl_lock:
@@ -1265,24 +1272,33 @@ async def _handle_position_status(payload: STWebhookPayload, symbol: str, indica
                     log.warning("position_status_algo_cancel_failed",
                                 symbol=symbol, algo_id=algo_id, error=str(e))
 
-    # ── TP RECONCILE ──
+    # ── TP RECONCILE ── v3.15: algo lock (fill_event TP ile race koruma)
     if pine_tp_price and pine_tp_price > 0:
         pine_tp_rounded = float(round_price(pine_tp_price, tick_size))
         if _algo_matches(tp_algos, pine_tp_rounded):
             healed["tp_ok"] = pine_tp_rounded  # zaten doğru, dokunma
         else:
-            # Duplicate ya da yanlış fiyat → hepsini sil + doğrusunu koy
-            if len(tp_algos) > 0:
-                await _cancel_algos(tp_algos,
-                                    f"tp_reconcile (n={len(tp_algos)}, target={pine_tp_rounded})")
-            try:
-                await place_take_profit_market_order(symbol, close_side, qty, pine_tp_rounded)
-                healed["tp_placed"] = pine_tp_rounded
-                log.info("position_status_tp_reconciled", symbol=symbol,
-                         old_count=len(tp_algos), new_tp=pine_tp_rounded)
-            except Exception as e:
-                healed["tp_error"] = str(e)
-                log.warning("position_status_tp_place_failed", symbol=symbol, error=str(e))
+            tp_lock_acq = await tracker.try_acquire_sl_lock(symbol)  # ayni "algo_lock"
+            if not tp_lock_acq:
+                healed["tp_skipped_lock_busy"] = True
+                log.info("position_status_tp_lock_busy", symbol=symbol,
+                         reason="fill_event veya baska islem algo lock aldi")
+            else:
+                try:
+                    # Duplicate ya da yanlış fiyat → hepsini sil + doğrusunu koy
+                    if len(tp_algos) > 0:
+                        await _cancel_algos(tp_algos,
+                                            f"tp_reconcile (n={len(tp_algos)}, target={pine_tp_rounded})")
+                    try:
+                        await place_take_profit_market_order(symbol, close_side, qty, pine_tp_rounded)
+                        healed["tp_placed"] = pine_tp_rounded
+                        log.info("position_status_tp_reconciled", symbol=symbol,
+                                 old_count=len(tp_algos), new_tp=pine_tp_rounded)
+                    except Exception as e:
+                        healed["tp_error"] = str(e)
+                        log.warning("position_status_tp_place_failed", symbol=symbol, error=str(e))
+                finally:
+                    await tracker.release_sl_lock(symbol)
 
     # ── SL RECONCILE ── (v3.14: atomic lock ile PLACE_SL race korumasi)
     if pine_sl_price and pine_sl_price > 0:
@@ -1396,12 +1412,20 @@ async def _activate_pine2_and_deferred(
     sl_px = round_price(sl_raw, tick_size)
 
     # 2) Mini-TP
-    try:
-        await place_take_profit_market_order(symbol, close_side, qty, float(mini_tp))
-        result["mini_tp"] = float(mini_tp)
-    except Exception as e:
-        result["mini_tp_err"] = str(e)
-        log.error("pine2_mini_tp_failed", symbol=symbol, error=str(e))
+    # v3.15: mini-TP de algo lock ile
+    pine2_tp_lock = await tracker.try_acquire_sl_lock(symbol)
+    if not pine2_tp_lock:
+        result["mini_tp_err"] = "tp_lock_busy"
+        log.info("pine2_tp_lock_busy", symbol=symbol)
+    else:
+        try:
+            await place_take_profit_market_order(symbol, close_side, qty, float(mini_tp))
+            result["mini_tp"] = float(mini_tp)
+        except Exception as e:
+            result["mini_tp_err"] = str(e)
+            log.error("pine2_mini_tp_failed", symbol=symbol, error=str(e))
+        finally:
+            await tracker.release_sl_lock(symbol)
 
     # 3) SL — v3.14 atomic lock (PLACE_SL race korumasi)
     pine2_sl_lock = await tracker.try_acquire_sl_lock(symbol)
@@ -1615,13 +1639,20 @@ async def handle_fill_event(order: dict) -> None:
     log.info("webhook_fill_detected", symbol=symbol, side=side, avg_price=avg_price,
              qty=filled_qty, client_order_id=client_order_id)
 
-    # TP algo emri (varsa)
+    # TP algo emri (varsa) — v3.15: algo lock ile POSITION_STATUS race korumasi
     if tp_price is not None and tp_price > 0:
-        try:
-            await place_take_profit_market_order(symbol, close_side, filled_qty, float(tp_price))
-            log.info("webhook_tp_placed_on_fill", symbol=symbol, tp_price=tp_price, source="webhook_v3")
-        except Exception as e:
-            log.error("webhook_tp_place_failed_on_fill", symbol=symbol, error=str(e))
+        tp_lock = await tracker.try_acquire_sl_lock(symbol)  # ayni "algo_lock"
+        if not tp_lock:
+            log.info("webhook_tp_lock_busy", symbol=symbol,
+                     reason="POSITION_STATUS veya baska islem algo lock aldi")
+        else:
+            try:
+                await place_take_profit_market_order(symbol, close_side, filled_qty, float(tp_price))
+                log.info("webhook_tp_placed_on_fill", symbol=symbol, tp_price=tp_price, source="webhook_v3")
+            except Exception as e:
+                log.error("webhook_tp_place_failed_on_fill", symbol=symbol, error=str(e))
+            finally:
+                await tracker.release_sl_lock(symbol)
     else:
         log.info("webhook_no_tp_in_pending", symbol=symbol)
 
