@@ -894,16 +894,64 @@ async def _handle_place_sl(payload: STWebhookPayload, symbol: str, indicator: st
     # SHORT poz (<0) i̇çin BUY olmali.
     expected_side = "SELL" if pos_amt > 0 else "BUY"
     if side != expected_side:
-        log.warning("place_sl_side_mismatch", symbol=symbol, pos_amt=pos_amt,
-                    got=side, expected=expected_side)
-        # Yine de expected_side ile devam et — Pine tarafi hatasi olabilir, poz gercektir
-        side = expected_side
+        # v3.13 KRITIK FIX: Pine state bar icinde flip olmus, TERS YON icin
+        # SL fiyati gonderiyor (LONG entry ustunde vs SHORT entry altinda).
+        # Eski davranis: side'i duzelt + stop_price'i olduğu gibi kullan
+        # → "immediately trigger" ya da anlik yanlis SL fire.
+        # Yeni: SKIP. Emergency SL (%2) zaten korumada, POSITION_STATUS bar
+        # close'ta mismatch tespit edip Pine 2 protokolu (%0.25 TP + %2 SL)
+        # uygular. Yanlis fiyatta SL koymaktansa hiç koymamak daha güvenli.
+        log.warning("place_sl_side_mismatch_skipped", symbol=symbol,
+                    pos_amt=pos_amt, pine_side=side, expected_side=expected_side,
+                    pine_stop_price=stop_price,
+                    reason="Pine state bar-flip; emergency SL koruma, POSITION_STATUS karar verecek")
+        return JSONResponse(content={
+            "status": "side_mismatch_skipped",
+            "symbol": symbol,
+            "pos_amt": pos_amt,
+            "pine_side": side,
+            "expected_side": expected_side,
+            "pine_stop_price": stop_price,
+            "message": "Pine ters yön SL fiyati gonderdi; skip → emergency SL koruma + POSITION_STATUS karar",
+        })
 
     # Tick round
     info = await get_exchange_info_cached(symbol)
     tick_size = info["priceFilter"]["tickSize"]
     stop_px = round_price(stop_price, tick_size)
     qty = abs(pos_amt)
+
+    # v3.13 SANITY CHECK: SL fiyat POZ YONU icin mantikli mi?
+    # LONG poz için SL entry'nin ALTINDA olmali. SHORT için ÜSTÜNDE.
+    # Entry price'i pozisyondan al.
+    entry_price_for_check = 0.0
+    for p in positions:
+        if p.get("symbol") == symbol:
+            entry_price_for_check = float(p.get("entryPrice", 0))
+            break
+    if entry_price_for_check > 0:
+        if pos_amt > 0 and float(stop_px) >= entry_price_for_check:
+            # LONG poz, SL entry'nin üstünde → mantıksız
+            log.warning("place_sl_price_illogical_skipped", symbol=symbol,
+                        pos_amt=pos_amt, entry=entry_price_for_check,
+                        stop_px=float(stop_px),
+                        reason="LONG poz + SL entry üstünde (Pine ters yön hesap)")
+            return JSONResponse(content={
+                "status": "sl_price_illogical_skipped",
+                "symbol": symbol, "entry": entry_price_for_check,
+                "stop_px": float(stop_px), "pos_amt": pos_amt,
+            })
+        if pos_amt < 0 and float(stop_px) <= entry_price_for_check:
+            # SHORT poz, SL entry'nin altında → mantıksız
+            log.warning("place_sl_price_illogical_skipped", symbol=symbol,
+                        pos_amt=pos_amt, entry=entry_price_for_check,
+                        stop_px=float(stop_px),
+                        reason="SHORT poz + SL entry altinda (Pine ters yön hesap)")
+            return JSONResponse(content={
+                "status": "sl_price_illogical_skipped",
+                "symbol": symbol, "entry": entry_price_for_check,
+                "stop_px": float(stop_px), "pos_amt": pos_amt,
+            })
 
     try:
         await place_stop_market_instant(symbol, side, qty, float(stop_px))
