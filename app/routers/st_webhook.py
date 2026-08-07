@@ -1303,13 +1303,19 @@ async def _activate_pine2_and_deferred(
     info = await get_exchange_info_cached(symbol)
     tick_size = info["priceFilter"]["tickSize"]
 
+    # v3.12: Pine payload'daki flip_pct/sl_pct'i IGNORE et — kullanici istegi:
+    # ters pozisyon protokolu icin CANCEL ile AYNI degerler.
+    # Pine 2 (POSITION_STATUS mismatch) ve CANCEL protokolu ayni yuzdeler.
+    reverse_tp_pct = settings.cancel_tp_pct   # %0.25
+    reverse_sl_pct = settings.cancel_sl_pct   # %2
+
     if binance_is_long:
-        mini_tp_raw = binance_entry * (1 + flip_pct)
-        sl_raw = binance_entry * (1 - sl_pct)
+        mini_tp_raw = binance_entry * (1 + reverse_tp_pct)
+        sl_raw = binance_entry * (1 - reverse_sl_pct)
         close_side = "SELL"
     else:
-        mini_tp_raw = binance_entry * (1 - flip_pct)
-        sl_raw = binance_entry * (1 + sl_pct)
+        mini_tp_raw = binance_entry * (1 - reverse_tp_pct)
+        sl_raw = binance_entry * (1 + reverse_sl_pct)
         close_side = "BUY"
 
     mini_tp = round_price(mini_tp_raw, tick_size)
