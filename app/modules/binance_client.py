@@ -688,6 +688,15 @@ async def get_all_orders(
     return all_orders
 
 
+async def cancel_algo_order(symbol: str, algo_id: int | str) -> dict:
+    """Tek algo emri iptal (STOP_MARKET/TAKE_PROFIT_MARKET)."""
+    client = await get_client()
+    params = _sign({"algoId": int(algo_id)})
+    resp = await client.delete("/fapi/v1/algoOrder", params=params)
+    _raise_for_binance(resp)
+    return resp.json() if resp.content else {}
+
+
 async def get_open_algo_orders(symbol: str) -> list[dict]:
     """Sadece OPEN (WORKING) algo orders (TP/SL) — /fapi/v1/openAlgoOrders.
 

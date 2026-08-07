@@ -39,6 +39,7 @@ KEY_FLIP_WATCH = "webhook_flip_watch:{sym}"
 KEY_FILL_BAR_CHECK = "webhook_fill_bar_check:{sym}"  # fill bar close HTF karari icin bekle
 KEY_FLIP_DECIDED = "webhook_flip_decided:{sym}"      # bar close karari verildi (sonraki HTF_STATUS ignore)
 KEY_DEFERRED = "webhook_deferred:{sym}"              # v3.8: Pine 2 sonrasi dogru yon LIMIT emri
+KEY_EMERGENCY_SL = "webhook_emergency_sl:{sym}"      # v3.10: Fill aninda konulan gecici SL algo_id
 
 # TTL değerleri (saniye)
 TTL_LIMIT = 6 * 60 * 60      # 6 saat — dolmayan pending emri unut
@@ -48,6 +49,7 @@ TTL_FLIP_WATCH = 6 * 60 * 60 # 6 saat — bar close + margin cok gecmeden temizl
 TTL_FILL_BAR_CHECK = 6 * 60 * 60  # 6 saat — poz suresince
 TTL_FLIP_DECIDED = 24 * 60 * 60  # 24 saat — poz kapanisinda silinir
 TTL_DEFERRED = 30 * 60       # 30 dakika — 2 bar 15m TF, eski deferred gecersiz
+TTL_EMERGENCY_SL = 6 * 60 * 60  # 6 saat — poz suresince yeterli
 
 
 def _key(pattern: str, symbol: str) -> str:
@@ -321,12 +323,47 @@ async def clear_deferred_entry(symbol: str) -> None:
         await log.awarning("webhook_tracker_clear_deferred_failed", symbol=symbol, error=str(e))
 
 
+# ── Emergency SL (v3.10) — fill aninda konulan gecici %2 SL ─────────────
+
+async def set_emergency_sl(symbol: str, algo_id: int | str | None, sl_price: float) -> None:
+    """Fill aninda konulan gecici SL algo_id'yi kaydet.
+    Pine PLACE_SL geldiginde bu algo_id iptal edilir + Pine SL koyulur."""
+    if algo_id is None:
+        return
+    try:
+        r = await get_redis()
+        await r.set(_key(KEY_EMERGENCY_SL, symbol),
+                    json.dumps({"algo_id": str(algo_id), "sl_price": float(sl_price)}),
+                    ex=TTL_EMERGENCY_SL)
+    except Exception as e:
+        await log.awarning("webhook_tracker_set_emergency_sl_failed", symbol=symbol, error=str(e))
+
+
+async def get_emergency_sl(symbol: str) -> dict | None:
+    try:
+        r = await get_redis()
+        raw = await r.get(_key(KEY_EMERGENCY_SL, symbol))
+        if raw is None:
+            return None
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+async def clear_emergency_sl(symbol: str) -> None:
+    try:
+        r = await get_redis()
+        await r.delete(_key(KEY_EMERGENCY_SL, symbol))
+    except Exception as e:
+        await log.awarning("webhook_tracker_clear_emergency_sl_failed", symbol=symbol, error=str(e))
+
+
 # ── Bulk cleanup (poz tamamen kapandiginda) ─────────────────────────────
 
 async def clear_all_state(symbol: str) -> None:
     """Poz kapanis eventinde tum webhook state'ini temizle:
     pending limit, SL flag, poz meta, flip watch, fill bar check, flip decided,
-    deferred entry.
+    deferred entry, emergency SL.
     """
     await clear_pending_limit(symbol)
     await clear_sl_flag(symbol)
@@ -335,4 +372,5 @@ async def clear_all_state(symbol: str) -> None:
     await clear_fill_bar_check(symbol)
     await clear_flip_decided(symbol)
     await clear_deferred_entry(symbol)
+    await clear_emergency_sl(symbol)
     await log.ainfo("webhook_tracker_cleared_all", symbol=symbol)

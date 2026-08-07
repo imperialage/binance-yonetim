@@ -206,6 +206,11 @@ class Settings(BaseSettings):
     flip_sl_pct: float = 0.005          # %0.5 SL (HTF_STATUS fallback default)
     flip_check_margin_ms: int = 5_000   # (flip_watcher devre disi — kullanilmaz)
 
+    # v3.10: Fill aninda gecici SL — Pine PLACE_SL bar close'ta gelene kadar
+    # poz korumasiz kalmasin. Pine PLACE_SL geldiginde gecici iptal + Pine SL.
+    emergency_sl_enabled: bool = True
+    emergency_sl_pct: float = 0.02      # %2 gecici SL
+
     # Per-timeframe strategy overrides
     trading_timeframes: str = "5m"      # Active TFs: "5m" or "1m" or "1m,5m"
     strategy_1m_sl_pct: float = 0.0035  # 1m: %0.35 stop-loss
