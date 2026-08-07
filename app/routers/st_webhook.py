@@ -707,7 +707,7 @@ async def _handle_cancel(payload: STWebhookPayload, symbol: str, indicator: str)
             except Exception as e:
                 log.warning("cancel_protocol_list_algos_failed", symbol=symbol, error=str(e))
 
-            # 2) Yeni muhafazakar TP + SL
+            # 2) Yeni muhafazakar TP + SL — v3.14 SL lock
             tp_ok = sl_ok = False
             tp_err = sl_err = None
             try:
@@ -716,13 +716,21 @@ async def _handle_cancel(payload: STWebhookPayload, symbol: str, indicator: str)
             except Exception as e:
                 tp_err = str(e)
                 log.error("cancel_protocol_tp_failed", symbol=symbol, error=tp_err)
-            try:
-                await place_stop_market_instant(symbol, close_side, qty, new_sl)
-                await tracker.mark_sl_placed(symbol)
-                sl_ok = True
-            except Exception as e:
-                sl_err = str(e)
-                log.error("cancel_protocol_sl_failed", symbol=symbol, error=sl_err)
+            # SL — atomic lock
+            cancel_sl_lock = await tracker.try_acquire_sl_lock(symbol)
+            if not cancel_sl_lock:
+                sl_err = "sl_lock_busy"
+                log.info("cancel_protocol_sl_lock_busy", symbol=symbol)
+            else:
+                try:
+                    await place_stop_market_instant(symbol, close_side, qty, new_sl)
+                    await tracker.mark_sl_placed(symbol)
+                    sl_ok = True
+                except Exception as e:
+                    sl_err = str(e)
+                    log.error("cancel_protocol_sl_failed", symbol=symbol, error=sl_err)
+                finally:
+                    await tracker.release_sl_lock(symbol)
 
             # Emergency SL kaydini temizle (artik CANCEL SL geçerli)
             await tracker.clear_emergency_sl(symbol)
@@ -855,6 +863,12 @@ async def _handle_place_sl(payload: STWebhookPayload, symbol: str, indicator: st
         log.info("place_sl_already_placed", symbol=symbol)
         return JSONResponse(content={"status": "already_placed", "symbol": symbol})
 
+    # v3.14: SL LOCK — race koruma (POSITION_STATUS ile paralel gelme)
+    if not await tracker.try_acquire_sl_lock(symbol):
+        log.info("place_sl_lock_busy", symbol=symbol,
+                 reason="POSITION_STATUS veya baska bir SL request lock aldi")
+        return JSONResponse(content={"status": "lock_busy", "symbol": symbol})
+
     # Pozisyon var mi
     positions = await get_position_risk(symbol)
     pos_amt = 0.0
@@ -972,6 +986,9 @@ async def _handle_place_sl(payload: STWebhookPayload, symbol: str, indicator: st
     except Exception as e:
         log.error("place_sl_failed", symbol=symbol, error=str(e))
         return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
+    finally:
+        # v3.14: SL lock her durumda serbest birak
+        await tracker.release_sl_lock(symbol)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1267,41 +1284,50 @@ async def _handle_position_status(payload: STWebhookPayload, symbol: str, indica
                 healed["tp_error"] = str(e)
                 log.warning("position_status_tp_place_failed", symbol=symbol, error=str(e))
 
-    # ── SL RECONCILE ──
+    # ── SL RECONCILE ── (v3.14: atomic lock ile PLACE_SL race korumasi)
     if pine_sl_price and pine_sl_price > 0:
         pine_sl_rounded = float(round_price(pine_sl_price, tick_size))
-        # Emergency SL varsa iptal — Pine SL yerine gececek
-        emg = await tracker.get_emergency_sl(symbol)
-        if emg is not None:
-            try:
-                await cancel_algo_order(symbol, emg["algo_id"])
-                log.info("emergency_sl_cancelled", symbol=symbol,
-                         algo_id=emg["algo_id"], reason="position_status_sl_reconcile")
-            except Exception as e:
-                msg = str(e).lower()
-                if "-2011" not in msg and "unknown" not in msg and "not exist" not in msg:
-                    log.warning("emergency_sl_cancel_failed",
-                                symbol=symbol, algo_id=emg["algo_id"], error=str(e))
-            await tracker.clear_emergency_sl(symbol)
-            # sl_algos listesinden de temizle (aynı algo_id olabilir)
-            emg_id_str = str(emg["algo_id"])
-            sl_algos = [a for a in sl_algos if str(a[0]) != emg_id_str]
-
-        if _algo_matches(sl_algos, pine_sl_rounded):
-            healed["sl_ok"] = pine_sl_rounded  # zaten doğru
-            await tracker.mark_sl_placed(symbol)
+        sl_lock_acquired = await tracker.try_acquire_sl_lock(symbol)
+        if not sl_lock_acquired:
+            healed["sl_skipped_lock_busy"] = True
+            log.info("position_status_sl_lock_busy", symbol=symbol,
+                     reason="PLACE_SL veya baska bir islem lock aldi")
         else:
-            if len(sl_algos) > 0:
-                await _cancel_algos(sl_algos,
-                                    f"sl_reconcile (n={len(sl_algos)}, target={pine_sl_rounded})")
             try:
-                await place_stop_market_instant(symbol, close_side, qty, pine_sl_rounded)
-                await tracker.mark_sl_placed(symbol)
-                healed["sl_placed"] = pine_sl_rounded
-                log.info("position_status_sl_reconciled", symbol=symbol,
-                         old_count=len(sl_algos), new_sl=pine_sl_rounded)
-            except Exception as e:
-                log.warning("position_status_sl_update_failed", symbol=symbol, error=str(e))
+                # Emergency SL varsa iptal — Pine SL yerine gececek
+                emg = await tracker.get_emergency_sl(symbol)
+                if emg is not None:
+                    try:
+                        await cancel_algo_order(symbol, emg["algo_id"])
+                        log.info("emergency_sl_cancelled", symbol=symbol,
+                                 algo_id=emg["algo_id"], reason="position_status_sl_reconcile")
+                    except Exception as e:
+                        msg = str(e).lower()
+                        if "-2011" not in msg and "unknown" not in msg and "not exist" not in msg:
+                            log.warning("emergency_sl_cancel_failed",
+                                        symbol=symbol, algo_id=emg["algo_id"], error=str(e))
+                    await tracker.clear_emergency_sl(symbol)
+                    # sl_algos listesinden de temizle (aynı algo_id olabilir)
+                    emg_id_str = str(emg["algo_id"])
+                    sl_algos = [a for a in sl_algos if str(a[0]) != emg_id_str]
+
+                if _algo_matches(sl_algos, pine_sl_rounded):
+                    healed["sl_ok"] = pine_sl_rounded  # zaten doğru
+                    await tracker.mark_sl_placed(symbol)
+                else:
+                    if len(sl_algos) > 0:
+                        await _cancel_algos(sl_algos,
+                                            f"sl_reconcile (n={len(sl_algos)}, target={pine_sl_rounded})")
+                    try:
+                        await place_stop_market_instant(symbol, close_side, qty, pine_sl_rounded)
+                        await tracker.mark_sl_placed(symbol)
+                        healed["sl_placed"] = pine_sl_rounded
+                        log.info("position_status_sl_reconciled", symbol=symbol,
+                                 old_count=len(sl_algos), new_sl=pine_sl_rounded)
+                    except Exception as e:
+                        log.warning("position_status_sl_update_failed", symbol=symbol, error=str(e))
+            finally:
+                await tracker.release_sl_lock(symbol)
 
     return JSONResponse(content={
         "status": "aligned",
@@ -1377,14 +1403,21 @@ async def _activate_pine2_and_deferred(
         result["mini_tp_err"] = str(e)
         log.error("pine2_mini_tp_failed", symbol=symbol, error=str(e))
 
-    # 3) SL
-    try:
-        await place_stop_market_instant(symbol, close_side, qty, float(sl_px))
-        await tracker.mark_sl_placed(symbol)
-        result["sl"] = float(sl_px)
-    except Exception as e:
-        result["sl_err"] = str(e)
-        log.error("pine2_sl_failed", symbol=symbol, error=str(e))
+    # 3) SL — v3.14 atomic lock (PLACE_SL race korumasi)
+    pine2_sl_lock = await tracker.try_acquire_sl_lock(symbol)
+    if not pine2_sl_lock:
+        result["sl_err"] = "sl_lock_busy"
+        log.info("pine2_sl_lock_busy", symbol=symbol)
+    else:
+        try:
+            await place_stop_market_instant(symbol, close_side, qty, float(sl_px))
+            await tracker.mark_sl_placed(symbol)
+            result["sl"] = float(sl_px)
+        except Exception as e:
+            result["sl_err"] = str(e)
+            log.error("pine2_sl_failed", symbol=symbol, error=str(e))
+        finally:
+            await tracker.release_sl_lock(symbol)
 
     # 4) DEFERRED LIMIT — dogru yon icin
     #    Yeni poz yonu = mevcut yonun tersi (Pine 2 mini-TP ters pozu kapatiyor,
@@ -1595,27 +1628,33 @@ async def handle_fill_event(order: dict) -> None:
     # v3.10: GECICI SL — Pine PLACE_SL bar close'ta gelene kadar (7-8 dk) poz
     # korumasiz kalmasin. %2 stop, avg_price'a gore. Pine SL gelince PLACE_SL
     # handler bu gecici SL'i iptal edip Pine'in SL'ini koyar.
+    # v3.14: SL lock — race korumasi
     if settings.emergency_sl_enabled and avg_price > 0:
-        try:
-            from app.modules.binance_client import place_stop_market_instant, round_price
-            from app.modules.trade_executor import get_exchange_info_cached
-            info = await get_exchange_info_cached(symbol)
-            tick_size = info["priceFilter"]["tickSize"]
-            if side == "BUY":  # LONG poz, SL close_side=SELL, fiyat altta
-                emg_sl_raw = avg_price * (1 - settings.emergency_sl_pct)
-            else:              # SHORT poz, SL close_side=BUY, fiyat üstte
-                emg_sl_raw = avg_price * (1 + settings.emergency_sl_pct)
-            emg_sl_px = round_price(emg_sl_raw, tick_size)
-            emg_result = await place_stop_market_instant(
-                symbol, close_side, filled_qty, float(emg_sl_px))
-            emg_algo_id = emg_result.get("algoId")
-            # Redis'e kaydet — Pine PLACE_SL gelince bu algo_id iptal edilecek
-            await tracker.set_emergency_sl(symbol, emg_algo_id, float(emg_sl_px))
-            log.warning("emergency_sl_placed", symbol=symbol,
-                        algo_id=emg_algo_id, sl_price=float(emg_sl_px),
-                        pct=settings.emergency_sl_pct)
-        except Exception as e:
-            log.error("emergency_sl_failed", symbol=symbol, error=str(e))
+        emg_lock = await tracker.try_acquire_sl_lock(symbol)
+        if not emg_lock:
+            log.info("emergency_sl_lock_busy", symbol=symbol)
+        else:
+            try:
+                from app.modules.binance_client import place_stop_market_instant, round_price
+                from app.modules.trade_executor import get_exchange_info_cached
+                info = await get_exchange_info_cached(symbol)
+                tick_size = info["priceFilter"]["tickSize"]
+                if side == "BUY":  # LONG poz, SL close_side=SELL, fiyat altta
+                    emg_sl_raw = avg_price * (1 - settings.emergency_sl_pct)
+                else:              # SHORT poz, SL close_side=BUY, fiyat üstte
+                    emg_sl_raw = avg_price * (1 + settings.emergency_sl_pct)
+                emg_sl_px = round_price(emg_sl_raw, tick_size)
+                emg_result = await place_stop_market_instant(
+                    symbol, close_side, filled_qty, float(emg_sl_px))
+                emg_algo_id = emg_result.get("algoId")
+                await tracker.set_emergency_sl(symbol, emg_algo_id, float(emg_sl_px))
+                log.warning("emergency_sl_placed", symbol=symbol,
+                            algo_id=emg_algo_id, sl_price=float(emg_sl_px),
+                            pct=settings.emergency_sl_pct)
+            except Exception as e:
+                log.error("emergency_sl_failed", symbol=symbol, error=str(e))
+            finally:
+                await tracker.release_sl_lock(symbol)
 
     # v3.7: Fill bar close karari HTF_STATUS'a birak — fill_bar_id_ms kaydet
     # v3.8: Yeni poz basliyor — onceki poz'un state kalintilarini temizle

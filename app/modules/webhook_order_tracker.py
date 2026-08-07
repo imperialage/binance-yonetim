@@ -40,6 +40,7 @@ KEY_FILL_BAR_CHECK = "webhook_fill_bar_check:{sym}"  # fill bar close HTF karari
 KEY_FLIP_DECIDED = "webhook_flip_decided:{sym}"      # bar close karari verildi (sonraki HTF_STATUS ignore)
 KEY_DEFERRED = "webhook_deferred:{sym}"              # v3.8: Pine 2 sonrasi dogru yon LIMIT emri
 KEY_EMERGENCY_SL = "webhook_emergency_sl:{sym}"      # v3.10: Fill aninda konulan gecici SL algo_id
+KEY_SL_LOCK = "webhook_sl_lock:{sym}"                # v3.14: SL yerlestirme atomic lock (race koruma)
 
 # TTL değerleri (saniye)
 TTL_LIMIT = 6 * 60 * 60      # 6 saat — dolmayan pending emri unut
@@ -356,6 +357,30 @@ async def clear_emergency_sl(symbol: str) -> None:
         await r.delete(_key(KEY_EMERGENCY_SL, symbol))
     except Exception as e:
         await log.awarning("webhook_tracker_clear_emergency_sl_failed", symbol=symbol, error=str(e))
+
+
+# ── SL Lock (v3.14) — atomic race koruma ────────────────────────────────
+# POSITION_STATUS ve PLACE_SL handler'lari ayni anda gelebilir.
+# openAlgoOrders sorgu → POST arasindaki ~50ms window'da ikisi de "SL yok"
+# gorup ikili koyuyordu. Redis SET NX (set if not exists) ile atomik lock.
+
+async def try_acquire_sl_lock(symbol: str, ttl_sec: int = 10) -> bool:
+    """SL lock al. Basarili ise True, biri bekliyorsa False."""
+    try:
+        r = await get_redis()
+        result = await r.set(_key(KEY_SL_LOCK, symbol), "1", nx=True, ex=ttl_sec)
+        return result is True
+    except Exception as e:
+        await log.awarning("webhook_tracker_sl_lock_failed", symbol=symbol, error=str(e))
+        return True  # lock alınamadıysa serbest bırak (fallback)
+
+
+async def release_sl_lock(symbol: str) -> None:
+    try:
+        r = await get_redis()
+        await r.delete(_key(KEY_SL_LOCK, symbol))
+    except Exception as e:
+        await log.awarning("webhook_tracker_sl_lock_release_failed", symbol=symbol, error=str(e))
 
 
 # ── Bulk cleanup (poz tamamen kapandiginda) ─────────────────────────────
