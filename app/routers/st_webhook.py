@@ -630,30 +630,115 @@ async def _handle_place_limit(payload: STWebhookPayload, symbol: str, indicator:
 async def _handle_cancel(payload: STWebhookPayload, symbol: str, indicator: str) -> JSONResponse:
     """CANCEL: HTF flip'te bekleyen LIMIT emri iptal.
 
-    v3.7 degisiklik: Poz varsa (fill oldu) CANCEL BLOKLANIR. Fill bar close
-    kararini HTF_STATUS handler verecek (Pine 1 protokolu ya Pine 2 protokolu).
+    v3.11 degisiklik: Poz varsa CANCEL PROTOKOLÜ uygula (bloklamak yerine):
+      - Mevcut TP + SL algo emirleri iptal
+      - Yeni TP: entry * (1 ± cancel_tp_pct) — muhafazakar mini kar
+      - Yeni SL: entry * (1 ∓ cancel_sl_pct) — guvenlik SL
+    Mum kapanisinda POSITION_STATUS override eder (Pine'in istedigi degerlere).
     """
     from app.modules import webhook_order_tracker as tracker
-    from app.modules.binance_client import cancel_order, get_open_orders, get_position_risk
+    from app.modules.binance_client import (
+        cancel_algo_order, cancel_order, get_open_algo_orders, get_open_orders,
+        get_position_risk, place_stop_market_instant, place_take_profit_market_order,
+        round_price,
+    )
+    from app.modules.trade_executor import get_exchange_info_cached
 
     reason = (payload.reason or "unknown").strip()
 
-    # v3.7: Poz varsa CANCEL'i uygulama — fill bar close karari HTF_STATUS'un
+    # v3.11: Poz varsa CANCEL protokolu uygula
     try:
         positions = await get_position_risk(symbol)
         pos_amt = 0.0
+        entry_price = 0.0
         for p in positions:
             if p.get("symbol") == symbol:
                 pos_amt = float(p.get("positionAmt", 0))
+                entry_price = float(p.get("entryPrice", 0))
                 break
+
         if pos_amt != 0:
-            log.info("cancel_blocked_position_open", symbol=symbol, pos_amt=pos_amt, reason=reason)
+            if not settings.cancel_protocol_enabled:
+                log.info("cancel_blocked_position_open", symbol=symbol,
+                         pos_amt=pos_amt, reason=reason)
+                return JSONResponse(content={
+                    "status": "blocked_position_open",
+                    "symbol": symbol, "pos_amt": pos_amt, "reason": reason,
+                })
+
+            # CANCEL PROTOKOLÜ — muhafazakar TP + guvenlik SL
+            is_long = pos_amt > 0
+            qty = abs(pos_amt)
+            close_side = "SELL" if is_long else "BUY"
+            info = await get_exchange_info_cached(symbol)
+            tick_size = info["priceFilter"]["tickSize"]
+
+            if is_long:
+                new_tp_raw = entry_price * (1 + settings.cancel_tp_pct)
+                new_sl_raw = entry_price * (1 - settings.cancel_sl_pct)
+            else:
+                new_tp_raw = entry_price * (1 - settings.cancel_tp_pct)
+                new_sl_raw = entry_price * (1 + settings.cancel_sl_pct)
+            new_tp = float(round_price(new_tp_raw, tick_size))
+            new_sl = float(round_price(new_sl_raw, tick_size))
+
+            # 1) Mevcut TP + SL algo emirlerini iptal (dogru side)
+            cancelled_algo_ids = []
+            try:
+                open_algos = await get_open_algo_orders(symbol)
+                for o in open_algos:
+                    otype = str(o.get("orderType") or o.get("type", ""))
+                    oside = str(o.get("side", ""))
+                    if oside != close_side:
+                        continue
+                    if otype not in ("TAKE_PROFIT_MARKET", "STOP_MARKET"):
+                        continue
+                    algo_id = o.get("algoId") or o.get("id")
+                    if not algo_id:
+                        continue
+                    try:
+                        await cancel_algo_order(symbol, algo_id)
+                        cancelled_algo_ids.append(algo_id)
+                    except Exception as ce:
+                        msg = str(ce).lower()
+                        if "-2011" not in msg and "unknown" not in msg:
+                            log.warning("cancel_protocol_algo_cancel_failed",
+                                        symbol=symbol, algo_id=algo_id, error=str(ce))
+            except Exception as e:
+                log.warning("cancel_protocol_list_algos_failed", symbol=symbol, error=str(e))
+
+            # 2) Yeni muhafazakar TP + SL
+            tp_ok = sl_ok = False
+            tp_err = sl_err = None
+            try:
+                await place_take_profit_market_order(symbol, close_side, qty, new_tp)
+                tp_ok = True
+            except Exception as e:
+                tp_err = str(e)
+                log.error("cancel_protocol_tp_failed", symbol=symbol, error=tp_err)
+            try:
+                await place_stop_market_instant(symbol, close_side, qty, new_sl)
+                await tracker.mark_sl_placed(symbol)
+                sl_ok = True
+            except Exception as e:
+                sl_err = str(e)
+                log.error("cancel_protocol_sl_failed", symbol=symbol, error=sl_err)
+
+            # Emergency SL kaydini temizle (artik CANCEL SL geçerli)
+            await tracker.clear_emergency_sl(symbol)
+
+            log.warning("cancel_protocol_activated", symbol=symbol,
+                        pos_amt=pos_amt, entry=entry_price, is_long=is_long,
+                        new_tp=new_tp, new_sl=new_sl,
+                        tp_ok=tp_ok, sl_ok=sl_ok,
+                        cancelled_count=len(cancelled_algo_ids), reason=reason)
             return JSONResponse(content={
-                "status": "blocked_position_open",
-                "symbol": symbol,
-                "pos_amt": pos_amt,
-                "reason": reason,
-                "message": "Fill bar close bekleniyor, HTF_STATUS karar verecek",
+                "status": "cancel_protocol_activated",
+                "symbol": symbol, "pos_amt": pos_amt, "reason": reason,
+                "entry": entry_price, "new_tp": new_tp, "new_sl": new_sl,
+                "tp_ok": tp_ok, "sl_ok": sl_ok,
+                "cancelled_algo_count": len(cancelled_algo_ids),
+                "tp_err": tp_err, "sl_err": sl_err,
             })
     except Exception as e:
         log.warning("cancel_position_check_failed", symbol=symbol, error=str(e))

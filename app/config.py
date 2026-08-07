@@ -211,6 +211,13 @@ class Settings(BaseSettings):
     emergency_sl_enabled: bool = True
     emergency_sl_pct: float = 0.02      # %2 gecici SL
 
+    # v3.11: CANCEL protokolu — Pine 1 CANCEL geldiginde poz varsa
+    # muhafazakar TP + SL. Pine "bu sinyal hatali" diyor, kucuk karla cikma
+    # hedefi + guvenli SL. Mum kapanisinda POSITION_STATUS override eder.
+    cancel_protocol_enabled: bool = True
+    cancel_tp_pct: float = 0.0025       # %0.25 kar (mini TP)
+    cancel_sl_pct: float = 0.02         # %2 zarar (guvenlik SL)
+
     # Per-timeframe strategy overrides
     trading_timeframes: str = "5m"      # Active TFs: "5m" or "1m" or "1m,5m"
     strategy_1m_sl_pct: float = 0.0035  # 1m: %0.35 stop-loss
