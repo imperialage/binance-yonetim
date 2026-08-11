@@ -41,6 +41,7 @@ KEY_FLIP_DECIDED = "webhook_flip_decided:{sym}"      # bar close karari verildi 
 KEY_DEFERRED = "webhook_deferred:{sym}"              # v3.8: Pine 2 sonrasi dogru yon LIMIT emri
 KEY_EMERGENCY_SL = "webhook_emergency_sl:{sym}"      # v3.10: Fill aninda konulan gecici SL algo_id
 KEY_SL_LOCK = "webhook_sl_lock:{sym}"                # v3.14: SL yerlestirme atomic lock (race koruma)
+KEY_PINE_WANTED = "webhook_pine_wanted:{sym}"        # v3.16: Pine 1 skip olsa bile istedigi fiyat (deferred icin)
 
 # TTL değerleri (saniye)
 TTL_LIMIT = 6 * 60 * 60      # 6 saat — dolmayan pending emri unut
@@ -51,6 +52,7 @@ TTL_FILL_BAR_CHECK = 6 * 60 * 60  # 6 saat — poz suresince
 TTL_FLIP_DECIDED = 24 * 60 * 60  # 24 saat — poz kapanisinda silinir
 TTL_DEFERRED = 30 * 60       # 30 dakika — 2 bar 15m TF, eski deferred gecersiz
 TTL_EMERGENCY_SL = 6 * 60 * 60  # 6 saat — poz suresince yeterli
+TTL_PINE_WANTED = 60 * 60       # 1 saat — bar close civari kullanilir
 
 
 def _key(pattern: str, symbol: str) -> str:
@@ -359,6 +361,39 @@ async def clear_emergency_sl(symbol: str) -> None:
         await log.awarning("webhook_tracker_clear_emergency_sl_failed", symbol=symbol, error=str(e))
 
 
+# ── Pine Wanted Price (v3.16) — skip olan PLACE_LIMIT fiyati ────────────
+# Poz varken Pine yeni yon PLACE_LIMIT gonderdi ama sistem "position_exists"
+# ile skip etti. Bu fiyat Pine'in "yeni pozisyon" istedigi yer. Pine 2
+# protokolu tetiklendiginde (POSITION_STATUS mismatch) deferred entry icin
+# bu fiyat oncelikli kullanilir (hesaplanan mini_tp*1.001 yerine).
+
+async def set_pine_wanted_price(symbol: str, side: str, price: float) -> None:
+    try:
+        r = await get_redis()
+        await r.set(_key(KEY_PINE_WANTED, symbol),
+                    json.dumps({"side": side.upper(), "price": float(price)}),
+                    ex=TTL_PINE_WANTED)
+    except Exception as e:
+        await log.awarning("webhook_tracker_set_pine_wanted_failed", symbol=symbol, error=str(e))
+
+
+async def get_pine_wanted_price(symbol: str) -> dict | None:
+    try:
+        r = await get_redis()
+        raw = await r.get(_key(KEY_PINE_WANTED, symbol))
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+
+async def clear_pine_wanted_price(symbol: str) -> None:
+    try:
+        r = await get_redis()
+        await r.delete(_key(KEY_PINE_WANTED, symbol))
+    except Exception as e:
+        await log.awarning("webhook_tracker_clear_pine_wanted_failed", symbol=symbol, error=str(e))
+
+
 # ── SL Lock (v3.14) — atomic race koruma ────────────────────────────────
 # POSITION_STATUS ve PLACE_SL handler'lari ayni anda gelebilir.
 # openAlgoOrders sorgu → POST arasindaki ~50ms window'da ikisi de "SL yok"
@@ -398,4 +433,5 @@ async def clear_all_state(symbol: str) -> None:
     await clear_flip_decided(symbol)
     await clear_deferred_entry(symbol)
     await clear_emergency_sl(symbol)
+    await clear_pine_wanted_price(symbol)
     await log.ainfo("webhook_tracker_cleared_all", symbol=symbol)

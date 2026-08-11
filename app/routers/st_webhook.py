@@ -520,8 +520,20 @@ async def _handle_place_limit(payload: STWebhookPayload, symbol: str, indicator:
             pos_amt = float(p.get("positionAmt", 0))
             break
     if pos_amt != 0:
-        log.info("place_limit_position_exists_skip", symbol=symbol, pos_amt=pos_amt)
-        return JSONResponse(content={"status": "position_exists", "symbol": symbol, "pos_amt": pos_amt})
+        # v3.16: Pine 1 skip olsa bile istedigi fiyati Redis'e kaydet.
+        # Pine 2 protokolu tetiklendiginde deferred entry icin bu fiyat
+        # oncelikli kullanilir (hesaplanan mini_tp*1.001 yerine).
+        try:
+            await tracker.set_pine_wanted_price(symbol, side, price)
+        except Exception as _e:
+            pass
+        log.info("place_limit_position_exists_skip", symbol=symbol,
+                 pos_amt=pos_amt, pine_wanted_side=side, pine_wanted_price=price)
+        return JSONResponse(content={
+            "status": "position_exists", "symbol": symbol,
+            "pos_amt": pos_amt,
+            "pine_wanted_saved": {"side": side, "price": price},
+        })
 
     # v3.8: Deferred entry varsa iptal (yeni Pine 1 sinyali eskisini gecersiz kilar)
     deferred = await tracker.get_deferred_entry(symbol)
@@ -1448,9 +1460,26 @@ async def _activate_pine2_and_deferred(
     #    sonra dogru yon poz aciyoruz)
     new_is_long = not binance_is_long
     new_side = "BUY" if new_is_long else "SELL"
-    # Fiyat: mini-TP × (LONG ise 0.999, SHORT ise 1.001)
-    deferred_price_raw = mini_tp * (0.999 if new_is_long else 1.001)
+
+    # v3.16: PINE FIYATI ONCELIKLI — poz varken Pine 1 skip edilen
+    # PLACE_LIMIT'in fiyati varsa, hesaplanan formulden ONCE onu kullan.
+    # Boylece Pine'in gercek istedigi fiyata gireriz.
+    deferred_price_source = "formula"
+    pine_wanted = None
+    try:
+        pine_wanted = await tracker.get_pine_wanted_price(symbol)
+    except Exception:
+        pass
+    if pine_wanted and pine_wanted.get("side") == new_side and pine_wanted.get("price"):
+        deferred_price_raw = float(pine_wanted["price"])
+        deferred_price_source = "pine_wanted"
+    else:
+        # Fallback: mini-TP × (LONG ise 0.999, SHORT ise 1.001)
+        deferred_price_raw = mini_tp * (0.999 if new_is_long else 1.001)
     deferred_price = round_price(deferred_price_raw, tick_size)
+    log.info("pine2_deferred_price_selected", symbol=symbol,
+             source=deferred_price_source, price=float(deferred_price),
+             mini_tp=float(mini_tp))
 
     # Qty hesabi (yeni poz icin) — available balance ile sınırla
     try:
@@ -1490,7 +1519,14 @@ async def _activate_pine2_and_deferred(
             }
             log.warning("pine2_deferred_placed", symbol=symbol, side=new_side,
                         price=float(deferred_price), qty=float(new_qty),
-                        order_id=deferred_order_id)
+                        order_id=deferred_order_id,
+                        price_source=deferred_price_source)
+            # v3.16: Pine wanted price kullanildi ya da fallback — her durumda temizle
+            # (sonraki flip icin yeni PLACE_LIMIT bekle)
+            try:
+                await tracker.clear_pine_wanted_price(symbol)
+            except Exception:
+                pass
     except Exception as e:
         result["deferred_err"] = str(e)
         log.error("pine2_deferred_failed", symbol=symbol, error=str(e))
