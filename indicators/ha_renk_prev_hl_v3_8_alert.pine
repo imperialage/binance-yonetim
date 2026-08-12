@@ -350,7 +350,11 @@ string effectiveSymbol = symbolOverride == "" ? syminfo.ticker : symbolOverride
 bool longAlertOk  = htfGreen     and (not requirePrevHtfConfirm or htfGreenPrev)
 bool shortAlertOk = not htfGreen and (not requirePrevHtfConfirm or not htfGreenPrev)
 
-if enableWebhook and state == 0 and inDateRange and not na(prevHigh) and not na(prevLow)
+// v3.8.1: exitedThisBar guard — Pine SL/TP vurdugu barda yeni PLACE_LIMIT
+// alert ATMA. Bir sonraki bar acilisinda atsin (kapanan mum referansiyla).
+// Backtest tarafi zaten bu guard'i kullaniyor (line 284) — alert tarafinda
+// eksikti, tutarsizlik yaratiyordu.
+if enableWebhook and state == 0 and inDateRange and not na(prevHigh) and not na(prevLow) and not exitedThisBar
     // ══ CANCEL kontrolü (once) - HTF renk yon degistiyse eski emri iptal ══
     // Filtresiz: HTF flip anlik olarak eski emri iptal etmeli.
     bool needCancel = false
