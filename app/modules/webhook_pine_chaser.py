@@ -279,35 +279,70 @@ async def _execute_market_entry(
                        side=order_side, qty=qty, fill_price=fill_price,
                        binance_pos_amt=verify_pos_amt)
 
-    # ── TP + SL algo (algo_lock kullan) ──
+    # ── TP + SL algo — v3.21: LOCK RETRY + FORCE FALLBACK ──
+    # Onceden: tek sefer lock dene, false donerse skip → 15 dk TP/SL'siz kaldi.
+    # Simdi: 3 kez retry (500ms), hala busy ise force place (lock'suz).
+    # Duplicate riski: reconciliation POSITION_STATUS'te temizler.
     tp_rounded = float(round_price(pine_tp, tick_size))
     sl_rounded = float(round_price(pine_sl, tick_size))
     verify_qty = abs(verify_pos_amt)
 
-    # TP
+    # TP — retry 3x, sonra force
     tp_ok = False
-    tp_lock = await tracker.try_acquire_sl_lock(symbol)
-    if tp_lock:
+    for attempt in range(3):
+        tp_lock = await tracker.try_acquire_sl_lock(symbol)
+        if tp_lock:
+            try:
+                await place_take_profit_market_order(symbol, close_side, verify_qty, tp_rounded)
+                tp_ok = True
+                break
+            except Exception as e:
+                await log.aerror("chaser_tp_place_failed", symbol=symbol,
+                                 attempt=attempt + 1, error=str(e))
+                break
+            finally:
+                await tracker.release_sl_lock(symbol)
+        else:
+            await log.ainfo("chaser_tp_lock_busy_retry", symbol=symbol, attempt=attempt + 1)
+            await asyncio.sleep(0.5)
+    if not tp_ok:
+        # Force place — reconciliation duplicate temizler
         try:
+            await log.awarning("chaser_tp_force_place", symbol=symbol,
+                               reason="lock_persistent_busy_after_retries")
             await place_take_profit_market_order(symbol, close_side, verify_qty, tp_rounded)
             tp_ok = True
         except Exception as e:
-            await log.aerror("chaser_tp_place_failed", symbol=symbol, error=str(e))
-        finally:
-            await tracker.release_sl_lock(symbol)
+            await log.aerror("chaser_tp_force_failed", symbol=symbol, error=str(e))
 
-    # SL
+    # SL — retry 3x, sonra force
     sl_ok = False
-    sl_lock = await tracker.try_acquire_sl_lock(symbol)
-    if sl_lock:
+    for attempt in range(3):
+        sl_lock = await tracker.try_acquire_sl_lock(symbol)
+        if sl_lock:
+            try:
+                await place_stop_market_instant(symbol, close_side, verify_qty, sl_rounded)
+                await tracker.mark_sl_placed(symbol)
+                sl_ok = True
+                break
+            except Exception as e:
+                await log.aerror("chaser_sl_place_failed", symbol=symbol,
+                                 attempt=attempt + 1, error=str(e))
+                break
+            finally:
+                await tracker.release_sl_lock(symbol)
+        else:
+            await log.ainfo("chaser_sl_lock_busy_retry", symbol=symbol, attempt=attempt + 1)
+            await asyncio.sleep(0.5)
+    if not sl_ok:
         try:
+            await log.awarning("chaser_sl_force_place", symbol=symbol,
+                               reason="lock_persistent_busy_after_retries")
             await place_stop_market_instant(symbol, close_side, verify_qty, sl_rounded)
             await tracker.mark_sl_placed(symbol)
             sl_ok = True
         except Exception as e:
-            await log.aerror("chaser_sl_place_failed", symbol=symbol, error=str(e))
-        finally:
-            await tracker.release_sl_lock(symbol)
+            await log.aerror("chaser_sl_force_failed", symbol=symbol, error=str(e))
 
     await log.awarning("chaser_entry_complete", symbol=symbol,
                        side=order_side, qty=verify_qty, fill_price=fill_price,
