@@ -1209,10 +1209,43 @@ async def _handle_position_status(payload: STWebhookPayload, symbol: str, indica
             break
 
     if binance_pos_amt == 0:
-        # Pine poz var sanıyor ama Binance boş — muhtemelen deferred bekleniyor veya poz kapandı.
-        # Bu ihtimalde eski state kalıntısı temizle, cevap ver.
-        log.info("position_status_no_binance_pos", symbol=symbol, pine_side=pine_side_raw)
-        return JSONResponse(content={"status": "no_binance_pos", "symbol": symbol})
+        # Pine poz var sanıyor ama Binance boş — 2 olasilik:
+        #   1) Bizim SL/TP vurdu, poz kapandi (Pine backtest'te hala acik cunku
+        #      Pine sl_pct/tp_pct farkli veya fiyat Pine hedefine degmedi)
+        #   2) Poz hic acilmadi (PLACE_LIMIT fill olmadi)
+        #
+        # v3.19: Her iki durumda da chaser başlat — Pine TP hedefine kar
+        # mesafesi olusursa market entry ile Pine'in pozisyonuna gir.
+        # Pine PINE_EXIT gonderene kadar firsat kolla.
+        log.info("position_status_no_binance_pos", symbol=symbol,
+                 pine_side=pine_side_raw, pine_tp=pine_tp_price, pine_sl=pine_sl_price)
+
+        chaser_armed = False
+        if pine_tp_price and pine_sl_price and settings.pine_chaser_enabled:
+            try:
+                from app.modules import webhook_pine_chaser as chaser
+                tf_str = str(payload.tf or "15m").lower().replace("m", "")
+                try:
+                    tf_min = int(tf_str)
+                except ValueError:
+                    tf_min = 15
+                chart_tf_ms = tf_min * 60_000
+                await chaser.arm(
+                    symbol,
+                    pine_side=pine_side_raw,
+                    pine_tp=float(pine_tp_price),
+                    pine_sl=float(pine_sl_price),
+                    chart_tf_ms=chart_tf_ms,
+                )
+                chaser_armed = True
+            except Exception as e:
+                log.warning("chaser_arm_failed_no_binance_pos", symbol=symbol, error=str(e))
+
+        return JSONResponse(content={
+            "status": "no_binance_pos",
+            "symbol": symbol,
+            "chaser_armed": chaser_armed,
+        })
 
     binance_is_long = binance_pos_amt > 0
     qty = abs(binance_pos_amt)
