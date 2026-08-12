@@ -122,6 +122,32 @@ async def _tick_check(symbol: str, meta: dict) -> None:
     pine_sl = float(meta["pine_sl"])
     min_profit = float(meta.get("min_profit_pct", 0.003))
 
+    # ── v3.20: Pine SL/TP HIT KONTROLU (PINE_EXIT alerti kaybolsa da güvence) ──
+    # Fiyat Pine'in SL veya TP hedefine degdi mi? Ise Pine kapandi → chaser disarm.
+    # LONG: SL asagida, TP yukarida.  SHORT: SL yukarida, TP asagida.
+    if pine_side == "LONG":
+        if mark <= pine_sl:
+            await log.awarning("chaser_pine_sl_hit_detected", symbol=symbol,
+                               mark=mark, pine_sl=pine_sl, pine_side=pine_side)
+            await disarm(symbol, reason="pine_sl_hit_by_tick")
+            return
+        if mark >= pine_tp:
+            await log.awarning("chaser_pine_tp_hit_detected", symbol=symbol,
+                               mark=mark, pine_tp=pine_tp, pine_side=pine_side)
+            await disarm(symbol, reason="pine_tp_hit_by_tick")
+            return
+    else:  # SHORT
+        if mark >= pine_sl:
+            await log.awarning("chaser_pine_sl_hit_detected", symbol=symbol,
+                               mark=mark, pine_sl=pine_sl, pine_side=pine_side)
+            await disarm(symbol, reason="pine_sl_hit_by_tick")
+            return
+        if mark <= pine_tp:
+            await log.awarning("chaser_pine_tp_hit_detected", symbol=symbol,
+                               mark=mark, pine_tp=pine_tp, pine_side=pine_side)
+            await disarm(symbol, reason="pine_tp_hit_by_tick")
+            return
+
     # Potansiyel kar
     if pine_side == "LONG":
         potential = (pine_tp - mark) / mark
