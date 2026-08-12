@@ -1156,6 +1156,7 @@ async def _handle_htf_status(payload: STWebhookPayload, symbol: str, indicator: 
 async def _handle_position_status(payload: STWebhookPayload, symbol: str, indicator: str) -> JSONResponse:
     from app.modules import webhook_order_tracker as tracker
     from app.modules.binance_client import (
+        cancel_algo_order,
         cancel_all_open_orders,
         get_open_algo_orders,
         get_position_risk,
