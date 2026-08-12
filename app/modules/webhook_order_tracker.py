@@ -44,6 +44,7 @@ KEY_SL_LOCK = "webhook_sl_lock:{sym}"                # v3.14: SL yerlestirme ato
 KEY_PINE_WANTED = "webhook_pine_wanted:{sym}"        # v3.16: Pine 1 skip olsa bile istedigi fiyat (deferred icin)
 KEY_CHASER = "webhook_chaser:{sym}"                  # v3.17: Pine chaser state
 KEY_CHASER_EXEC_LOCK = "webhook_chaser_exec:{sym}"   # v3.17: chaser market exec atomik lock
+KEY_PINE_EXIT_BAR = "webhook_pine_exit_bar:{sym}"    # v3.18: son PINE_EXIT bar_id (ayni bar PLACE_LIMIT skip icin)
 
 # TTL değerleri (saniye)
 TTL_LIMIT = 6 * 60 * 60      # 6 saat — dolmayan pending emri unut
@@ -462,6 +463,31 @@ async def clear_pine_wanted_price(symbol: str) -> None:
         await r.delete(_key(KEY_PINE_WANTED, symbol))
     except Exception as e:
         await log.awarning("webhook_tracker_clear_pine_wanted_failed", symbol=symbol, error=str(e))
+
+
+# ── Pine Exit Bar (v3.18) — ayni bar SL/TP + PLACE_LIMIT skip ─────────────
+# Pine SL/TP vurdugu ayni mumun kapanisinda PLACE_LIMIT alert atabiliyor
+# (Pine v3.8 exitedThisBar guard eksik). Backend safety net: PINE_EXIT
+# geldigi bar_id'de PLACE_LIMIT gelirse skip.
+
+async def set_pine_exit_bar_id(symbol: str, bar_id: str) -> None:
+    try:
+        r = await get_redis()
+        # TTL: 1 saat — bir sonraki bar geldiginde farkli bar_id olur, guard tetiklenmez
+        await r.set(_key(KEY_PINE_EXIT_BAR, symbol), str(bar_id), ex=3600)
+    except Exception as e:
+        await log.awarning("webhook_tracker_set_pine_exit_bar_failed", symbol=symbol, error=str(e))
+
+
+async def get_pine_exit_bar_id(symbol: str) -> str | None:
+    try:
+        r = await get_redis()
+        raw = await r.get(_key(KEY_PINE_EXIT_BAR, symbol))
+        if raw is None:
+            return None
+        return raw.decode() if isinstance(raw, bytes) else str(raw)
+    except Exception:
+        return None
 
 
 # ── SL Lock (v3.14) — atomic race koruma ────────────────────────────────

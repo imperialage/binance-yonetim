@@ -512,6 +512,19 @@ async def _handle_place_limit(payload: STWebhookPayload, symbol: str, indicator:
             log.info("place_limit_duplicate_bar", symbol=symbol, bar_id=bar_id)
             return JSONResponse(content={"status": "duplicate_bar", "symbol": symbol, "bar_id": bar_id})
 
+    # v3.18: Ayni bar'da PINE_EXIT geldiyse skip (Pine SL/TP vurdugu mumun
+    # kapanisinda yeni PLACE_LIMIT gonderemez — pozisyon kapanan mumun
+    # kapanisi yeni pozisyon icin referans, ama emir bir sonraki bar).
+    last_exit_bar = await tracker.get_pine_exit_bar_id(symbol)
+    if last_exit_bar and str(last_exit_bar) == str(bar_id):
+        log.info("place_limit_same_bar_as_pine_exit_skip", symbol=symbol,
+                 bar_id=bar_id, side=side, price=price)
+        return JSONResponse(content={
+            "status": "same_bar_as_pine_exit",
+            "symbol": symbol, "bar_id": bar_id,
+            "note": "Pine SL/TP ayni bar'da vurdu, yeni emir bir sonraki barda",
+        })
+
     # Pozisyon zaten varsa yeni LIMIT koyma (fill sonrasi tekrar tekrar geliyorsa Pine state=1 -> skip beklenir)
     positions = await get_position_risk(symbol)
     pos_amt = 0.0
@@ -1530,6 +1543,15 @@ async def _handle_pine_exit(payload: STWebhookPayload, symbol: str, indicator: s
     from app.modules.binance_client import cancel_order
 
     reason = (payload.reason or "").strip().upper()
+    bar_id = payload.bar_id or str(int(time.time() * 1000))
+
+    # v3.18: Bu bar_id'yi kaydet — ayni bar'da gelen PLACE_LIMIT skip edilecek.
+    # (Pine v3.8 exitedThisBar guard alert bloguna eklenmemis, ayni bar SL/TP
+    # sonrasi yeni PLACE_LIMIT alert atabiliyor. Backend safety net.)
+    try:
+        await tracker.set_pine_exit_bar_id(symbol, bar_id)
+    except Exception as e:
+        log.warning("pine_exit_bar_save_failed", symbol=symbol, error=str(e))
 
     # v3.17: Chaser aktifse durdur (tek durdurucusu bu)
     chaser_stopped = False
