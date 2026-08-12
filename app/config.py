@@ -215,8 +215,16 @@ class Settings(BaseSettings):
     # muhafazakar TP + SL. Pine "bu sinyal hatali" diyor, kucuk karla cikma
     # hedefi + guvenli SL. Mum kapanisinda POSITION_STATUS override eder.
     cancel_protocol_enabled: bool = True
-    cancel_tp_pct: float = 0.0025       # %0.25 kar (mini TP)
+    cancel_tp_pct: float = 0.002        # %0.20 kar (mini TP)
     cancel_sl_pct: float = 0.02         # %2 zarar (guvenlik SL)
+
+    # v3.17: Pine Chaser — ters pozdan market ile ciktiktan sonra Pine 1'in
+    # dogru yon TP hedefine kar mesafesi olusursa market entry yap.
+    pine_chaser_enabled: bool = True
+    pine_chaser_min_profit_pct: float = 0.003    # %0.30 min kar
+    pine_chaser_tick_sec: int = 1                # tick araligi
+    pine_chaser_verify_retries: int = 3          # market order verify retry
+    pine_chaser_verify_backoff_sec: float = 0.5  # ilk backoff (× 4 exponential)
 
     # Per-timeframe strategy overrides
     trading_timeframes: str = "5m"      # Active TFs: "5m" or "1m" or "1m,5m"

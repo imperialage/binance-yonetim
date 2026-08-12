@@ -42,6 +42,8 @@ KEY_DEFERRED = "webhook_deferred:{sym}"              # v3.8: Pine 2 sonrasi dogr
 KEY_EMERGENCY_SL = "webhook_emergency_sl:{sym}"      # v3.10: Fill aninda konulan gecici SL algo_id
 KEY_SL_LOCK = "webhook_sl_lock:{sym}"                # v3.14: SL yerlestirme atomic lock (race koruma)
 KEY_PINE_WANTED = "webhook_pine_wanted:{sym}"        # v3.16: Pine 1 skip olsa bile istedigi fiyat (deferred icin)
+KEY_CHASER = "webhook_chaser:{sym}"                  # v3.17: Pine chaser state
+KEY_CHASER_EXEC_LOCK = "webhook_chaser_exec:{sym}"   # v3.17: chaser market exec atomik lock
 
 # TTL değerleri (saniye)
 TTL_LIMIT = 6 * 60 * 60      # 6 saat — dolmayan pending emri unut
@@ -53,6 +55,8 @@ TTL_FLIP_DECIDED = 24 * 60 * 60  # 24 saat — poz kapanisinda silinir
 TTL_DEFERRED = 30 * 60       # 30 dakika — 2 bar 15m TF, eski deferred gecersiz
 TTL_EMERGENCY_SL = 6 * 60 * 60  # 6 saat — poz suresince yeterli
 TTL_PINE_WANTED = 60 * 60       # 1 saat — bar close civari kullanilir
+TTL_CHASER = 24 * 60 * 60       # 24 saat — Pine EXIT gelene kadar
+TTL_CHASER_LOCK = 15            # 15 sn — market exec atomik lock
 
 
 def _key(pattern: str, symbol: str) -> str:
@@ -361,6 +365,72 @@ async def clear_emergency_sl(symbol: str) -> None:
         await log.awarning("webhook_tracker_clear_emergency_sl_failed", symbol=symbol, error=str(e))
 
 
+# ── Pine Chaser (v3.17) — market ile kar yakalayici ─────────────────────
+
+async def set_chaser(symbol: str, meta: dict) -> None:
+    """Chaser state kaydet.
+    Beklenen alanlar: pine_side (LONG/SHORT), pine_tp, pine_sl, chart_tf_ms,
+    started_at_ms, min_profit_pct.
+    """
+    try:
+        r = await get_redis()
+        await r.set(_key(KEY_CHASER, symbol), json.dumps(meta), ex=TTL_CHASER)
+    except Exception as e:
+        await log.awarning("webhook_tracker_set_chaser_failed", symbol=symbol, error=str(e))
+
+
+async def get_chaser(symbol: str) -> dict | None:
+    try:
+        r = await get_redis()
+        raw = await r.get(_key(KEY_CHASER, symbol))
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+
+async def clear_chaser(symbol: str) -> None:
+    try:
+        r = await get_redis()
+        await r.delete(_key(KEY_CHASER, symbol))
+    except Exception as e:
+        await log.awarning("webhook_tracker_clear_chaser_failed", symbol=symbol, error=str(e))
+
+
+async def list_chasers() -> list[str]:
+    """Redis'teki tum chaser'lar (restart resilience)."""
+    try:
+        r = await get_redis()
+        pattern = KEY_CHASER.format(sym="*")
+        symbols: list[str] = []
+        async for k in r.scan_iter(match=pattern, count=100):
+            key = k.decode() if isinstance(k, bytes) else k
+            if ":" in key:
+                symbols.append(key.split(":", 1)[1])
+        return symbols
+    except Exception as e:
+        await log.awarning("webhook_tracker_list_chasers_failed", error=str(e))
+        return []
+
+
+async def try_acquire_chaser_exec_lock(symbol: str) -> bool:
+    """Chaser tick market entry atomik lock."""
+    try:
+        r = await get_redis()
+        result = await r.set(_key(KEY_CHASER_EXEC_LOCK, symbol), "1",
+                             nx=True, ex=TTL_CHASER_LOCK)
+        return result is True
+    except Exception:
+        return True  # fallback: geç
+
+
+async def release_chaser_exec_lock(symbol: str) -> None:
+    try:
+        r = await get_redis()
+        await r.delete(_key(KEY_CHASER_EXEC_LOCK, symbol))
+    except Exception:
+        pass
+
+
 # ── Pine Wanted Price (v3.16) — skip olan PLACE_LIMIT fiyati ────────────
 # Poz varken Pine yeni yon PLACE_LIMIT gonderdi ama sistem "position_exists"
 # ile skip etti. Bu fiyat Pine'in "yeni pozisyon" istedigi yer. Pine 2
@@ -434,4 +504,5 @@ async def clear_all_state(symbol: str) -> None:
     await clear_deferred_entry(symbol)
     await clear_emergency_sl(symbol)
     await clear_pine_wanted_price(symbol)
+    await clear_chaser(symbol)
     await log.ainfo("webhook_tracker_cleared_all", symbol=symbol)

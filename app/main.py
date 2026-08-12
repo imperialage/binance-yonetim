@@ -33,6 +33,7 @@ from app.modules.order_stream import start_order_stream, stop_order_stream
 from app.modules.signal_engine import start_signal_engines, stop_signal_engines
 from app.modules.webhook_order_poller import start_webhook_poller, stop_webhook_poller
 from app.modules.webhook_flip_watcher import restore_all as restore_flip_watchers, stop_all as stop_flip_watchers
+from app.modules.webhook_pine_chaser import restore_all as restore_chasers, stop_all as stop_chasers
 from app.routers import admin, backtest, chart, data_collector, events, latest, status, webhook, ws
 from app.routers import st_webhook, indicator_settings, strategy_report
 from app.utils.logging import get_logger, setup_logging
@@ -65,6 +66,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await restore_flip_watchers()
     except Exception as _e:
         log.error("startup_flip_watchers_restore_failed", error=str(_e))
+    try:
+        await restore_chasers()  # v3.17 Pine Chaser
+    except Exception as _e:
+        log.error("startup_chasers_restore_failed", error=str(_e))
     try:
         start_signal_engines()
     except Exception as _e:
@@ -103,6 +108,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         pass
     try:
         await stop_flip_watchers()
+    except Exception:
+        pass
+    try:
+        await stop_chasers()  # v3.17
     except Exception:
         pass
     await stop_price_stream()

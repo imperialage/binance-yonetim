@@ -1207,7 +1207,8 @@ async def _handle_position_status(payload: STWebhookPayload, symbol: str, indica
     is_mismatch = pine_wants_long != binance_is_long
 
     if is_mismatch:
-        # A) FLIP — Pine 2 protokolu + deferred entry
+        # A) FLIP — Pine 2 protokolu: market CLOSE + Chaser başlat (v3.17)
+        from app.modules import webhook_pine_chaser as chaser
         log.warning("position_status_mismatch", symbol=symbol,
                     pine_side=pine_side_raw, binance_pos_amt=binance_pos_amt)
         result = await _activate_pine2_and_deferred(
@@ -1222,9 +1223,42 @@ async def _handle_position_status(payload: STWebhookPayload, symbol: str, indica
         )
         await tracker.mark_flip_decided(symbol)
         await tracker.clear_fill_bar_check(symbol)
+        # Chaser'i başlat — Pine'in dogru yön TP hedefine kar mesafesi olusursa
+        # market entry yapacak. Pine EXIT gelene kadar surekli fırsat kollar.
+        # Pine tp_price + sl_price payload'dan geliyor.
+        if pine_tp_price and pine_sl_price and settings.pine_chaser_enabled:
+            try:
+                # Chart TF ms — payload'da tf var (ornek "15" veya "15m")
+                tf_str = str(payload.tf or "15m").lower().replace("m", "")
+                try:
+                    tf_min = int(tf_str)
+                except ValueError:
+                    tf_min = 15
+                chart_tf_ms = tf_min * 60_000
+                await chaser.arm(
+                    symbol,
+                    pine_side=pine_side_raw,  # Pine dogru yon
+                    pine_tp=float(pine_tp_price),
+                    pine_sl=float(pine_sl_price),
+                    chart_tf_ms=chart_tf_ms,
+                )
+                result["chaser_armed"] = True
+            except Exception as e:
+                log.warning("chaser_arm_failed", symbol=symbol, error=str(e))
         return JSONResponse(content={"status": "flip_activated", "symbol": symbol, **result})
 
     # B) UYUMLU — self-heal: Binance algo emirleri (TP/SL) yerinde mi?
+    # v3.17: Chaser aktifse — poz zaten aciksa (bu handler'a girdik) chaser
+    # anlamsız. Ya market entry yaptı ya da poz elle acildi. Her iki durumda
+    # chaser artik gereksiz — disarm.
+    try:
+        from app.modules import webhook_pine_chaser as chaser
+        existing_chaser = await tracker.get_chaser(symbol)
+        if existing_chaser:
+            await chaser.disarm(symbol, reason="position_status_aligned_position_open")
+    except Exception:
+        pass
+
     open_algos = []
     try:
         open_algos = await get_open_algo_orders(symbol)
@@ -1385,155 +1419,99 @@ async def _activate_pine2_and_deferred(
     poz kapanir. Ayni anda dogru yon icin LIMIT emri konur (deferred), fiyat
     tetigi mini-TP fiyatinin %0.1 uygun tarafinda.
     """
+    """v3.17 YENI YAKLAŞIM — ters pozdan market CLOSE + Pine Chaser başlat.
+    Mini-TP algo + deferred LIMIT MANTIĞI KALDIRILDI. Bunlar bar close'a kadar
+    fiyat oynamalarinda kotu davranıyordu. Yerine:
+      1. cancel_all_open_orders (eski TP + SL sil)
+      2. place_market_order reduce_only=True (poz kapansin)
+      3. Verify (poz 0 mi, 3 retry)
+      4. Pine chaser başlat (dogru yon TP hedefine kar mesafesi olusursa
+         market entry — webhook_pine_chaser modulu)
+    """
     from app.modules import webhook_order_tracker as tracker
+    from app.modules import webhook_pine_chaser as chaser
     from app.modules.binance_client import (
-        cancel_all_open_orders, get_available_balance, get_total_wallet_balance,
-        place_limit_order, place_stop_market_instant, place_take_profit_market_order,
-        round_price, round_step_size,
+        cancel_all_open_orders, get_position_risk, place_market_order,
     )
-    from app.modules.indicator_settings_store import get_settings_or_defaults
-    from app.modules.trade_executor import get_exchange_info_cached
 
     result = {"binance_entry": binance_entry, "binance_is_long": binance_is_long, "qty": qty}
+    close_side = "SELL" if binance_is_long else "BUY"
 
-    # 1) Mevcut algo emirleri iptal
+    # 1) Mevcut algo emirleri iptal (eski TP+SL)
     try:
         await cancel_all_open_orders(symbol)
     except Exception as e:
         log.warning("pine2_cancel_failed", symbol=symbol, error=str(e))
 
-    info = await get_exchange_info_cached(symbol)
-    tick_size = info["priceFilter"]["tickSize"]
-
-    # v3.12: Pine payload'daki flip_pct/sl_pct'i IGNORE et — kullanici istegi:
-    # ters pozisyon protokolu icin CANCEL ile AYNI degerler.
-    # Pine 2 (POSITION_STATUS mismatch) ve CANCEL protokolu ayni yuzdeler.
-    reverse_tp_pct = settings.cancel_tp_pct   # %0.25
-    reverse_sl_pct = settings.cancel_sl_pct   # %2
-
-    if binance_is_long:
-        mini_tp_raw = binance_entry * (1 + reverse_tp_pct)
-        sl_raw = binance_entry * (1 - reverse_sl_pct)
-        close_side = "SELL"
-    else:
-        mini_tp_raw = binance_entry * (1 - reverse_tp_pct)
-        sl_raw = binance_entry * (1 + reverse_sl_pct)
-        close_side = "BUY"
-
-    mini_tp = round_price(mini_tp_raw, tick_size)
-    sl_px = round_price(sl_raw, tick_size)
-
-    # 2) Mini-TP
-    # v3.15: mini-TP de algo lock ile
-    pine2_tp_lock = await tracker.try_acquire_sl_lock(symbol)
-    if not pine2_tp_lock:
-        result["mini_tp_err"] = "tp_lock_busy"
-        log.info("pine2_tp_lock_busy", symbol=symbol)
-    else:
-        try:
-            await place_take_profit_market_order(symbol, close_side, qty, float(mini_tp))
-            result["mini_tp"] = float(mini_tp)
-        except Exception as e:
-            result["mini_tp_err"] = str(e)
-            log.error("pine2_mini_tp_failed", symbol=symbol, error=str(e))
-        finally:
-            await tracker.release_sl_lock(symbol)
-
-    # 3) SL — v3.14 atomic lock (PLACE_SL race korumasi)
-    pine2_sl_lock = await tracker.try_acquire_sl_lock(symbol)
-    if not pine2_sl_lock:
-        result["sl_err"] = "sl_lock_busy"
-        log.info("pine2_sl_lock_busy", symbol=symbol)
-    else:
-        try:
-            await place_stop_market_instant(symbol, close_side, qty, float(sl_px))
-            await tracker.mark_sl_placed(symbol)
-            result["sl"] = float(sl_px)
-        except Exception as e:
-            result["sl_err"] = str(e)
-            log.error("pine2_sl_failed", symbol=symbol, error=str(e))
-        finally:
-            await tracker.release_sl_lock(symbol)
-
-    # 4) DEFERRED LIMIT — dogru yon icin
-    #    Yeni poz yonu = mevcut yonun tersi (Pine 2 mini-TP ters pozu kapatiyor,
-    #    sonra dogru yon poz aciyoruz)
-    new_is_long = not binance_is_long
-    new_side = "BUY" if new_is_long else "SELL"
-
-    # v3.16: PINE FIYATI ONCELIKLI — poz varken Pine 1 skip edilen
-    # PLACE_LIMIT'in fiyati varsa, hesaplanan formulden ONCE onu kullan.
-    # Boylece Pine'in gercek istedigi fiyata gireriz.
-    deferred_price_source = "formula"
-    pine_wanted = None
+    # 2) MARKET CLOSE (reduce_only=True — kritik, ters yön açmayı önler)
+    market_close_ok = False
+    close_result = None
     try:
-        pine_wanted = await tracker.get_pine_wanted_price(symbol)
+        close_result = await place_market_order(symbol, close_side, float(qty), reduce_only=True)
+        result["market_close"] = {
+            "side": close_side, "qty": qty,
+            "avg_price": float(close_result.get("avgPrice", 0)) if close_result else None,
+        }
+        market_close_ok = True
+        log.warning("pine2_market_close_ok", symbol=symbol,
+                    side=close_side, qty=qty,
+                    avg_price=result["market_close"]["avg_price"])
+    except Exception as e:
+        result["market_close_err"] = str(e)
+        log.error("pine2_market_close_failed", symbol=symbol, error=str(e))
+
+    # 3) Verify — poz gerçekten 0 mı?
+    if market_close_ok:
+        import asyncio as _asyncio
+        verified = False
+        for attempt in range(settings.pine_chaser_verify_retries):
+            await _asyncio.sleep(settings.pine_chaser_verify_backoff_sec * (4 ** attempt))
+            positions = await get_position_risk(symbol)
+            cur_amt = 0.0
+            for p in positions:
+                if p.get("symbol") == symbol:
+                    cur_amt = float(p.get("positionAmt", 0))
+                    break
+            if abs(cur_amt) < 1e-9:
+                verified = True
+                result["verify_pos_amt"] = 0
+                break
+            else:
+                result["verify_pos_amt"] = cur_amt
+                log.warning("pine2_verify_retry", symbol=symbol,
+                            attempt=attempt + 1, cur_amt=cur_amt)
+        if not verified:
+            log.error("pine2_verify_failed", symbol=symbol,
+                      final_pos_amt=result.get("verify_pos_amt"))
+        result["verified"] = verified
+
+    # 4) Pine Chaser başlat — dogru yon TP hedefine kar mesafesi olusursa
+    # market entry yap. Pine EXIT gelene kadar surekli fırsat kollar.
+    # Pine dogru yon = mevcut binance yönünün TERSİ.
+    #   binance_is_long=True (LONG poz kapatildi) → Pine SHORT istiyor
+    #   binance_is_long=False (SHORT poz kapatildi) → Pine LONG istiyor
+    pine_target_side = "SHORT" if binance_is_long else "LONG"
+
+    # Pine'in dogru yon TP/SL fiyatlarini POSITION_STATUS'tan aldik
+    # (caller pass etsin). Mevcut fonksiyona bu iki alan lazim.
+    # Not: caller (_handle_position_status) pine_tp_price + pine_sl_price
+    # biliyor. Onlari result'a gecirmek icin fonksiyon signature'a extra
+    # param eklemem lazim — ama simdilik caller kendisi arm etsin.
+    result["chaser_start_hint"] = {
+        "pine_target_side": pine_target_side,
+        "note": "Caller _activate_pine2_and_deferred sonrasi chaser.arm() cagirmali",
+    }
+
+    # Pine wanted price artik kullanilmiyor — market entry chaser'in isi
+    try:
+        await tracker.clear_pine_wanted_price(symbol)
     except Exception:
         pass
-    if pine_wanted and pine_wanted.get("side") == new_side and pine_wanted.get("price"):
-        deferred_price_raw = float(pine_wanted["price"])
-        deferred_price_source = "pine_wanted"
-    else:
-        # Fallback: mini-TP × (LONG ise 0.999, SHORT ise 1.001)
-        deferred_price_raw = mini_tp * (0.999 if new_is_long else 1.001)
-    deferred_price = round_price(deferred_price_raw, tick_size)
-    log.info("pine2_deferred_price_selected", symbol=symbol,
-             source=deferred_price_source, price=float(deferred_price),
-             mini_tp=float(mini_tp))
 
-    # Qty hesabi (yeni poz icin) — available balance ile sınırla
-    try:
-        balance = await get_total_wallet_balance()
-        available = await get_available_balance()
-        sym_cfg = await get_settings_or_defaults(symbol)
-        sym_weight = sym_cfg.get("weight", 0.10)
-        step_size = info["lotSize"]["stepSize"]
-        min_qty = float(info["lotSize"]["minQty"])
-        min_notional = float(info.get("minNotional", {}).get("notional", 5))
-
-        target = balance * sym_weight * 0.98
-        usable = min(target, available * 0.95)
-        raw_qty = usable / float(deferred_price) if float(deferred_price) > 0 else 0.0
-        new_qty = round_step_size(raw_qty, step_size)
-
-        if new_qty < min_qty or float(new_qty) * float(deferred_price) < min_notional:
-            result["deferred_err"] = f"qty_too_low {new_qty}"
-            log.warning("pine2_deferred_qty_too_low", symbol=symbol, qty=new_qty)
-        else:
-            deferred_order = await place_limit_order(symbol, new_side, float(new_qty), float(deferred_price))
-            deferred_order_id = deferred_order.get("orderId")
-            await tracker.set_deferred_entry(symbol, {
-                "side": new_side,
-                "price": float(deferred_price),
-                "qty": float(new_qty),
-                "order_id": deferred_order_id,
-                "source_bar_id": str(source_bar_id),
-                "indicator": indicator,
-                "saved_at": int(time.time()),
-            })
-            result["deferred"] = {
-                "side": new_side,
-                "price": float(deferred_price),
-                "qty": float(new_qty),
-                "order_id": deferred_order_id,
-            }
-            log.warning("pine2_deferred_placed", symbol=symbol, side=new_side,
-                        price=float(deferred_price), qty=float(new_qty),
-                        order_id=deferred_order_id,
-                        price_source=deferred_price_source)
-            # v3.16: Pine wanted price kullanildi ya da fallback — her durumda temizle
-            # (sonraki flip icin yeni PLACE_LIMIT bekle)
-            try:
-                await tracker.clear_pine_wanted_price(symbol)
-            except Exception:
-                pass
-    except Exception as e:
-        result["deferred_err"] = str(e)
-        log.error("pine2_deferred_failed", symbol=symbol, error=str(e))
-
-    log.warning("pine2_protocol_activated", symbol=symbol, **{
-        k: v for k, v in result.items() if not isinstance(v, dict)
-    })
+    log.warning("pine2_protocol_activated", symbol=symbol,
+                market_close_ok=market_close_ok,
+                verified=result.get("verified"),
+                pine_target_side=pine_target_side)
     return result
 
 
@@ -1542,29 +1520,53 @@ async def _activate_pine2_and_deferred(
 # ════════════════════════════════════════════════════════════════════
 
 async def _handle_pine_exit(payload: STWebhookPayload, symbol: str, indicator: str) -> JSONResponse:
+    """Pine 1 backtest TP/SL vurdu.
+    v3.8: deferred LIMIT iptal
+    v3.17: chaser da disarm (Pine artık bu pozu istemiyor, fırsat kollamak anlamsız)
+    """
     from app.modules import webhook_order_tracker as tracker
+    from app.modules import webhook_pine_chaser as chaser
     from app.modules.binance_client import cancel_order
 
     reason = (payload.reason or "").strip().upper()
-    deferred = await tracker.get_deferred_entry(symbol)
-    if deferred is None:
-        return JSONResponse(content={"status": "no_deferred", "symbol": symbol, "reason": reason})
 
-    order_id = deferred.get("order_id")
-    if order_id:
-        try:
-            await cancel_order(symbol, int(order_id))
-            log.info("pine_exit_deferred_cancelled", symbol=symbol,
-                     order_id=order_id, reason=reason)
-        except Exception as e:
-            msg = str(e).lower()
-            if "-2011" in msg or "unknown order" in msg or "does not exist" in msg:
-                log.info("pine_exit_deferred_already_gone", symbol=symbol, order_id=order_id)
-            else:
-                log.warning("pine_exit_deferred_cancel_failed", symbol=symbol,
-                            order_id=order_id, error=str(e))
-    await tracker.clear_deferred_entry(symbol)
-    return JSONResponse(content={"status": "deferred_cancelled", "symbol": symbol, "reason": reason})
+    # v3.17: Chaser aktifse durdur (tek durdurucusu bu)
+    chaser_stopped = False
+    try:
+        existing = await tracker.get_chaser(symbol)
+        if existing:
+            await chaser.disarm(symbol, reason=f"pine_exit_{reason}")
+            chaser_stopped = True
+    except Exception as e:
+        log.warning("pine_exit_chaser_disarm_failed", symbol=symbol, error=str(e))
+
+    # Eski deferred LIMIT iptal (backward compat, artık deferred kullanılmıyor ama
+    # eski state'ler olabilir)
+    deferred = await tracker.get_deferred_entry(symbol)
+    deferred_cancelled = False
+    if deferred:
+        order_id = deferred.get("order_id")
+        if order_id:
+            try:
+                await cancel_order(symbol, int(order_id))
+                deferred_cancelled = True
+                log.info("pine_exit_deferred_cancelled", symbol=symbol,
+                         order_id=order_id, reason=reason)
+            except Exception as e:
+                msg = str(e).lower()
+                if "-2011" in msg or "unknown order" in msg or "does not exist" in msg:
+                    log.info("pine_exit_deferred_already_gone", symbol=symbol, order_id=order_id)
+                else:
+                    log.warning("pine_exit_deferred_cancel_failed", symbol=symbol,
+                                order_id=order_id, error=str(e))
+        await tracker.clear_deferred_entry(symbol)
+
+    return JSONResponse(content={
+        "status": "processed",
+        "symbol": symbol, "reason": reason,
+        "chaser_stopped": chaser_stopped,
+        "deferred_cancelled": deferred_cancelled,
+    })
 
 
 # ════════════════════════════════════════════════════════════════════
