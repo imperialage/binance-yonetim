@@ -1,0 +1,554 @@
+//@version=6
+indicator("XMYX HA Renk + Prev Bar High/Low Limit v3.8 (POSITION_STATUS + PINE_EXIT)", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ════════════════════════════════════════════════════════════════════
+//  KURGU (tam bias-free) + WEBHOOK ALERT SISTEMI:
+//   Chart      : normal mum (kullanicidan bagimsiz TF)
+//   Ust grafik : ayarlardan secilen TF, HA mum
+//
+//   SINYAL (AYNI YON) — BACKTEST icin:
+//     Kapanmis HTF HA mum YESIL   -> LONG egilimi
+//     Kapanmis HTF HA mum KIRMIZI -> SHORT egilimi
+//
+//   ALERT FILTRESI (SADECE webhook alert icin — backtest'e etkisi yok):
+//     Alert atmadan once 1 ONCEKI HTF mumu da AYNI yonde olmali:
+//       LONG alert: htfGreen VE htfGreenPrev (2 HTF mum yesil)
+//       SHORT alert: not htfGreen VE not htfGreenPrev (2 HTF mum kirmizi)
+//     Amac: HTF flip'in ilk mumunda alert atma, trend teyidi bekle.
+//
+//   EMIR FIYATI (dinamik, pullback yakala):
+//     Her chart bar acilirken emir fiyati = ONCEKI kapanan chart bar'in
+//       LONG : LOW   (dipten al - iyi fiyat)
+//       SHORT: HIGH  (tepeden sat - iyi fiyat)
+//
+//   WEBHOOK ALERTLER (v3.8):
+//     PLACE_LIMIT    : Bar basinda fiyat/yon degistiyse limit emir + TP
+//                      (1-onceki HTF filtresi ile)
+//     CANCEL         : HTF renk donduyse eski limit emri iptal (filtresiz)
+//     PLACE_SL       : Fill olan mumun kapanisinda (barstate.isconfirmed) SL alert
+//     POSITION_STATUS: Her mum kapanisinda poz varsa detay (yon, entry, TP, SL, HTF)
+//                      Backend yon uyumsuzsa Pine 2 protokolu + deferred, uyumluysa
+//                      Binance TP/SL kontrol + eksikse self-heal.
+//     PINE_EXIT      : Pine backtest'te TP/SL vurdu — backend deferred iptal etsin.
+//
+//   POZISYON YONETIMI:
+//     Poz acikken yeni HTF sinyali gelse bile poza dokunma.
+//     UYARI: Fill anindan bar kapanisina kadar SL YOK. Ortalama 7-8 dk (15m TF).
+//
+//   BIAS YOK: HTF veri lookahead_off, emir fiyati onceki (kapanmis) bar,
+//             tum tetikler mevcut bar OHLC.
+// ════════════════════════════════════════════════════════════════════
+
+// ----- PARAMETRELER -----
+htfTF         = input.timeframe("60", "Ust Grafik TF", tooltip="HA mum sinyalinin uretildigi TF. Ornek: 60, 240, D.")
+showLab       = input.bool(true, "Etiketler")
+
+grpTP         = "Take Profit / Stop Loss"
+useTP         = input.bool(true, "TP Aktif", group=grpTP)
+tpPct         = input.float(1.0, "TP %", minval=0.05, step=0.05, group=grpTP, tooltip="LONG icin entry*(1+X/100), SHORT icin entry*(1-X/100). Intra-bar wick tetik.") / 100
+useSL         = input.bool(true, "SL Aktif", group=grpTP)
+slPct         = input.float(0.5, "SL %", minval=0.05, step=0.05, group=grpTP, tooltip="LONG icin entry*(1-X/100), SHORT icin entry*(1+X/100). Intra-bar wick tetik. Ayni bar'da hem TP hem SL varsa SL oncelikli.") / 100
+
+grpTol        = "Iyi Fiyat Tolerans"
+useGood       = input.bool(false, "Iyi Fiyat Tolerans", group=grpTol, tooltip="SHORT icin prevHigh'in USTUNDE, LONG icin prevLow'un ALTINDA emir. Daha iyi fiyat bekleme.")
+goodPct       = input.float(0.5, "Iyi Fiyat %", minval=0.0, step=0.05, group=grpTol) / 100
+
+grpWH         = "Webhook Alert"
+enableWebhook = input.bool(false, "Webhook Alert Aktif", group=grpWH, tooltip="Kapali: sadece backtest calisir. Acik: bar basinda PLACE_LIMIT ve HTF flip'te CANCEL alert gonderir. Alert mesajlari JSON format, TradingView 'Any alert() function call' ile kullan.")
+requirePrevHtfConfirm = input.bool(true, "1-Onceki HTF Teyidi", group=grpWH, tooltip="ACIK: Alert atmadan once 1 onceki HTF mumu da AYNI yonde olmali (trend teyidi). HTF flip'in ilk barinda alert atmaz. KAPALI: eski davranis, tek HTF mum yeter.")
+webhookSecret = input.string("test_secret_2025", "Webhook Secret", group=grpWH)
+indicatorName = input.string("HA_Renk_PrevHL_v2", "Indikator Adi", group=grpWH, tooltip="Backend loglarda gorunecek indikator adi.")
+symbolOverride= input.string("", "Symbol Override (bos = otomatik)", group=grpWH, tooltip="Bos birakirsan syminfo.ticker kullanir. Gerekirse 'ETHUSDT' gibi manuel yaz.")
+
+grpDate       = "Tarih Araligi"
+useDateFilter = input.bool(true, "Tarih Filtresi", group=grpDate)
+dateStart     = input.time(timestamp("2026-01-01 00:00"), "Baslangic", group=grpDate)
+dateEnd       = input.time(timestamp("2026-12-31 23:59"), "Bitis", group=grpDate)
+
+commPct       = 0.08 / 100
+initialCap    = 200000.0
+
+bool inDateRange = not useDateFilter or (time >= dateStart and time <= dateEnd)
+
+// ----- HTF HA renk (son KAPANMIS, lookahead_off) -----
+// Backtest icin kullanilir — mevcut kapanmis HTF HA mumun rengi.
+f_htf_ha_green() =>
+    c = (open + high + low + close) / 4
+    o = float(na)
+    o := na(o[1]) ? (open + close) / 2 : (nz(o[1]) + nz(c[1])) / 2
+    c >= o
+
+htfGreen = request.security(syminfo.tickerid, htfTF, f_htf_ha_green(), barmerge.gaps_off, barmerge.lookahead_off)
+
+// ----- HTF HA 1 ONCEKI mumun rengi (SADECE alert filtresi icin) -----
+// HTF frame icinde c[1] >= o[1]: bir onceki kapanmis mum yesil mi?
+// Backtest'e etkisi YOK — sadece webhook alert bloklarinda kontrol edilir.
+f_htf_ha_prev_green() =>
+    c = (open + high + low + close) / 4
+    o = float(na)
+    o := na(o[1]) ? (open + close) / 2 : (nz(o[1]) + nz(c[1])) / 2
+    c[1] >= o[1]
+
+htfGreenPrev = request.security(syminfo.tickerid, htfTF, f_htf_ha_prev_green(), barmerge.gaps_off, barmerge.lookahead_off)
+
+// ----- Onceki chart bar'in HIGH ve LOW'u -----
+// [1] = ONCEKI bar (kapandi, verileri biliniyor) - bias yok
+float prevHigh = high[1]
+float prevLow  = low[1]
+
+// ----- Emir Fiyatlari (tolerans uygulanmis) -----
+// AYNI YON: HTF YESIL -> LONG, HTF KIRMIZI -> SHORT
+// LONG emir:  prevLow  - tolerans (dipten al = iyi fiyat)
+// SHORT emir: prevHigh + tolerans (tepeden sat = iyi fiyat)
+
+float shortOrder = prevHigh * (1 + (useGood ? goodPct : 0.0))
+float longOrder  = prevLow  * (1 - (useGood ? goodPct : 0.0))
+
+// ----- State + sayaclar -----
+var int   state          = 0    // 0=FLAT, 1=LONG, -1=SHORT
+var float entry          = 0.0
+var int   entryBar       = 0
+
+var int   nTrades        = 0
+var int   nWin           = 0
+var int   nLoss          = 0
+var int   nTP            = 0
+var int   nSL            = 0
+var float sumPnl         = 0.0
+var float sumWin         = 0.0
+var float sumLoss        = 0.0
+var float peak           = 0.0
+var float maxDD          = 0.0
+var int   firstTradeTime = 0
+
+// Yon bazli sayaclar
+var int   nTpLong       = 0
+var int   nTpShort      = 0
+var int   nSlLong       = 0
+var int   nSlShort      = 0
+var float sumTpLong     = 0.0
+var float sumTpShort    = 0.0
+var float sumSlLong     = 0.0
+var float sumSlShort    = 0.0
+
+var int   nFillsSkipped = 0  // emir dolmadigi icin atlanan bar sayisi
+
+// ─── WEBHOOK STATE (bar'lar arasi persist) ───
+var float lastPlacedPrice = na
+var string lastPlacedSide = ""
+var bool slPlacedForCurrentPos = false   // Fill olan poz icin SL alert atildi mi?
+
+// ----- Alert flags -----
+bool longAlert  = false
+bool shortAlert = false
+bool tpAlert    = false
+bool slAlert    = false
+bool exitAlert  = false
+
+if useDateFilter and time < dateStart
+    state          := 0
+    nTrades        := 0
+    nWin           := 0
+    nLoss          := 0
+    nTP            := 0
+    nSL            := 0
+    sumPnl         := 0.0
+    sumWin         := 0.0
+    sumLoss        := 0.0
+    peak           := 0.0
+    maxDD          := 0.0
+    firstTradeTime := 0
+    nTpLong        := 0
+    nTpShort       := 0
+    nSlLong        := 0
+    nSlShort       := 0
+    sumTpLong      := 0.0
+    sumTpShort     := 0.0
+    sumSlLong      := 0.0
+    sumSlShort     := 0.0
+    nFillsSkipped  := 0
+
+float eq = initialCap + sumPnl
+
+// ════════════════════════════════════════════════════════════════════
+// 1) SL KONTROLU (SL oncelikli, ayni bar TP+SL varsa SL kazanir)
+// ════════════════════════════════════════════════════════════════════
+bool slTriggered = false
+bool exitedThisBar = false   // bu barda SL veya TP fire edildi mi? Ayni bar yeni giris engellenir.
+
+if useSL and state == 1 and inDateRange and bar_index > entryBar
+    float slPrice = entry * (1 - slPct)
+    if low <= slPrice
+        float pct = (slPrice - entry) / entry * 100 - commPct * 100
+        float dol = eq * pct / 100
+        sumPnl  += dol
+        nTrades += 1
+        nSL     += 1
+        if dol >= 0
+            nWin   += 1
+            sumWin += dol
+        else
+            nLoss   += 1
+            sumLoss += dol
+        nSlLong   += 1
+        sumSlLong += dol
+        slAlert   := true
+        exitAlert := true
+        slTriggered := true
+        exitedThisBar := true
+        if showLab
+            label.new(bar_index, slPrice, "LONG SL\nSL: " + str.tostring(slPrice, format.mintick) + "\nGiris: " + str.tostring(entry, format.mintick) + "\n" + str.tostring(pct, "#.##") + "%", color=color.new(#F6465D, 0), textcolor=color.white, style=label.style_label_up, size=size.small)
+        state := 0
+
+if useSL and state == -1 and inDateRange and bar_index > entryBar
+    float slPrice = entry * (1 + slPct)
+    if high >= slPrice
+        float pct = (entry - slPrice) / entry * 100 - commPct * 100
+        float dol = eq * pct / 100
+        sumPnl  += dol
+        nTrades += 1
+        nSL     += 1
+        if dol >= 0
+            nWin   += 1
+            sumWin += dol
+        else
+            nLoss   += 1
+            sumLoss += dol
+        nSlShort   += 1
+        sumSlShort += dol
+        slAlert    := true
+        exitAlert  := true
+        slTriggered := true
+        exitedThisBar := true
+        if showLab
+            label.new(bar_index, slPrice, "SHORT SL\nSL: " + str.tostring(slPrice, format.mintick) + "\nGiris: " + str.tostring(entry, format.mintick) + "\n" + str.tostring(pct, "#.##") + "%", color=color.new(#F6465D, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
+        state := 0
+
+// ════════════════════════════════════════════════════════════════════
+// 2) TP KONTROLU (SL tetiklenmediyse)
+// ════════════════════════════════════════════════════════════════════
+if useTP and not slTriggered and state == 1 and inDateRange and bar_index > entryBar
+    float tpPrice = entry * (1 + tpPct)
+    if high >= tpPrice
+        float pct = (tpPrice - entry) / entry * 100 - commPct * 100
+        float dol = eq * pct / 100
+        sumPnl  += dol
+        nTrades += 1
+        nTP     += 1
+        if dol >= 0
+            nWin   += 1
+            sumWin += dol
+        else
+            nLoss   += 1
+            sumLoss += dol
+        nTpLong   += 1
+        sumTpLong += dol
+        tpAlert   := true
+        exitAlert := true
+        exitedThisBar := true
+        if showLab
+            label.new(bar_index, tpPrice, "LONG TP\nTP: " + str.tostring(tpPrice, format.mintick) + "\nGiris: " + str.tostring(entry, format.mintick) + "\n+" + str.tostring(pct, "#.##") + "%", color=color.new(#0ECB81, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
+        state := 0
+
+if useTP and not slTriggered and state == -1 and inDateRange and bar_index > entryBar
+    float tpPrice = entry * (1 - tpPct)
+    if low <= tpPrice
+        float pct = (entry - tpPrice) / entry * 100 - commPct * 100
+        float dol = eq * pct / 100
+        sumPnl  += dol
+        nTrades += 1
+        nTP     += 1
+        if dol >= 0
+            nWin   += 1
+            sumWin += dol
+        else
+            nLoss   += 1
+            sumLoss += dol
+        nTpShort   += 1
+        sumTpShort += dol
+        tpAlert    := true
+        exitAlert  := true
+        exitedThisBar := true
+        if showLab
+            label.new(bar_index, tpPrice, "SHORT TP\nTP: " + str.tostring(tpPrice, format.mintick) + "\nGiris: " + str.tostring(entry, format.mintick) + "\n+" + str.tostring(pct, "#.##") + "%", color=color.new(#0ECB81, 0), textcolor=color.white, style=label.style_label_up, size=size.small)
+        state := 0
+
+// ════════════════════════════════════════════════════════════════════
+// 3) LIMIT EMIR (FLAT iken, HTF sinyali varsa - AYNI YON)
+// ════════════════════════════════════════════════════════════════════
+// HTF YESIL -> LONG bekle, prevLow (- tolerans) - dipten al
+// HTF KIRMIZI -> SHORT bekle, prevHigh (+ tolerans) - tepeden sat
+// GUARD: Bu barda SL/TP fire ettiyse yeni giris ENGELLENIR.
+// NOT: BACKTEST kismi 1-onceki HTF filtresini KULLANMAZ (kullanici istegi).
+
+if state == 0 and inDateRange and not na(prevHigh) and not na(prevLow) and not exitedThisBar
+    // HTF YESIL -> LONG bekle (aynı yön)
+    if htfGreen
+        if low <= longOrder and high >= longOrder
+            state := 1
+            entry := longOrder
+            entryBar := bar_index
+            longAlert := true
+            if firstTradeTime == 0
+                firstTradeTime := time
+            if showLab
+                float tpLvl = longOrder * (1 + tpPct)
+                float slLvl = longOrder * (1 - slPct)
+                label.new(bar_index, low, "LONG @ " + str.tostring(longOrder, format.mintick) + "\nprevLow: " + str.tostring(prevLow, format.mintick) + "\nTP: " + str.tostring(tpLvl, format.mintick) + "\nSL: " + str.tostring(slLvl, format.mintick) + "\nHTF " + htfTF + " YESIL", color=color.new(#0ECB81, 0), textcolor=color.white, style=label.style_label_up, size=size.small)
+        else
+            nFillsSkipped += 1
+
+    // HTF KIRMIZI -> SHORT bekle (aynı yön)
+    if not htfGreen and state == 0
+        if low <= shortOrder and high >= shortOrder
+            state := -1
+            entry := shortOrder
+            entryBar := bar_index
+            shortAlert := true
+            if firstTradeTime == 0
+                firstTradeTime := time
+            if showLab
+                float tpLvl = shortOrder * (1 - tpPct)
+                float slLvl = shortOrder * (1 + slPct)
+                label.new(bar_index, high, "SHORT @ " + str.tostring(shortOrder, format.mintick) + "\nprevHigh: " + str.tostring(prevHigh, format.mintick) + "\nTP: " + str.tostring(tpLvl, format.mintick) + "\nSL: " + str.tostring(slLvl, format.mintick) + "\nHTF " + htfTF + " KIRMIZI", color=color.new(#F6465D, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
+        else
+            nFillsSkipped += 1
+
+if state != 0 and useDateFilter and time > dateEnd
+    state := 0
+
+// ─── WEBHOOK STATE RESET ───
+// State degistiginde (fill, TP, SL, tarih bitis) webhook state'i sifirla.
+// Boylece poz kapaninca yeni PLACE_LIMIT gonderilebilir.
+if state != state[1]
+    lastPlacedPrice := na
+    lastPlacedSide := ""
+    slPlacedForCurrentPos := false
+
+eq := initialCap + sumPnl
+if eq > peak
+    peak := eq
+if peak - eq > maxDD
+    maxDD := peak - eq
+
+// ════════════════════════════════════════════════════════════════════
+// WEBHOOK ALERT SISTEMI (v2 YENI)
+// ════════════════════════════════════════════════════════════════════
+// Sadece FLAT iken (state == 0) calisir - poz varsa dokunma.
+// PLACE_LIMIT: fiyat/yon degistiginde bar basinda alert
+//   YENI FILTRE: requirePrevHtfConfirm=true iken 1-onceki HTF mumu da
+//   AYNI yonde olmali. HTF flip'in ilk barinda alert atmaz (trend teyidi).
+// CANCEL: HTF renk donduyse (LONG bekleyene kirmizi geldi veya SHORT bekleyene yesil geldi)
+//   FILTRESIZ - HTF flip anlik iptal isini.
+//
+// Bot backend documentation: https://web-production-25e45.up.railway.app/tv-webhook
+// Alert türü: "Any alert() function call" (dinamik JSON)
+
+string effectiveSymbol = symbolOverride == "" ? syminfo.ticker : symbolOverride
+
+// 1-onceki HTF filtresi (sadece alert icin)
+bool longAlertOk  = htfGreen     and (not requirePrevHtfConfirm or htfGreenPrev)
+bool shortAlertOk = not htfGreen and (not requirePrevHtfConfirm or not htfGreenPrev)
+
+// v3.8.1 FIX: exitedThisBar guard — Pine SL/TP vurdugu barin icinde/kapanisinda
+// yeni PLACE_LIMIT alert ATMA. Bir sonraki bar acilisinda atsin (prevLow =
+// poz kapanan bar low). Backtest tarafi zaten bu guard'i kullaniyor (line 284),
+// alert tarafinda eksikti — tutarsizlik.
+if enableWebhook and state == 0 and inDateRange and not na(prevHigh) and not na(prevLow) and not exitedThisBar
+    // ══ CANCEL kontrolü (once) - HTF renk yon degistiyse eski emri iptal ══
+    // Filtresiz: HTF flip anlik olarak eski emri iptal etmeli.
+    bool needCancel = false
+    if lastPlacedSide == "BUY" and not htfGreen
+        needCancel := true
+    if lastPlacedSide == "SELL" and htfGreen
+        needCancel := true
+
+    if needCancel
+        string cancelMsg = '{"secret":"' + webhookSecret + '","symbol":"' + effectiveSymbol + '","action":"CANCEL","reason":"htf_flip","indicator":"' + indicatorName + '","bar_id":"' + str.tostring(time) + '"}'
+        alert(cancelMsg, alert.freq_once_per_bar)
+        lastPlacedPrice := na
+        lastPlacedSide := ""
+
+    // ══ PLACE_LIMIT (HTF YESIL -> LONG bekle) ══
+    // SL burada gonderilmez - fill sonrasi bar close'ta ayrica PLACE_SL alert gider.
+    // TP fill anında koyulur.
+    // FILTRE: longAlertOk (htfGreen + optional htfGreenPrev)
+    if longAlertOk
+        float tpLvl = longOrder * (1 + tpPct)
+        if longOrder != lastPlacedPrice or lastPlacedSide != "BUY"
+            string placeMsg = '{"secret":"' + webhookSecret + '","symbol":"' + effectiveSymbol + '","action":"PLACE_LIMIT","side":"BUY","price":' + str.tostring(longOrder, format.mintick) + ',"tp":' + str.tostring(tpLvl, format.mintick) + ',"tf":"' + timeframe.period + '","indicator":"' + indicatorName + '","bar_id":"' + str.tostring(time) + '"}'
+            alert(placeMsg, alert.freq_once_per_bar)
+            lastPlacedPrice := longOrder
+            lastPlacedSide := "BUY"
+
+    // ══ PLACE_LIMIT (HTF KIRMIZI -> SHORT bekle) ══
+    // FILTRE: shortAlertOk (not htfGreen + optional not htfGreenPrev)
+    if shortAlertOk
+        float tpLvl = shortOrder * (1 - tpPct)
+        if shortOrder != lastPlacedPrice or lastPlacedSide != "SELL"
+            string placeMsg = '{"secret":"' + webhookSecret + '","symbol":"' + effectiveSymbol + '","action":"PLACE_LIMIT","side":"SELL","price":' + str.tostring(shortOrder, format.mintick) + ',"tp":' + str.tostring(tpLvl, format.mintick) + ',"tf":"' + timeframe.period + '","indicator":"' + indicatorName + '","bar_id":"' + str.tostring(time) + '"}'
+            alert(placeMsg, alert.freq_once_per_bar)
+            lastPlacedPrice := shortOrder
+            lastPlacedSide := "SELL"
+
+// ════════════════════════════════════════════════════════════════════
+// PLACE_SL (v3 YENI) - fill olan mumun kapanisinda 1 kez alert
+// ════════════════════════════════════════════════════════════════════
+// Poz acikken (state != 0) bar tam kapaninca (barstate.isconfirmed) SL alert.
+// slPlacedForCurrentPos flag ile poz suresince tek alert (state degisiminde reset).
+// Bot alert alinca Binance'a algo SL emri koyar.
+
+if enableWebhook and state != 0 and barstate.isconfirmed and not slPlacedForCurrentPos
+    // LONG poz: SL = entry * (1 - slPct), close side = SELL
+    // SHORT poz: SL = entry * (1 + slPct), close side = BUY
+    float slPx = state == 1 ? entry * (1 - slPct) : entry * (1 + slPct)
+    string slSide = state == 1 ? "SELL" : "BUY"
+    string slMsg = '{"secret":"' + webhookSecret + '","symbol":"' + effectiveSymbol + '","action":"PLACE_SL","side":"' + slSide + '","stop_price":' + str.tostring(slPx, format.mintick) + ',"indicator":"' + indicatorName + '","bar_id":"' + str.tostring(time) + '"}'
+    alert(slMsg, alert.freq_once_per_bar)
+    slPlacedForCurrentPos := true
+
+// ════════════════════════════════════════════════════════════════════
+// POSITION_STATUS (v3.8 YENI) — her mum kapanisinda poz varsa detay bildir
+// ════════════════════════════════════════════════════════════════════
+// Poz acikken (state != 0) her chart bar close'ta backend'e POSITION_STATUS
+// alert atar. Backend bu bilgi ile:
+//   1) Yon uyumsuzsa Pine 2 protokolu (mini-TP + SL + deferred entry) uygular
+//   2) Yon uyumluysa Binance'ta TP/SL emirleri yerinde mi kontrol eder
+//      Eksikse Pine'in bildirdigi MUTLAK fiyatlarla yerlestirir (self-heal)
+//
+// Payload: side, entry, tp_price (mutlak), sl_price (mutlak),
+//          htf_green, sl_pct, tp_pct, tf, bar_id
+
+if enableWebhook and state != 0 and barstate.isconfirmed
+    string posSide = state == 1 ? "LONG" : "SHORT"
+    float statusTp = state == 1 ? entry * (1 + tpPct) : entry * (1 - tpPct)
+    float statusSl = state == 1 ? entry * (1 - slPct) : entry * (1 + slPct)
+    string statusMsg = '{"secret":"' + webhookSecret + '","symbol":"' + effectiveSymbol + '","action":"POSITION_STATUS","side":"' + posSide + '","entry":' + str.tostring(entry, format.mintick) + ',"tp_price":' + str.tostring(statusTp, format.mintick) + ',"sl_price":' + str.tostring(statusSl, format.mintick) + ',"htf_green":' + (htfGreen ? "true" : "false") + ',"sl_pct":' + str.tostring(slPct, "#.######") + ',"tp_pct":' + str.tostring(tpPct, "#.######") + ',"tf":"' + timeframe.period + '","indicator":"' + indicatorName + '","bar_id":"' + str.tostring(time) + '"}'
+    alert(statusMsg, alert.freq_once_per_bar)
+
+// ════════════════════════════════════════════════════════════════════
+// PINE_EXIT (v3.8 YENI) — Pine backtest'te TP/SL vurunca alert
+// ════════════════════════════════════════════════════════════════════
+// Pine kendi backtest state'inde TP veya SL tetiklendiginde backend'e
+// bildirir. Backend bu alerti alinca varsa bekleyen DEFERRED LIMIT emri
+// iptal eder — cunku Pine FLAT'a dondu, o pozisyonu artik istemiyor.
+
+if enableWebhook and (tpAlert or slAlert)
+    string exitReason = tpAlert ? "TP" : "SL"
+    string exitMsg = '{"secret":"' + webhookSecret + '","symbol":"' + effectiveSymbol + '","action":"PINE_EXIT","reason":"' + exitReason + '","tf":"' + timeframe.period + '","indicator":"' + indicatorName + '","bar_id":"' + str.tostring(time) + '"}'
+    alert(exitMsg, alert.freq_once_per_bar)
+
+// ----- Gorsel: emir fiyati cizgisi (FLAT iken) -----
+// HTF yesil iken LONG bekliyoruz (yesil daire, aşağıda)
+// HTF kirmizi iken SHORT bekliyoruz (kirmizi daire, yukarıda)
+plot(state == 0 and htfGreen ? longOrder : na, "LONG Emir", color=color.new(#0ECB81, 0), style=plot.style_circles, linewidth=2)
+plot(state == 0 and not htfGreen ? shortOrder : na, "SHORT Emir", color=color.new(#F6465D, 0), style=plot.style_circles, linewidth=2)
+
+plotshape(longAlert,  "LONG",  shape.triangleup,   location.belowbar, color.new(#0ECB81, 0), size=size.small)
+plotshape(shortAlert, "SHORT", shape.triangledown, location.abovebar, color.new(#F6465D, 0), size=size.small)
+plotshape(tpAlert,    "TP",    shape.circle,       location.abovebar, color.new(#F0B90B, 0), size=size.tiny)
+plotshape(slAlert,    "SL",    shape.xcross,       location.abovebar, color.new(#F6465D, 0), size=size.tiny)
+bgcolor(state == 1 ? color.new(#0ECB81, 92) : state == -1 ? color.new(#F6465D, 92) : na)
+
+alertcondition(longAlert,  "LONG",  "LONG {{ticker}} {{interval}} {{close}}")
+alertcondition(shortAlert, "SHORT", "SHORT {{ticker}} {{interval}} {{close}}")
+alertcondition(tpAlert,    "TP",    "TP {{ticker}} {{interval}} {{close}}")
+alertcondition(slAlert,    "SL",    "SL {{ticker}} {{interval}} {{close}}")
+alertcondition(exitAlert,  "EXIT",  "EXIT {{ticker}} {{interval}} {{close}}")
+
+// ----- PERFORMANS TABLOSU (sag ust) -----
+var table tbl = table.new(position.top_right, 2, 14, bgcolor=color.new(#0B0E11, 5), border_width=1, border_color=color.new(#2B3139, 0))
+if barstate.islast
+    eq2  = initialCap + sumPnl
+    nPct = initialCap > 0 ? sumPnl / initialCap * 100 : 0.0
+    wr   = nTrades > 0 ? nWin * 100.0 / nTrades : 0.0
+    gl   = math.abs(sumLoss)
+    pf   = gl > 0 ? sumWin / gl : 0.0
+    aW   = nWin > 0 ? sumWin / nWin : 0.0
+    aL   = nLoss > 0 ? sumLoss / nLoss : 0.0
+    ex   = nTrades > 0 ? sumPnl / nTrades : 0.0
+    ddP  = initialCap > 0 ? maxDD / initialCap * 100 : 0.0
+    color cBg = color.new(#111827, 0)
+    color cL  = color.new(#848E9C, 0)
+    sz = size.normal
+
+    table.cell(tbl, 0, 0, "HA + PrevHL v3 " + htfTF + (enableWebhook ? " [WH]" : ""), text_color=#F0B90B, text_size=size.large, bgcolor=color.new(#1E2329, 0))
+    table.cell(tbl, 1, 0, syminfo.ticker + "  " + timeframe.period, text_color=cL, text_size=size.normal, bgcolor=color.new(#1E2329, 0))
+
+    table.cell(tbl, 0, 1, "Donem", text_color=cL, text_size=sz, bgcolor=cBg)
+    string dateInfo = useDateFilter ? str.format("{0,date,dd.MM.yy}", dateStart) + " - " + str.format("{0,date,dd.MM.yy}", dateEnd) : (firstTradeTime > 0 ? str.format("{0,date,dd.MM.yy}", firstTradeTime) + " - " + str.format("{0,date,dd.MM.yy}", time) : "-")
+    table.cell(tbl, 1, 1, dateInfo, text_color=color.white, text_size=sz, bgcolor=cBg)
+
+    table.cell(tbl, 0, 2, "Net Kar", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 2, str.tostring(sumPnl, "#,##0") + " $   (" + str.tostring(nPct, "#.#") + "%)", text_color=sumPnl >= 0 ? #0ECB81 : #F6465D, text_size=sz, bgcolor=cBg)
+
+    table.cell(tbl, 0, 3, "Sermaye", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 3, str.tostring(eq2, "#,##0") + " $", text_color=color.white, text_size=sz, bgcolor=cBg)
+
+    table.cell(tbl, 0, 4, "Islem (W/L)", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 4, str.tostring(nTrades) + "   (" + str.tostring(nWin) + "/" + str.tostring(nLoss) + ")", text_color=color.white, text_size=sz, bgcolor=cBg)
+
+    table.cell(tbl, 0, 5, "WR", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 5, str.tostring(wr, "#.#") + "%", text_color=wr >= 55 ? #0ECB81 : wr >= 50 ? #F0B90B : #F6465D, text_size=sz, bgcolor=cBg)
+
+    table.cell(tbl, 0, 6, "PF", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 6, str.tostring(pf, "#.##"), text_color=pf >= 2 ? #0ECB81 : pf >= 1.5 ? #F0B90B : #F6465D, text_size=sz, bgcolor=cBg)
+
+    table.cell(tbl, 0, 7, "Ort K / Z", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 7, str.tostring(aW, "#,##0") + " / " + str.tostring(aL, "#,##0") + " $", text_color=color.white, text_size=sz, bgcolor=cBg)
+
+    table.cell(tbl, 0, 8, "Beklenti", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 8, str.tostring(ex, "#,##0") + " $/tr", text_color=ex > 0 ? #0ECB81 : #F6465D, text_size=sz, bgcolor=cBg)
+
+    table.cell(tbl, 0, 9, "Max DD", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 9, str.tostring(maxDD, "#,##0") + " $   (" + str.tostring(ddP, "#.#") + "%)", text_color=#F6465D, text_size=sz, bgcolor=cBg)
+
+    table.cell(tbl, 0, 10, "Pozisyon", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 10, state == 1 ? "LONG" : state == -1 ? "SHORT" : "FLAT", text_color=state == 1 ? #0ECB81 : state == -1 ? #F6465D : cL, text_size=sz, bgcolor=cBg)
+
+    table.cell(tbl, 0, 11, "HTF Renk", text_color=cL, text_size=sz, bgcolor=cBg)
+    string htfInfo = (htfGreen ? "YESIL" : "KIRMIZI") + " / prev: " + (htfGreenPrev ? "YESIL" : "KIRMIZI")
+    table.cell(tbl, 1, 11, htfInfo, text_color=htfGreen ? #0ECB81 : #F6465D, text_size=sz, bgcolor=cBg)
+
+    table.cell(tbl, 0, 12, "Bekleyen Emir", text_color=cL, text_size=sz, bgcolor=cBg)
+    float pending = htfGreen ? longOrder : shortOrder
+    float refPrice = htfGreen ? prevLow : prevHigh
+    string refLabel = htfGreen ? "prevL" : "prevH"
+    string pendStr = state == 0 and not na(pending) ? str.tostring(pending, format.mintick) + "  (" + refLabel + ": " + str.tostring(refPrice, format.mintick) + ")" : "-"
+    table.cell(tbl, 1, 12, pendStr, text_color=color.white, text_size=sz, bgcolor=cBg)
+
+    table.cell(tbl, 0, 13, "TP % / SL %", text_color=cL, text_size=sz, bgcolor=cBg)
+    table.cell(tbl, 1, 13, (useTP ? "%" + str.tostring(tpPct*100, "#.##") : "off") + " / " + (useSL ? "%" + str.tostring(slPct*100, "#.##") : "off") + "   |  Iyi: " + (useGood ? "%" + str.tostring(goodPct*100, "#.##") : "off") + "   |  PrevHTF: " + (requirePrevHtfConfirm ? "ON" : "OFF"), text_color=#F0B90B, text_size=sz, bgcolor=cBg)
+
+// ----- EXIT DAGILIM TABLOSU (sag alt) -----
+var table tblE = table.new(position.bottom_right, 2, 8, bgcolor=color.new(#0B0E11, 5), border_width=1, border_color=color.new(#2B3139, 0))
+if barstate.islast
+    color cBgE = color.new(#111827, 0)
+    color cLE  = color.new(#848E9C, 0)
+    sz3 = size.small
+
+    table.cell(tblE, 0, 0, "EXIT DAGILIMI", text_color=#F0B90B, text_size=size.normal, bgcolor=color.new(#1E2329, 0))
+    table.cell(tblE, 1, 0, str.tostring(nTrades) + " toplam", text_color=color.white, text_size=size.normal, bgcolor=color.new(#1E2329, 0))
+
+    table.cell(tblE, 0, 1, "LONG TP", text_color=cLE, text_size=sz3, bgcolor=cBgE)
+    table.cell(tblE, 1, 1, str.tostring(nTpLong) + "  (+" + str.tostring(sumTpLong, "#,##0") + " $)", text_color=#0ECB81, text_size=sz3, bgcolor=cBgE)
+
+    table.cell(tblE, 0, 2, "LONG SL", text_color=cLE, text_size=sz3, bgcolor=cBgE)
+    table.cell(tblE, 1, 2, str.tostring(nSlLong) + "  (" + str.tostring(sumSlLong, "#,##0") + " $)", text_color=#F6465D, text_size=sz3, bgcolor=cBgE)
+
+    table.cell(tblE, 0, 3, "SHORT TP", text_color=cLE, text_size=sz3, bgcolor=cBgE)
+    table.cell(tblE, 1, 3, str.tostring(nTpShort) + "  (+" + str.tostring(sumTpShort, "#,##0") + " $)", text_color=#0ECB81, text_size=sz3, bgcolor=cBgE)
+
+    table.cell(tblE, 0, 4, "SHORT SL", text_color=cLE, text_size=sz3, bgcolor=cBgE)
+    table.cell(tblE, 1, 4, str.tostring(nSlShort) + "  (" + str.tostring(sumSlShort, "#,##0") + " $)", text_color=#F6465D, text_size=sz3, bgcolor=cBgE)
+
+    table.cell(tblE, 0, 5, "Toplam TP NET", text_color=cLE, text_size=sz3, bgcolor=cBgE)
+    float sumTpNet = sumTpLong + sumTpShort
+    table.cell(tblE, 1, 5, str.tostring(sumTpNet, "#,##0") + " $", text_color=sumTpNet >= 0 ? #0ECB81 : #F6465D, text_size=sz3, bgcolor=cBgE)
+
+    table.cell(tblE, 0, 6, "Toplam SL NET", text_color=cLE, text_size=sz3, bgcolor=cBgE)
+    float sumSlNet = sumSlLong + sumSlShort
+    table.cell(tblE, 1, 6, str.tostring(sumSlNet, "#,##0") + " $", text_color=sumSlNet >= 0 ? #0ECB81 : #F6465D, text_size=sz3, bgcolor=cBgE)
+
+    table.cell(tblE, 0, 7, "Atlanan Bar", text_color=cLE, text_size=sz3, bgcolor=cBgE)
+    table.cell(tblE, 1, 7, str.tostring(nFillsSkipped) + "  (emir dolmadi)", text_color=color.new(#848E9C, 0), text_size=sz3, bgcolor=cBgE)
