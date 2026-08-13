@@ -512,9 +512,14 @@ async def _handle_place_limit(payload: STWebhookPayload, symbol: str, indicator:
             log.info("place_limit_duplicate_bar", symbol=symbol, bar_id=bar_id)
             return JSONResponse(content={"status": "duplicate_bar", "symbol": symbol, "bar_id": bar_id})
 
-    # v3.18: Ayni bar'da PINE_EXIT geldiyse skip (Pine SL/TP vurdugu mumun
-    # kapanisinda yeni PLACE_LIMIT gonderemez — pozisyon kapanan mumun
-    # kapanisi yeni pozisyon icin referans, ama emir bir sonraki bar).
+    # v3.18 + v3.22: Ayni bar'da PINE_EXIT geldiyse skip.
+    # v3.22 RACE FIX: Pine kodda alert() sirasi PLACE_LIMIT ONCE, PINE_EXIT SONRA.
+    # Backend'e PLACE_LIMIT genelde 200-500ms once ulasir. get_pine_exit_bar_id
+    # None doner, guard tetiklenmez, emir yerlesir. Sonra PINE_EXIT gelir ama
+    # is isten gecmis. Bunu engellemek icin: 1sn bekle → PINE_EXIT'in ulasma
+    # penceresi. TradingView alert delivery ~500ms-2sn. 1sn yeterli buffer.
+    import asyncio as _asyncio_wait
+    await _asyncio_wait.sleep(1.0)
     last_exit_bar = await tracker.get_pine_exit_bar_id(symbol)
     if last_exit_bar and str(last_exit_bar) == str(bar_id):
         log.info("place_limit_same_bar_as_pine_exit_skip", symbol=symbol,
