@@ -1046,10 +1046,13 @@ async def _handle_place_sl(payload: STWebhookPayload, symbol: str, indicator: st
 
 
 async def _handle_htf_status(payload: STWebhookPayload, symbol: str, indicator: str) -> JSONResponse:
-    """HTF_STATUS: Pine'dan gelen HTF renk bildirimi. Poz varsa ters mi kontrol et."""
+    """HTF_STATUS: Pine'dan gelen HTF renk bildirimi. Poz varsa ters mi kontrol et.
+    v3.24: Poz yoksa AMA açık algo emirleri varsa cleanup (Pine FLAT + kalıntı emir)."""
     from app.modules import webhook_order_tracker as tracker
     from app.modules.binance_client import (
+        cancel_algo_order,
         cancel_all_open_orders,
+        get_open_algo_orders,
         get_position_risk,
         place_stop_market_instant,
         place_take_profit_market_order,
@@ -1087,8 +1090,31 @@ async def _handle_htf_status(payload: STWebhookPayload, symbol: str, indicator: 
             break
 
     if pos_amt == 0:
+        # v3.24: Poz yok ama kalıntı algo emirleri varsa temizle (Pine FLAT +
+        # önceki poz'un TP/SL emirleri Binance'ta unutulmuş — poller cleanup
+        # kaçırmış olabilir). HTF_STATUS her bar close atılır, guaranteed cleanup.
+        cleaned = 0
+        try:
+            stale = await get_open_algo_orders(symbol)
+            for o in stale:
+                aid = o.get("algoId") or o.get("id")
+                if not aid:
+                    continue
+                try:
+                    await cancel_algo_order(symbol, aid)
+                    cleaned += 1
+                    log.info("htf_status_stale_algo_cancelled", symbol=symbol,
+                             algo_id=aid, type=o.get("orderType") or o.get("type"))
+                except Exception as e:
+                    msg = str(e).lower()
+                    if "-2011" not in msg and "unknown" not in msg and "not exist" not in msg:
+                        log.warning("htf_status_stale_algo_cancel_failed",
+                                    symbol=symbol, algo_id=aid, error=str(e))
+        except Exception as e:
+            log.warning("htf_status_stale_algo_check_failed", symbol=symbol, error=str(e))
         return JSONResponse(content={
             "status": "no_position", "symbol": symbol, "htf_green": htf_green,
+            "stale_algos_cleaned": cleaned,
         })
 
     # 2) v3.7: Karar zaten verilmis mi? (sonraki HTF_STATUS'lar ignore)
