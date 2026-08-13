@@ -1225,6 +1225,30 @@ async def _handle_position_status(payload: STWebhookPayload, symbol: str, indica
         log.info("position_status_no_binance_pos", symbol=symbol,
                  pine_side=pine_side_raw, pine_tp=pine_tp_price, pine_sl=pine_sl_price)
 
+        # v3.23: Poz kapanmis + hala açık algo emirleri kalintisi varsa temizle.
+        # Poller cleanup bazen kacırıyor (PUMP 2026-08-13 örnegi: 2 TP + 2 SL
+        # kalintisi). Cleanup burada 3. safety net (poller + fill_event + status).
+        try:
+            stale_algos = await get_open_algo_orders(symbol)
+            if stale_algos:
+                for o in stale_algos:
+                    aid = o.get("algoId") or o.get("id")
+                    if not aid:
+                        continue
+                    try:
+                        await cancel_algo_order(symbol, aid)
+                        log.info("position_status_stale_algo_cancelled",
+                                 symbol=symbol, algo_id=aid,
+                                 type=o.get("orderType") or o.get("type"))
+                    except Exception as e:
+                        msg = str(e).lower()
+                        if "-2011" not in msg and "unknown" not in msg and "not exist" not in msg:
+                            log.warning("position_status_stale_algo_cancel_failed",
+                                        symbol=symbol, algo_id=aid, error=str(e))
+        except Exception as e:
+            log.warning("position_status_stale_algo_check_failed",
+                        symbol=symbol, error=str(e))
+
         chaser_armed = False
         if pine_tp_price and pine_sl_price and settings.pine_chaser_enabled:
             try:
