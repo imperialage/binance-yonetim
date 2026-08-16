@@ -538,9 +538,96 @@ async def _handle_place_limit(payload: STWebhookPayload, symbol: str, indicator:
             pos_amt = float(p.get("positionAmt", 0))
             break
     if pos_amt != 0:
-        # v3.16: Pine 1 skip olsa bile istedigi fiyati Redis'e kaydet.
-        # Pine 2 protokolu tetiklendiginde deferred entry icin bu fiyat
-        # oncelikli kullanilir (hesaplanan mini_tp*1.001 yerine).
+        # v3.25: PLACE_LIMIT ters yon geldi + poz var → FLIP.
+        # HTF_STATUS alertleri durdurulduginda bu flip mekanizmasi kalkti.
+        # Pine yon degistirdiginde biz de degismeliyiz (backend yon takibi).
+        # Ornek: SHORT poz + PLACE_LIMIT BUY (LONG) → SHORT kapat + LONG chaser.
+        pine_wants_long = side == "BUY"
+        binance_is_long = pos_amt > 0
+        is_reverse = pine_wants_long != binance_is_long
+
+        if is_reverse:
+            log.warning("place_limit_reverse_flip", symbol=symbol,
+                        pos_amt=pos_amt, pine_side=side, pine_price=price)
+            # Pine'in TP hedefi payload'da var (webhook_tp), SL fiyati yok.
+            # SL hesabi backend cancel_sl_pct kullanilacak (default %2).
+            pine_tp = webhook_tp if webhook_tp else None
+            if pine_tp is None:
+                # TP yoksa Pine wanted price * (1 + tp_pct) ile hesapla
+                sym_cfg2 = await get_settings_or_defaults(symbol)
+                tp_pct = float(sym_cfg2.get("tp_pct", 0.010))
+                pine_tp = price * (1 + tp_pct) if pine_wants_long else price * (1 - tp_pct)
+            sl_pct_calc = float(settings.cancel_sl_pct)
+            pine_sl = price * (1 - sl_pct_calc) if pine_wants_long else price * (1 + sl_pct_calc)
+
+            # Mevcut pozu MARKET close
+            try:
+                from app.modules.binance_client import (
+                    cancel_all_open_orders, place_market_order, get_position_risk as _gpr,
+                )
+                # Once tum acik emirleri iptal (TP+SL kalintisi olmasın)
+                await cancel_all_open_orders(symbol)
+                # Market close (reduce_only)
+                close_side = "SELL" if binance_is_long else "BUY"
+                close_qty = abs(pos_amt)
+                await place_market_order(symbol, close_side, close_qty, reduce_only=True)
+                log.warning("place_limit_reverse_market_close_ok", symbol=symbol,
+                            side=close_side, qty=close_qty)
+                # Verify poz 0 (kısa retry)
+                import asyncio as _asy
+                await _asy.sleep(0.5)
+                pr = await _gpr(symbol)
+                verify_amt = 0.0
+                for _p in pr:
+                    if _p.get("symbol") == symbol:
+                        verify_amt = float(_p.get("positionAmt", 0))
+                        break
+                if verify_amt != 0:
+                    await _asy.sleep(0.8)
+                    pr = await _gpr(symbol)
+                    for _p in pr:
+                        if _p.get("symbol") == symbol:
+                            verify_amt = float(_p.get("positionAmt", 0))
+                            break
+                log.info("place_limit_reverse_verify", symbol=symbol, verify_amt=verify_amt)
+            except Exception as e:
+                log.error("place_limit_reverse_close_failed", symbol=symbol, error=str(e))
+                return JSONResponse(content={
+                    "status": "reverse_close_failed",
+                    "symbol": symbol, "error": str(e),
+                })
+
+            # Chaser başlat yeni yön için (Pine'a yetiş)
+            chaser_armed = False
+            if settings.pine_chaser_enabled:
+                try:
+                    from app.modules import webhook_pine_chaser as chaser
+                    tf_str = str(payload.tf or "15m").lower().replace("m", "")
+                    try:
+                        tf_min = int(tf_str)
+                    except ValueError:
+                        tf_min = 15
+                    chart_tf_ms = tf_min * 60_000
+                    pine_side_str = "LONG" if pine_wants_long else "SHORT"
+                    await chaser.arm(
+                        symbol,
+                        pine_side=pine_side_str,
+                        pine_tp=float(pine_tp),
+                        pine_sl=float(pine_sl),
+                        chart_tf_ms=chart_tf_ms,
+                    )
+                    chaser_armed = True
+                except Exception as e:
+                    log.warning("place_limit_reverse_chaser_arm_failed", symbol=symbol, error=str(e))
+
+            return JSONResponse(content={
+                "status": "reverse_flipped",
+                "symbol": symbol, "pine_side": side, "pine_price": price,
+                "chaser_armed": chaser_armed,
+                "pine_tp": pine_tp, "pine_sl": pine_sl,
+            })
+
+        # Aynı yön poz — LIMIT gereksiz, sadece kaydet (mevcut mantık)
         try:
             await tracker.set_pine_wanted_price(symbol, side, price)
         except Exception as _e:
