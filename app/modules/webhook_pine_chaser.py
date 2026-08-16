@@ -52,13 +52,18 @@ async def arm(
     """Chaser başlat. Var olan chaser varsa overwrite eder."""
     if not settings.pine_chaser_enabled:
         return
+    # v3.26: per-symbol chaser threshold. MYXUSDT ozel %0.80, digerleri default %0.30.
+    from app.config import get_symbol_config
+    sym_cfg = get_symbol_config(symbol)
+    min_profit = float(sym_cfg.get("chaser_min_profit_pct",
+                                   settings.pine_chaser_min_profit_pct))
     await tracker.set_chaser(symbol, {
         "pine_side": pine_side.upper(),
         "pine_tp": float(pine_tp),
         "pine_sl": float(pine_sl),
         "chart_tf_ms": int(chart_tf_ms),
         "started_at_ms": int(time.time() * 1000),
-        "min_profit_pct": settings.pine_chaser_min_profit_pct,
+        "min_profit_pct": min_profit,
     })
     _spawn_task(symbol)
     await log.ainfo("chaser_armed", symbol=symbol,

@@ -69,6 +69,7 @@ SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
         "sl_pct": 0.003,   # %0.3
         "weight": 0.10,
         "interval": "15m",
+        "chaser_min_profit_pct": 0.008,   # %0.80 — MYX ozel, diger semboller default 0.003
     },
     "ZECUSDT": {
         "bad_hours": set(),
