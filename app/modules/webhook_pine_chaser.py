@@ -47,23 +47,32 @@ async def arm(
     pine_side: str,       # "LONG" veya "SHORT"
     pine_tp: float,
     pine_sl: float,
+    pine_entry: float | None = None,  # v3.27: ratio mode icin gerekli
     chart_tf_ms: int = 900_000,  # 15m default
 ) -> None:
-    """Chaser başlat. Var olan chaser varsa overwrite eder."""
+    """Chaser başlat. Var olan chaser varsa overwrite eder.
+    v3.27: ratio mode destegi (Pine kar mesafesinin %X'i alinabilir mi kontrolu)."""
     if not settings.pine_chaser_enabled:
         return
-    # v3.26: per-symbol chaser threshold. MYXUSDT ozel %0.80, digerleri default %0.30.
+    # v3.26+27: per-symbol chaser mode + threshold.
+    #   ratio_mode (MYXUSDT): ratio = (pine_tp - mark) / (pine_tp - pine_entry) >= min_ratio
+    #   absolute mode (diger): (pine_tp - mark) / mark >= min_profit_pct
     from app.config import get_symbol_config
     sym_cfg = get_symbol_config(symbol)
-    min_profit = float(sym_cfg.get("chaser_min_profit_pct",
-                                   settings.pine_chaser_min_profit_pct))
+    ratio_mode = bool(sym_cfg.get("chaser_ratio_mode", False))
+    min_profit_ratio = float(sym_cfg.get("chaser_min_profit_ratio", 0.80))
+    min_profit_pct = float(sym_cfg.get("chaser_min_profit_pct",
+                                        settings.pine_chaser_min_profit_pct))
     await tracker.set_chaser(symbol, {
         "pine_side": pine_side.upper(),
         "pine_tp": float(pine_tp),
         "pine_sl": float(pine_sl),
+        "pine_entry": float(pine_entry) if pine_entry is not None else None,
         "chart_tf_ms": int(chart_tf_ms),
         "started_at_ms": int(time.time() * 1000),
-        "min_profit_pct": min_profit,
+        "ratio_mode": ratio_mode,
+        "min_profit_ratio": min_profit_ratio,
+        "min_profit_pct": min_profit_pct,
     })
     _spawn_task(symbol)
     await log.ainfo("chaser_armed", symbol=symbol,
@@ -153,14 +162,34 @@ async def _tick_check(symbol: str, meta: dict) -> None:
             await disarm(symbol, reason="pine_tp_hit_by_tick")
             return
 
-    # Potansiyel kar
-    if pine_side == "LONG":
-        potential = (pine_tp - mark) / mark
-    else:  # SHORT
-        potential = (mark - pine_tp) / mark
+    # v3.27: Ratio mode veya absolute mode
+    ratio_mode = bool(meta.get("ratio_mode", False))
+    pine_entry_val = meta.get("pine_entry")
 
-    if potential < min_profit:
-        return  # fırsat yok, bekle
+    if ratio_mode and pine_entry_val is not None and float(pine_entry_val) > 0:
+        # RATIO MODE: kalan kar mesafesi / toplam kar mesafesi >= min_profit_ratio
+        pine_entry_f = float(pine_entry_val)
+        min_ratio = float(meta.get("min_profit_ratio", 0.80))
+        if pine_side == "LONG":
+            toplam = pine_tp - pine_entry_f
+            kalan = pine_tp - mark
+        else:  # SHORT
+            toplam = pine_entry_f - pine_tp
+            kalan = mark - pine_tp
+        if toplam <= 0:
+            return  # gecersiz Pine hedefi
+        ratio = kalan / toplam
+        if ratio < min_ratio:
+            return  # yeterli kar mesafesi yok, bekle
+        potential = ratio  # log/telemetry icin
+    else:
+        # ABSOLUTE MODE: (pine_tp - mark) / mark >= min_profit_pct
+        if pine_side == "LONG":
+            potential = (pine_tp - mark) / mark
+        else:  # SHORT
+            potential = (mark - pine_tp) / mark
+        if potential < min_profit:
+            return  # fırsat yok, bekle
 
     # ── FIRSAT VAR — atomik lock + market entry ──
     lock_ok = await tracker.try_acquire_chaser_exec_lock(symbol)

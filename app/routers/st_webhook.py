@@ -537,6 +537,51 @@ async def _handle_place_limit(payload: STWebhookPayload, symbol: str, indicator:
         if p.get("symbol") == symbol:
             pos_amt = float(p.get("positionAmt", 0))
             break
+
+    # v3.27: MYX (chaser_ratio_mode) icin LIMIT koymak yerine direkt chaser baslat.
+    # Pine kar mesafesinin %80'i alinabilir mi kontrolu ile market entry.
+    sym_cfg_early = await get_settings_or_defaults(symbol)
+    from app.config import get_symbol_config as _gsc
+    symbol_cfg_static = _gsc(symbol)
+    if symbol_cfg_static.get("chaser_ratio_mode", False) and pos_amt == 0:
+        # FLAT + ratio mode → chaser (LIMIT yok)
+        pine_tp_val = webhook_tp if webhook_tp else None
+        if pine_tp_val is None:
+            tp_pct_local = float(symbol_cfg_static.get("tp_pct", 0.010))
+            pine_tp_val = price * (1 + tp_pct_local) if side == "BUY" else price * (1 - tp_pct_local)
+        sl_pct_local = float(symbol_cfg_static.get("sl_pct", 0.003))
+        pine_sl_val = price * (1 - sl_pct_local) if side == "BUY" else price * (1 + sl_pct_local)
+
+        try:
+            from app.modules import webhook_pine_chaser as chaser
+            tf_str = str(payload.tf or "15m").lower().replace("m", "")
+            try:
+                tf_min = int(tf_str)
+            except ValueError:
+                tf_min = 15
+            chart_tf_ms = tf_min * 60_000
+            pine_side_str = "LONG" if side == "BUY" else "SHORT"
+            await chaser.arm(
+                symbol,
+                pine_side=pine_side_str,
+                pine_tp=float(pine_tp_val),
+                pine_sl=float(pine_sl_val),
+                pine_entry=float(price),
+                chart_tf_ms=chart_tf_ms,
+            )
+            log.info("place_limit_ratio_mode_chaser_armed", symbol=symbol,
+                     pine_side=pine_side_str, pine_entry=price,
+                     pine_tp=pine_tp_val, pine_sl=pine_sl_val)
+            return JSONResponse(content={
+                "status": "chaser_armed_ratio_mode",
+                "symbol": symbol, "pine_side": pine_side_str,
+                "pine_entry": price, "pine_tp": pine_tp_val, "pine_sl": pine_sl_val,
+                "note": "MYX ratio mode: LIMIT yerine chaser (%80 ratio ile market entry)",
+            })
+        except Exception as e:
+            log.error("place_limit_ratio_mode_chaser_arm_failed", symbol=symbol, error=str(e))
+            # Fallback: normal LIMIT
+
     if pos_amt != 0:
         # v3.25: PLACE_LIMIT ters yon geldi + poz var → FLIP.
         # HTF_STATUS alertleri durdurulduginda bu flip mekanizmasi kalkti.

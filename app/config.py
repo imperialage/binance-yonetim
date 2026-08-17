@@ -69,7 +69,9 @@ SYMBOL_CONFIGS: dict[str, dict[str, Any]] = {
         "sl_pct": 0.003,   # %0.3
         "weight": 0.10,
         "interval": "15m",
-        "chaser_min_profit_pct": 0.008,   # %0.80 — MYX ozel, diger semboller default 0.003
+        "chaser_ratio_mode": True,           # MYX: tum girisler chaser + ratio
+        "chaser_min_profit_ratio": 0.80,    # Pine kar mesafesinin %80'i
+        "chaser_min_profit_pct": 0.008,      # fallback (ratio hesaplanamazsa)
     },
     "ZECUSDT": {
         "bad_hours": set(),
